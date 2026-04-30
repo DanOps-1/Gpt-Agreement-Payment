@@ -18,6 +18,18 @@ python -m webui.server
 
 首次访问会跳到 `/setup` 创建管理员账号。
 
+## WhatsApp OTP 集成（可选，给 GoPay 路径自动收 OTP）
+
+GoPay 链路在「商户绑定」阶段会发 6 位 OTP 到用户 WhatsApp。开启 WhatsApp
+relay 后，OTP 自动从 WhatsApp Web 抓取喂给 `gopay.py`，全流程不需人介入。
+
+```bash
+cd CTF-pay/whatsapp_relay && npm install
+```
+
+webui 顶栏「WhatsApp」标签提供 **扫码** 和 **关联码** 两种登录方式。一次
+登录后 session 持久化 ~14 天。详见 `CTF-pay/whatsapp_relay/README.md`。
+
 ## 14 步流程
 
 详见 `docs/superpowers/specs/2026-04-28-webui-design.md`。

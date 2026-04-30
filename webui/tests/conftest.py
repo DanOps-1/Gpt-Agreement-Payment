@@ -22,3 +22,12 @@ def _reset_runner():
     r._mode = None
     r._log_lines = []
     r._seq_counter = 0
+
+
+@pytest.fixture(autouse=True)
+def _reset_wa_relay():
+    yield
+    import webui.backend.wa_relay as w
+    w._proc = None
+    w._mode = ""
+    w._started_at = None
