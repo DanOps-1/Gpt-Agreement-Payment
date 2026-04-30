@@ -35,8 +35,17 @@ const LOGIN_MODE = (process.env.WA_LOGIN_MODE || 'qr').toLowerCase();
 const PAIRING_PHONE = (process.env.WA_PAIRING_PHONE || '').replace(/[^\d]/g, '');
 
 // ───────── filters ─────────
-// 抓 GoPay/GoJek/Midtrans 任一关键词；可通过 env 加自定义白名单
+// GoPay / GoJek / Midtrans 商户名（理想匹配条件，发件人或消息体都行）
 const SENDER_PATTERNS = [/gojek/i, /gopay/i, /midtrans/i];
+// 通用 OTP 模板关键词（GoPay 偶尔走「X is your verification code...」通用格式，
+// 这种没商户名）。命中任一即认为是 OTP 消息。
+const GENERIC_OTP_PATTERNS = [
+  /\bverification code\b/i,
+  /\bverifikasi\b/i,        // Indonesian
+  /\bone[- ]?time\b/i,
+  /\bOTP\b/,
+  /\bkode\b/i,              // Indonesian "kode"
+];
 if (process.env.WA_OTP_SENDER_REGEX) {
   try {
     SENDER_PATTERNS.push(new RegExp(process.env.WA_OTP_SENDER_REGEX, 'i'));
@@ -97,11 +106,18 @@ async function boot() {
   const sock = makeWASocket({
     version,
     auth: state,
-    printQRInTerminal: false,           // 我们自己处理 QR
-    browser: Browsers.macOS('Desktop'), // 让 web 显示「Desktop」而不是 Baileys
-    logger: pino({ level: 'silent' }),  // 不要它的 noisy 日志
-    syncFullHistory: false,             // 不下载历史记录，省内存 + 启动快
-    markOnlineOnConnect: false,         // 别抢手机的 online 状态
+    printQRInTerminal: false,
+    // 关键：自称 Chrome 浏览器（跟 web.whatsapp.com 类似）。Desktop client
+    // 在 WhatsApp 服务端有更严格限流，业务 OTP 不下发到 Desktop 链接的
+    // 设备。Browser 类型则放行（web.whatsapp.com 能收到 OTP 就是这个原因）。
+    browser: ['Chrome (Linux)', 'Chrome', '120.0.0.0'],
+    logger: pino({ level: 'silent' }),
+    // 标记设备 online，否则 WhatsApp 默认认为离线 → 不推消息（只在主设备
+    // 显示），网页版默认也是 online。
+    markOnlineOnConnect: true,
+    // 完整历史同步：保证连上来时漏掉的窗口期消息也能拿到（业务 OTP 在
+    // 这窗口里就发了的话否则永远抓不到）。
+    syncFullHistory: true,
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -193,8 +209,9 @@ async function boot() {
   });
 
   // ───────── OTP capture ─────────
+  // 不再过滤 type — 之前 GoPay OTP 没被抓到，可能消息走 'prepend' 或其它 type
   sock.ev.on('messages.upsert', ({ messages, type }) => {
-    if (type !== 'notify' && type !== 'append') return; // skip 'prepend' (history sync)
+    log(`messages.upsert type=${type} count=${messages.length}`);
     for (const m of messages) {
       try {
         if (m.key?.fromMe) continue; // 自己发的不抓
@@ -204,19 +221,26 @@ async function boot() {
         // 全量日志（debug 用）：每条收到的消息都打一行
         log(`msg from="${(pushName || '').slice(0, 60)}" jid=${remoteJid.slice(0, 40)} body="${body.slice(0, 80).replace(/\n/g, ' ')}" has_6digit=${!!otpMatch}`);
 
+        // 当 body 为空但消息存在时（template/interactive 等）输出消息 type 帮助排查
+        if (!body && m.message) {
+          const types = Object.keys(m.message).filter((k) => k !== 'messageContextInfo');
+          log(`  └─ body 空，消息 type=[${types.join(',')}] 完整 message: ${JSON.stringify(m.message).slice(0, 400)}`);
+        }
+
         if (!otpMatch) continue;
 
         const senderMatch = SENDER_PATTERNS.some((re) =>
           re.test(pushName) || re.test(body) || re.test(remoteJid)
         );
-        if (!senderMatch) {
-          log(`  └─ 6 位数字命中但发件人/正文/jid 无 gopay/gojek/midtrans 关键词，跳过（设 WA_OTP_SENDER_REGEX 可放宽）`);
+        const genericMatch = GENERIC_OTP_PATTERNS.some((re) => re.test(body));
+        if (!senderMatch && !genericMatch) {
+          log(`  └─ 6 位数字命中但既无 gopay/gojek/midtrans 商户名也无通用 OTP 关键词，跳过`);
           continue;
         }
 
         const otp = otpMatch[1];
         fs.writeFileSync(OTP_FILE, otp);
-        log(`OTP captured: ${otp} (from "${(pushName || '').slice(0, 40)}" jid=${remoteJid.slice(0, 30)})`);
+        log(`OTP captured: ${otp} (from "${(pushName || '').slice(0, 40)}" jid=${remoteJid.slice(0, 30)} ${senderMatch ? 'sender_match' : 'generic_match'})`);
       } catch (e) {
         console.error('[wa] message handler error:', e.message);
       }
