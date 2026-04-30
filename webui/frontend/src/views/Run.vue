@@ -295,6 +295,12 @@ function openStream() {
       otpDialog.value.value = "";
     }
   });
+  eventSource.addEventListener("otp_resolved", () => {
+    // gopay 已经从文件读到 OTP（通常是 WhatsApp relay 自动喂的）→ 自动关模态
+    otpDialog.value.open = false;
+    otpDialog.value.value = "";
+    otpDialog.value.submitting = false;
+  });
   eventSource.addEventListener("done", async () => {
     eventSource?.close();
     eventSource = null;

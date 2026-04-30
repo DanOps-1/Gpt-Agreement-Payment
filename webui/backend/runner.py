@@ -7,7 +7,10 @@ GoPay 模式下额外支持 OTP 中转：gopay.py 在 stdout 打印
 `GOPAY_OTP_REQUEST path=<file>` 标记后阻塞，runner 记下 file 路径，
 等前端 POST /run/otp 提交 OTP 后写入 file，gopay.py 读取继续。
 """
+import glob
 import os
+import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -82,6 +85,9 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
     with _lock:
         if _proc is not None and _proc.poll() is None:
             raise RuntimeError("a pipeline is already running")
+    # 启动前先清上次崩溃留下的 Xvfb/Camoufox/profile，防止累积
+    cleanup_orphans()
+    with _lock:
 
         # Allocate OTP fifo path. Prefer the WhatsApp relay's OTP file when
         # the relay is connected — that way OTPs flow in fully automatic.
@@ -133,6 +139,8 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
                 text=True,
                 bufsize=1,
                 env=env,
+                # 关键：自己的 session/process-group，stop() 才能 killpg 整组
+                start_new_session=True,
             )
         except FileNotFoundError as e:
             _ended_at = time.time()
@@ -175,20 +183,112 @@ def _drain(proc: subprocess.Popen) -> None:
                     _otp_file.unlink(missing_ok=True)
                 except Exception:
                     pass
+        # 后台收尾：杀残留 Xvfb/Camoufox + 清 /tmp profile（在锁外，安全）
+        try:
+            cleanup_orphans()
+        except Exception:
+            pass
+
+
+def _kill_pg(proc: subprocess.Popen, term_timeout: float = 5.0) -> None:
+    """Send SIGTERM to whole process group; SIGKILL after timeout. Idempotent."""
+    if proc.poll() is not None:
+        return
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=term_timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def cleanup_orphans() -> dict:
+    """Hunt down stray Xvfb / Camoufox / temp profiles that leaked from
+    crashed/killed pipeline runs. Safe to call any time; never touches the
+    currently-active pipeline (that one's process-group survives because
+    runner is still tracking it)."""
+    killed = {"xvfb": 0, "camoufox": 0, "browser_register": 0,
+              "playwright_driver": 0, "tmp_dirs": 0}
+
+    # 当前活跃 pipeline 的 PGID（保护它不被误杀）
+    protect_pgid = None
+    if _proc is not None and _proc.poll() is None:
+        try:
+            protect_pgid = os.getpgid(_proc.pid)
+        except ProcessLookupError:
+            pass
+
+    def _kill_matching(pattern: str, key: str) -> None:
+        try:
+            out = subprocess.run(
+                ["pgrep", "-f", pattern],
+                capture_output=True, text=True, timeout=5,
+            ).stdout
+        except Exception:
+            return
+        for line in out.splitlines():
+            try:
+                pid = int(line.strip())
+            except ValueError:
+                continue
+            if pid == os.getpid():
+                continue
+            try:
+                if protect_pgid is not None and os.getpgid(pid) == protect_pgid:
+                    continue
+            except ProcessLookupError:
+                continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+                killed[key] += 1
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                pass
+
+    _kill_matching(r"Xvfb :10[0-9]", "xvfb")
+    _kill_matching(r"camoufox-bin", "camoufox")
+    _kill_matching(r"browser_register", "browser_register")
+    _kill_matching(r"playwright/driver", "playwright_driver")
+
+    # 清临时目录（profile / xvfb auth）
+    for pat in ("/tmp/chatgpt_reg_*", "/tmp/xvfb-run.*",
+                "/tmp/probe_*", "/tmp/rt_login_*"):
+        for path in glob.glob(pat):
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    os.unlink(path)
+                killed["tmp_dirs"] += 1
+            except Exception:
+                pass
+
+    return killed
 
 
 def stop() -> dict:
     global _proc
     with _lock:
         proc = _proc
-        if proc is None or proc.poll() is not None:
-            return status()
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+    if proc is None or proc.poll() is not None:
+        return status()
+    _kill_pg(proc)
+    # 主动收尾：杀残留的 Xvfb/Camoufox + 清 /tmp profile
+    cleanup_orphans()
     return status()
 
 

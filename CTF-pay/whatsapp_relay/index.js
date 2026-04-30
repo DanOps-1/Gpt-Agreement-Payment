@@ -131,21 +131,29 @@ client.on('disconnected', (reason) => {
 });
 
 // ───────── OTP capture ─────────
-client.on('message', async (msg) => {
+function _onMessage(msg) {
   try {
     const sender = (msg._data && (msg._data.notifyName || msg._data.author)) || msg.from || '';
     const body = msg.body || '';
-    const senderMatch = SENDER_PATTERNS.some((re) => re.test(sender) || re.test(body));
-    if (!senderMatch) return;
     const m = body.match(OTP_REGEX);
+    // 总是记一行能看到的消息源信息，方便排查为什么没抓到
+    log(`msg from="${(sender || '').slice(0, 60)}" from_id=${(msg.from || '').slice(0, 30)} body="${body.slice(0, 80).replace(/\n/g, ' ')}" has_6digit=${!!m}`);
     if (!m) return;
+    const senderMatch = SENDER_PATTERNS.some((re) => re.test(sender) || re.test(body) || re.test(msg.from || ''));
+    if (!senderMatch) {
+      log(`  └─ 6 位数字命中但发件人/正文无 gopay/gojek/midtrans 关键词，跳过（设 WA_OTP_SENDER_REGEX 可放宽）`);
+      return;
+    }
     const otp = m[1];
     fs.writeFileSync(OTP_FILE, otp);
-    log(`OTP captured: ${otp} (from "${sender.slice(0, 40)}")`);
+    log(`OTP captured: ${otp} (from "${(sender || '').slice(0, 40)}")`);
   } catch (e) {
     console.error('[wa] message handler error:', e.message);
   }
-});
+}
+// 既听新消息也听 message_create（自己发出的也能看到 / 多设备场景）
+client.on('message', _onMessage);
+client.on('message_create', _onMessage);
 
 // ───────── pairing code mode ─────────
 async function handlePairingMode() {
