@@ -18,3 +18,9 @@ PAY_CONFIG_PATH = CTF_PAY_DIR / "config.paypal.json"
 REG_CONFIG_PATH = CTF_REG_DIR / "config.paypal-proxy.json"
 PAY_EXAMPLE_PATH = CTF_PAY_DIR / "config.paypal.example.json"
 REG_EXAMPLE_PATH = CTF_REG_DIR / "config.paypal-proxy.example.json"
+
+# WhatsApp relay sidecar (Node)
+WA_RELAY_DIR = CTF_PAY_DIR / "whatsapp_relay"
+WA_STATE_PATH = DATA_DIR / "wa_state.json"
+WA_OTP_PATH = DATA_DIR / "wa_otp.txt"
+WA_SESSION_DIR = DATA_DIR / "wa_session"

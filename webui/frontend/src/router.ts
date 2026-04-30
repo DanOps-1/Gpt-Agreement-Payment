@@ -9,6 +9,7 @@ const router = createRouter({
     { path: "/login", component: () => import("./views/Login.vue") },
     { path: "/wizard", component: () => import("./views/Wizard.vue") },
     { path: "/run", component: () => import("./views/Run.vue") },
+    { path: "/whatsapp", component: () => import("./views/Whatsapp.vue") },
     { path: "/", redirect: "/wizard" },
   ],
 });

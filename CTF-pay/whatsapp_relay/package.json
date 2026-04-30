@@ -1,0 +1,14 @@
+{
+  "name": "whatsapp-otp-relay",
+  "version": "0.1.0",
+  "description": "WhatsApp Web sidecar that watches GoPay/GoJek OTP messages and writes them to a file for gopay.py to consume.",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.3",
+    "whatsapp-web.js": "^1.23.0"
+  }
+}

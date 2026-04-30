@@ -716,6 +716,7 @@ def file_watch_otp_provider(watch_path: Path, timeout: float = 300.0) -> Callabl
                 except FileNotFoundError:
                     pass
                 if otp:
+                    print(f"GOPAY_OTP_CONSUMED len={len(otp)}", flush=True)
                     return otp
             time.sleep(0.5)
         raise OTPCancelled(f"OTP timeout after {timeout}s (file={watch_path})")

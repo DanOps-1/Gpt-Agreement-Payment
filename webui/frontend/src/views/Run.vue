@@ -10,6 +10,7 @@
       <div class="run-nav">
         <RouterLink to="/wizard" class="nav-link">配置向导</RouterLink>
         <RouterLink to="/run" class="nav-link active">运行</RouterLink>
+        <RouterLink to="/whatsapp" class="nav-link">WhatsApp</RouterLink>
         <button class="header-btn" @click="logout">退出</button>
       </div>
     </header>

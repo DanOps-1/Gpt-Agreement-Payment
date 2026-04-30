@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import settings as s
+from . import wa_relay
 
 
 _lock = threading.Lock()
@@ -82,17 +83,30 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
         if _proc is not None and _proc.poll() is None:
             raise RuntimeError("a pipeline is already running")
 
-        # Allocate OTP fifo path (file deleted by gopay.py after read)
+        # Allocate OTP fifo path. Prefer the WhatsApp relay's OTP file when
+        # the relay is connected — that way OTPs flow in fully automatic.
+        # Otherwise fall back to a fresh temp path the modal will write to.
         otp_path = ""
         otp_p: Optional[Path] = None
         if gopay:
-            tmp = tempfile.NamedTemporaryFile(
-                prefix="gopay_otp_", suffix=".txt", delete=False,
-            )
-            tmp.close()
-            otp_p = Path(tmp.name)
-            otp_p.unlink(missing_ok=True)  # gopay.py polls for existence
-            otp_path = str(otp_p)
+            wa_st = wa_relay.status()
+            if wa_st.get("running") and wa_st.get("status") == "connected":
+                otp_p = wa_relay.otp_path()
+                otp_p.parent.mkdir(parents=True, exist_ok=True)
+                # Clear any stale OTP from previous run
+                try:
+                    otp_p.unlink()
+                except FileNotFoundError:
+                    pass
+                otp_path = str(otp_p)
+            else:
+                tmp = tempfile.NamedTemporaryFile(
+                    prefix="gopay_otp_", suffix=".txt", delete=False,
+                )
+                tmp.close()
+                otp_p = Path(tmp.name)
+                otp_p.unlink(missing_ok=True)  # gopay.py polls for existence
+                otp_path = str(otp_p)
 
         cmd = build_cmd(mode, paypal, batch, workers, self_dealer,
                         register_only, pay_only, gopay=gopay,
@@ -144,9 +158,11 @@ def _drain(proc: subprocess.Popen) -> None:
                 _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line})
                 if len(_log_lines) > 3000:
                     _log_lines = _log_lines[-2000:]
-                # Detect gopay OTP request marker
+                # Detect gopay OTP request / consume markers
                 if "GOPAY_OTP_REQUEST" in line:
                     _otp_pending = True
+                elif "GOPAY_OTP_CONSUMED" in line:
+                    _otp_pending = False
     finally:
         proc.wait()
         with _lock:
