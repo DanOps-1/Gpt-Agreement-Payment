@@ -1,14 +1,15 @@
 {
   "name": "whatsapp-otp-relay",
-  "version": "0.1.0",
-  "description": "WhatsApp Web sidecar that watches GoPay/GoJek OTP messages and writes them to a file for gopay.py to consume.",
+  "version": "0.2.0",
+  "description": "WhatsApp Web sidecar (Baileys) — watches GoPay/GoJek OTP messages and writes them to a file for gopay.py to consume. Pure WebSocket, no Chromium (~50MB vs ~400MB).",
   "private": true,
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc.9",
     "qrcode": "^1.5.3",
-    "whatsapp-web.js": "^1.23.0"
+    "pino": "^9.0.0"
   }
 }

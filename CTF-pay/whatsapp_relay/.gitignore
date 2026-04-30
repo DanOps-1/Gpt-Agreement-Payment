@@ -1,4 +1,5 @@
 node_modules/
+.baileys-session/
 .wwebjs-session/
 .wwebjs_auth/
 .wwebjs_cache/
