@@ -42,6 +42,13 @@ def stop(user: str = CurrentUser):
     return runner.stop()
 
 
+@router.post("/cleanup")
+def cleanup(user: str = CurrentUser):
+    """手工触发：杀残留 Xvfb/Camoufox/playwright + 清 /tmp 临时 profile。
+    pipeline 还在跑时只清孤儿，不影响活跃进程。"""
+    return runner.cleanup_orphans()
+
+
 @router.post("/otp")
 def submit_otp(req: OTPRequest, user: str = CurrentUser):
     try:
@@ -62,6 +69,7 @@ async def stream(user: str = CurrentUser):
 
     async def gen():
         nonlocal last_seq
+        prev_pending = False
         # Backlog: 先推最近 200 行
         for entry in runner.get_tail(200):
             last_seq = max(last_seq, entry["seq"])
@@ -74,9 +82,13 @@ async def stream(user: str = CurrentUser):
                 last_seq = entry["seq"]
                 yield {"event": "line", "data": json.dumps(entry)}
             st = runner.status()
-            # OTP heartbeat: re-send periodically while pending
-            if st.get("otp_pending"):
+            cur_pending = bool(st.get("otp_pending"))
+            # 状态翻转才发：避免心跳轰炸；False→True 开模态，True→False 关模态
+            if cur_pending and not prev_pending:
                 yield {"event": "otp_pending", "data": json.dumps({"pending": True})}
+            elif prev_pending and not cur_pending:
+                yield {"event": "otp_resolved", "data": json.dumps({"pending": False})}
+            prev_pending = cur_pending
             if not st["running"]:
                 # 进程已退出，再扫一次确保没遗漏，然后发 done
                 tail = runner.get_lines_since(last_seq, limit=500)

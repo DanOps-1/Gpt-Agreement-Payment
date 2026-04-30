@@ -49,11 +49,17 @@ def is_running() -> bool:
 
 
 def status() -> dict:
-    """Read state file written by the Node sidecar."""
+    """Read state file written by the Node sidecar.
+
+    The state file may be stale (e.g. webui restarted, relay died) — when
+    is_running() is False, override status to 'stopped' so callers don't
+    treat a dead sidecar as connected.
+    """
     sp = _state_path()
+    running = is_running()
     base = {
-        "running": is_running(),
-        "pid": (_proc.pid if is_running() and _proc else None),
+        "running": running,
+        "pid": (_proc.pid if running and _proc else None),
         "mode": _mode,
         "started_at": _started_at,
     }
@@ -62,8 +68,15 @@ def status() -> dict:
             base.update(json.loads(sp.read_text(encoding="utf-8")))
         except Exception as e:
             base["state_read_error"] = str(e)
-    else:
-        base.setdefault("status", "stopped" if not is_running() else "starting")
+    if not running:
+        # 哪怕 state 文件里写着 "connected"，进程死了就强制改 stopped
+        base["status"] = "stopped"
+        base.pop("qr", None)
+        base.pop("qr_data_url", None)
+        base.pop("qr_ascii", None)
+        base.pop("code", None)
+    elif "status" not in base:
+        base["status"] = "starting"
     return base
 
 
