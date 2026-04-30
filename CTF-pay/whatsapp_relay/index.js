@@ -97,6 +97,8 @@ try { fs.unlinkSync(OTP_FILE); } catch (_) {}
 writeState({ status: 'starting', login_mode: LOGIN_MODE });
 
 // ───────── boot ─────────
+let reconnectAttempts = 0;
+
 async function boot() {
   fs.mkdirSync(SESSION_DIR, { recursive: true });
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
@@ -110,7 +112,8 @@ async function boot() {
     // 关键：自称 Chrome 浏览器（跟 web.whatsapp.com 类似）。Desktop client
     // 在 WhatsApp 服务端有更严格限流，业务 OTP 不下发到 Desktop 链接的
     // 设备。Browser 类型则放行（web.whatsapp.com 能收到 OTP 就是这个原因）。
-    browser: ['Chrome (Linux)', 'Chrome', '120.0.0.0'],
+    // 用 Baileys 自带 helper 拼出来格式最兼容。
+    browser: Browsers.macOS('Chrome'),
     logger: pino({ level: 'silent' }),
     // 标记设备 online，否则 WhatsApp 默认认为离线 → 不推消息（只在主设备
     // 显示），网页版默认也是 online。
@@ -189,22 +192,27 @@ async function boot() {
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
       const reason = lastDisconnect?.error?.message || `code=${code}`;
-      writeState({ status: 'disconnected', login_mode: LOGIN_MODE, reason });
-      log(`disconnected: ${reason}`);
+      writeState({ status: 'disconnected', login_mode: LOGIN_MODE, reason, code });
+      log(`disconnected: ${reason} (statusCode=${code})`);
 
-      // logged out → don't auto-reconnect (user needs to re-pair)
-      const loggedOut = code === DisconnectReason.loggedOut;
-      if (loggedOut) {
-        log('logged out, exiting');
+      // 只在明确是 401 logged out 时才退出 —— DisconnectReason 在新版本
+      // 可能 reshape，硬编码数字最稳。
+      if (code === 401) {
+        log('logged out (401), exiting');
         process.exit(0);
       }
-      // transient disconnect → reconnect
-      log('reconnecting in 2s...');
+      // 其它都按 transient 处理，自动重连（指数退避避免风暴）
+      const delay = Math.min(2000 * Math.pow(2, reconnectAttempts), 30000);
+      reconnectAttempts++;
+      log(`reconnecting in ${delay}ms... (attempt ${reconnectAttempts})`);
       setTimeout(() => boot().catch((e) => {
         writeState({ status: 'error', error: 'reconnect 失败: ' + e.message });
         log('reconnect failed: ' + e.message);
         process.exit(1);
-      }), 2000);
+      }), delay);
+    }
+    if (connection === 'open') {
+      reconnectAttempts = 0;
     }
   });
 
