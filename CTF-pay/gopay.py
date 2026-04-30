@@ -438,6 +438,14 @@ class GoPayCharger:
                 self.log(f"[gopay] midtrans linking 406 ({last_err}), 冷却 {LINK_RETRY_SLEEP_S}s 再重试 {attempt}/{LINK_RETRY_LIMIT}")
                 time.sleep(LINK_RETRY_SLEEP_S)
                 continue
+            if r.status_code == 429:
+                retry_after = r.headers.get("Retry-After", "")
+                raise GoPayError(
+                    "midtrans 429 (Too Many Requests) — 该手机号 linking 频率被限流。"
+                    " 通常 1-24 小时自动解除；不要短时间反复跑 GoPay 流程，手机收到 OTP "
+                    "也别撤销重试，每次失败的尝试都计入限流计数。"
+                    + (f" Retry-After={retry_after}s" if retry_after else ""),
+                )
             raise GoPayError(
                 f"midtrans linking unexpected status={r.status_code} body={r.text[:300]}",
             )
