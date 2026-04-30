@@ -100,6 +100,9 @@ def start(mode: str = "qr", pairing_phone: str = "") -> dict:
             return status()
         # Stop any prior instance before spawning a new one
         _stop_locked()
+        # 关键：如果上次半成品（生成了 creds.json 但用户没扫码完成注册），
+        # WhatsApp 服务端会用 401 拒绝；清掉脏 session 重来
+        _purge_unregistered_session(_session_dir())
 
         relay_dir = s.WA_RELAY_DIR
         index_js = relay_dir / "index.js"
@@ -162,6 +165,28 @@ def start(mode: str = "qr", pairing_phone: str = "") -> dict:
         time.sleep(0.1)
 
     return status()
+
+
+def _purge_unregistered_session(session_dir: Path) -> None:
+    """如果 session 是半成品（有 creds.json 但 registered=false），清空。
+    完整已注册的 session 不动，下次启动还能用。
+    """
+    creds = session_dir / "creds.json"
+    if not creds.exists():
+        return
+    try:
+        data = json.loads(creds.read_text(encoding="utf-8"))
+    except Exception:
+        # creds 文件损坏，肯定要清
+        shutil.rmtree(session_dir, ignore_errors=True)
+        session_dir.mkdir(parents=True, exist_ok=True)
+        return
+    # Baileys 标记成功注册后会把 creds.registered = True
+    if data.get("registered") is True:
+        return  # 完整 session，保留
+    # 否则是半成品（用户启动 QR 后没扫描就放弃 → 留下脏 creds）
+    shutil.rmtree(session_dir, ignore_errors=True)
+    session_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _stop_locked() -> None:
