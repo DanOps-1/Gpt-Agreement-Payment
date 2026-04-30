@@ -4,7 +4,6 @@ Single-instance daemon manager: at most one Node process runs.
 """
 from __future__ import annotations
 
-import glob
 import json
 import os
 import shutil
@@ -101,9 +100,6 @@ def start(mode: str = "qr", pairing_phone: str = "") -> dict:
             return status()
         # Stop any prior instance before spawning a new one
         _stop_locked()
-        # 之前 relay 进程崩溃时 chromium 子进程经常孤立（user-data-dir 锁
-        # 文件没释放），新启动会被 puppeteer 拒绝。这里主动清。
-        _purge_stale_chrome(_session_dir())
 
         relay_dir = s.WA_RELAY_DIR
         index_js = relay_dir / "index.js"
@@ -168,39 +164,6 @@ def start(mode: str = "qr", pairing_phone: str = "") -> dict:
     return status()
 
 
-def _purge_stale_chrome(session_dir: Path) -> None:
-    """杀任何用 wa_session 这个 user-data-dir 的孤儿 chromium 进程，并删
-    SingletonLock/Cookie/Socket 锁文件。否则下次 puppeteer 启动会拿到
-    'browser is already running' 错误。"""
-    pat = str(session_dir.resolve())
-    try:
-        out = subprocess.run(
-            ["pgrep", "-f", f"chrome.*user-data-dir={pat}"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout
-    except Exception:
-        out = ""
-    for line in out.splitlines():
-        try:
-            pid = int(line.strip())
-            os.kill(pid, signal.SIGKILL)
-        except (ValueError, ProcessLookupError, PermissionError):
-            pass
-    # 删 Singleton 锁文件
-    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
-        for p in session_dir.rglob(name):
-            try:
-                p.unlink()
-            except (FileNotFoundError, IsADirectoryError):
-                pass
-    # 清 /tmp/org.chromium.* 残留 socket dir
-    for d in glob.glob("/tmp/org.chromium.Chromium.*"):
-        try:
-            shutil.rmtree(d, ignore_errors=True)
-        except Exception:
-            pass
-
-
 def _stop_locked() -> None:
     global _proc, _mode, _started_at
     proc = _proc
@@ -238,8 +201,6 @@ def logout() -> dict:
     with _lock:
         _stop_locked()
         sd = _session_dir()
-        # 杀 user-data-dir 锁定的 chrome（不然 rmtree 也清不干净）
-        _purge_stale_chrome(sd)
         if sd.exists():
             shutil.rmtree(sd, ignore_errors=True)
         # Recreate empty so subsequent start() works
