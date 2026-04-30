@@ -221,7 +221,7 @@ def cleanup_orphans() -> dict:
     currently-active pipeline (that one's process-group survives because
     runner is still tracking it)."""
     killed = {"xvfb": 0, "camoufox": 0, "browser_register": 0,
-              "playwright_driver": 0, "tmp_dirs": 0}
+              "playwright_driver": 0, "puppeteer_chrome": 0, "tmp_dirs": 0}
 
     # 当前活跃 pipeline 的 PGID（保护它不被误杀）
     protect_pgid = None
@@ -263,6 +263,9 @@ def cleanup_orphans() -> dict:
     _kill_matching(r"camoufox-bin", "camoufox")
     _kill_matching(r"browser_register", "browser_register")
     _kill_matching(r"playwright/driver", "playwright_driver")
+    # puppeteer 的 chromium（whatsapp_relay 用），但保护当前 relay 的 chromium
+    # —— 通过 protect_pgid 已经过滤过了，可以直接 grep
+    _kill_matching(r"puppeteer/chrome.*chrome-linux64/chrome", "puppeteer_chrome")
 
     # 清临时目录（profile / xvfb auth）
     for pat in ("/tmp/chatgpt_reg_*", "/tmp/xvfb-run.*",
