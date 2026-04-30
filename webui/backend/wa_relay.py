@@ -168,8 +168,11 @@ def start(mode: str = "qr", pairing_phone: str = "") -> dict:
 
 
 def _purge_unregistered_session(session_dir: Path) -> None:
-    """如果 session 是半成品（有 creds.json 但 registered=false），清空。
-    完整已注册的 session 不动，下次启动还能用。
+    """如果 session 是半成品（生成了密钥但用户没扫码完成认证），清空。
+    完整已认证的 session 不动，下次启动秒进 connected 不用重扫。
+
+    判断标准：creds 里 me.id 已填 AND account.deviceSignature 已签发
+    （Baileys 的 `registered` 字段在某些路径下不会被更新到 true，不能用）。
     """
     creds = session_dir / "creds.json"
     if not creds.exists():
@@ -181,8 +184,10 @@ def _purge_unregistered_session(session_dir: Path) -> None:
         shutil.rmtree(session_dir, ignore_errors=True)
         session_dir.mkdir(parents=True, exist_ok=True)
         return
-    # Baileys 标记成功注册后会把 creds.registered = True
-    if data.get("registered") is True:
+    me = data.get("me") or {}
+    account = data.get("account") or {}
+    has_identity = bool(me.get("id")) and bool(account.get("deviceSignature"))
+    if has_identity:
         return  # 完整 session，保留
     # 否则是半成品（用户启动 QR 后没扫描就放弃 → 留下脏 creds）
     shutil.rmtree(session_dir, ignore_errors=True)

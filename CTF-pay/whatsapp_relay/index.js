@@ -217,41 +217,49 @@ async function boot() {
   });
 
   // ───────── OTP capture ─────────
-  // 不再过滤 type — 之前 GoPay OTP 没被抓到，可能消息走 'prepend' 或其它 type
+  // 历史同步：刚链接时 WhatsApp 把过往消息打包加密推下来，Baileys 解密后
+  // 通过 messaging-history.set 事件派发（不是 messages.upsert）
+  sock.ev.on('messaging-history.set', ({ messages, isLatest, syncType }) => {
+    log(`messaging-history.set count=${messages.length} isLatest=${isLatest} syncType=${syncType}`);
+    for (const m of messages || []) {
+      _processMessage(m, 'history');
+    }
+  });
+
+  function _processMessage(m, source) {
+    try {
+      if (m.key?.fromMe) return;
+      const { pushName, remoteJid } = extractSender(m);
+      const body = extractText(m.message);
+      const otpMatch = body.match(OTP_REGEX);
+      log(`${source} msg from="${(pushName || '').slice(0, 60)}" jid=${remoteJid.slice(0, 40)} body="${body.slice(0, 80).replace(/\n/g, ' ')}" has_6digit=${!!otpMatch}`);
+
+      if (!body && m.message) {
+        const types = Object.keys(m.message).filter((k) => k !== 'messageContextInfo');
+        log(`  └─ body 空，消息 type=[${types.join(',')}]`);
+      }
+
+      if (!otpMatch) return;
+      const senderMatch = SENDER_PATTERNS.some((re) =>
+        re.test(pushName) || re.test(body) || re.test(remoteJid)
+      );
+      const genericMatch = GENERIC_OTP_PATTERNS.some((re) => re.test(body));
+      if (!senderMatch && !genericMatch) {
+        log(`  └─ 6 位数字但无 OTP 特征关键词，跳过`);
+        return;
+      }
+      const otp = otpMatch[1];
+      fs.writeFileSync(OTP_FILE, otp);
+      log(`OTP captured (${source}): ${otp} (from "${(pushName || '').slice(0, 40)}" jid=${remoteJid.slice(0, 30)})`);
+    } catch (e) {
+      console.error('[wa] _processMessage error:', e.message);
+    }
+  }
+
   sock.ev.on('messages.upsert', ({ messages, type }) => {
     log(`messages.upsert type=${type} count=${messages.length}`);
     for (const m of messages) {
-      try {
-        if (m.key?.fromMe) continue; // 自己发的不抓
-        const { pushName, remoteJid } = extractSender(m);
-        const body = extractText(m.message);
-        const otpMatch = body.match(OTP_REGEX);
-        // 全量日志（debug 用）：每条收到的消息都打一行
-        log(`msg from="${(pushName || '').slice(0, 60)}" jid=${remoteJid.slice(0, 40)} body="${body.slice(0, 80).replace(/\n/g, ' ')}" has_6digit=${!!otpMatch}`);
-
-        // 当 body 为空但消息存在时（template/interactive 等）输出消息 type 帮助排查
-        if (!body && m.message) {
-          const types = Object.keys(m.message).filter((k) => k !== 'messageContextInfo');
-          log(`  └─ body 空，消息 type=[${types.join(',')}] 完整 message: ${JSON.stringify(m.message).slice(0, 400)}`);
-        }
-
-        if (!otpMatch) continue;
-
-        const senderMatch = SENDER_PATTERNS.some((re) =>
-          re.test(pushName) || re.test(body) || re.test(remoteJid)
-        );
-        const genericMatch = GENERIC_OTP_PATTERNS.some((re) => re.test(body));
-        if (!senderMatch && !genericMatch) {
-          log(`  └─ 6 位数字命中但既无 gopay/gojek/midtrans 商户名也无通用 OTP 关键词，跳过`);
-          continue;
-        }
-
-        const otp = otpMatch[1];
-        fs.writeFileSync(OTP_FILE, otp);
-        log(`OTP captured: ${otp} (from "${(pushName || '').slice(0, 40)}" jid=${remoteJid.slice(0, 30)} ${senderMatch ? 'sender_match' : 'generic_match'})`);
-      } catch (e) {
-        console.error('[wa] message handler error:', e.message);
-      }
+      _processMessage(m, 'live');
     }
   });
 }
