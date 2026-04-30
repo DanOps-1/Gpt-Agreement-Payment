@@ -48,8 +48,8 @@ export const useWizardStore = defineStore("wizard", {
     isStepHidden(n: number): boolean {
       const pm = (this.answers.payment as any)?.method ?? "both";
       if (pm === "gopay") {
-        // Step 6 复用为 GoPay 配置；7(card) / 13(stripe runtime) 都不走
-        if (n === 7) return true;
+        // GoPay 走 step 7；step 6(PayPal) / step 13(stripe runtime) 不走
+        if (n === 6) return true;
         if (n === 13) return true;
         return false;
       }

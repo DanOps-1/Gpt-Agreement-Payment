@@ -78,8 +78,8 @@ const STEPS = [Step01, Step02, Step03, Step04, Step05, Step06, Step07, Step08, S
 const store = useWizardStore();
 const router = useRouter();
 const currentStepComponent = computed(() => {
-  // Step 6 = payment-specific config: PayPal / GoPay 同位
-  if (store.currentStep === 6) {
+  // GoPay uses step 7 slot when selected.
+  if (store.currentStep === 7) {
     const pm = (store.answers.payment as any)?.method;
     if (pm === "gopay") return Step06GoPay;
   }
