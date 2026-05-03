@@ -1,0 +1,22 @@
+{
+  "id": "gecko-companion",
+  "displayName": "小守宫",
+  "description": "使用 hatch-pet 基于本地守宫 GIF 重新设计的 Codex pets 兼容宠物包。",
+  "spritesheetPath": "spritesheet.webp",
+  "fallbackPath": "reference.gif",
+  "frameWidth": 192,
+  "frameHeight": 208,
+  "columns": 8,
+  "rows": 9,
+  "states": [
+    "idle",
+    "running-right",
+    "running-left",
+    "waving",
+    "jumping",
+    "failed",
+    "waiting",
+    "running",
+    "review"
+  ]
+}

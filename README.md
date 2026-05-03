@@ -85,6 +85,14 @@ python -m webui.server
 
 支持 Plus 和 Team 双订阅路径，公网访问通过 nginx 反代见 [`webui/README.md`](webui/README.md)。
 
+### 自定义宠物插件
+
+WebUI 已内置一个基于守宫 GIF 重新生成的默认宠物素材包，路径是 `webui/frontend/public/pets/gecko-companion/`。宠物以悬浮形式显示，鼠标移过去会弹出操作面板，并会随机切换待命、跑动、挥手、跳跃、等待、运行、复查等状态。
+
+如果想更换成自己的宠物，先在 Codex 里安装宠物生成技能：`$skill-installer hatch-pet`。安装完成后重启 Codex，让新技能生效。
+
+重启后把自己想要的宠物图片或 GIF 发给 AI 当参考图，然后直接说明：基于这张参考图重新生成 Codex 宠物，使用 `hatch-pet` 生成多状态动画，并导入到当前项目的宠物插件目录。AI 会生成兼容 Codex pets 格式的 `pet.json` 和 `spritesheet.webp`，再放进 `webui/frontend/public/pets/<pet-id>/` 作为项目默认素材。
+
 ### 装
 
 ```bash

@@ -1,13 +1,18 @@
+<!-- ╔══════════════════════════════════════════════╗ -->
+<!-- ║             👑:anzi开发by:anzi👑             ║ -->
+<!-- ╚══════════════════════════════════════════════╝ -->
 <template>
-  <n-config-provider :theme="lightTheme" :theme-overrides="themeOverrides">
-    <n-message-provider>
-      <RouterView />
+  <n-config-provider :theme="lightTheme" :theme-overrides="themeOverrides"> <!-- 设置全局主题 -->
+    <n-message-provider> <!-- 提供消息提示能力 -->
+      <RouterView /> <!-- 显示当前路由页面 -->
+      <PetCompanion /> <!-- 显示全局宠物助手 -->
     </n-message-provider>
   </n-config-provider>
 </template>
 
 <script setup lang="ts">
-import { NConfigProvider, NMessageProvider, lightTheme, type GlobalThemeOverrides } from "naive-ui";
+import { NConfigProvider, NMessageProvider, lightTheme, type GlobalThemeOverrides } from "naive-ui"; // 导入 UI 主题组件
+import PetCompanion from "./components/PetCompanion.vue"; // 导入宠物助手组件
 
 const themeOverrides: GlobalThemeOverrides = {
   common: {
