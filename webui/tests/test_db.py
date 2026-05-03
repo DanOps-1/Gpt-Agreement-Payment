@@ -36,3 +36,25 @@ def test_session_expires(db, monkeypatch):
     sid = db.create_session("admin", ttl_s=60)
     times[0] = 1061.0  # past TTL
     assert db.lookup_session(sid) is None
+
+
+def test_clear_runtime_data_preserves_durable_runtime_config(db):
+    db.set_runtime_json("secrets", {"cloudflare": {"api_token": "tok"}})
+    db.set_runtime_json("wizard_state", {"current_step": 4, "answers": {}})
+    db.set_runtime_json("wa_settings", {"engine": "baileys"})
+    db.set_runtime_json("wa_session_snapshot", {"data": "snapshot"})
+    db.set_runtime_json("daemon_state", {"old": True})
+    db.set_runtime_json("wa_state", {"latest": {"otp": "123456"}})
+    db.add_registered_account({"email": "a@example.com", "session_token": "sess"})
+    db.add_card_result({"chatgpt_email": "a@example.com", "status": "succeeded"})
+
+    db.clear_runtime_data()
+
+    assert db.iter_registered_accounts() == []
+    assert db.iter_card_results() == []
+    assert db.get_runtime_json("secrets", {})["cloudflare"]["api_token"] == "tok"
+    assert db.get_runtime_json("wizard_state", {})["current_step"] == 4
+    assert db.get_runtime_json("wa_settings", {})["engine"] == "baileys"
+    assert db.get_runtime_json("wa_session_snapshot", {})["data"] == "snapshot"
+    assert db.get_runtime_json("daemon_state", {}) == {}
+    assert db.get_runtime_json("wa_state", {}) == {}

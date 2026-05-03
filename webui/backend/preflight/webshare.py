@@ -14,7 +14,8 @@ def check(body: dict) -> PreflightResult:
     headers = {"Authorization": f"Token {cfg.api_key}"}
     try:
         with httpx.Client(timeout=15.0) as c:
-            r = c.get(f"{WS_API}/proxy/list/", headers=headers)
+            r = c.get(f"{WS_API}/proxy/list/", headers=headers,
+                      params={"mode": "direct", "page_size": 1})
     except httpx.HTTPError as e:
         return aggregate([CheckResult(name="api", status="fail",
                                       message=str(e))])

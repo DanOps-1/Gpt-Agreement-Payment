@@ -7,3 +7,5 @@ sse-starlette>=2.0
 pytest>=8.0
 pytest-asyncio>=0.23
 respx>=0.20
+responses>=0.25
+requests>=2.31

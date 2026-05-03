@@ -8,7 +8,7 @@
 >
 > - **solver 题型的 PR**：必须附 prompt 文本、`round_XX.json`、`checkcaptcha_pass_*.json`、通过率统计
 > - **协议适配的 PR**：必须附抓包对比（before / after）+ 完整跑通到终态的 pipeline 日志
-> - **daemon 自愈的 PR**：必须附触发那一刻的日志 + 自愈后下一轮成功的日志 + `daemon_state.json` 字段差异
+> - **daemon 自愈的 PR**：必须附触发那一刻的日志 + 自愈后下一轮成功的日志 + `SQLite runtime_meta[daemon_state]` 字段差异
 > - **bug fix / new feature**：必须附复现命令 + 修复前失败日志 + 修复后成功日志
 >
 > 详细要求看 [PR 模板](.github/PULL_REQUEST_TEMPLATE.md)，所有"必填"项都得填，所有"强制勾选"项都得勾。**证据缺了，PR 会被打 `needs-info` 标签，14 天没补全自动关闭，不解释。**

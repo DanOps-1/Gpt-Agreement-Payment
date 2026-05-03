@@ -20,11 +20,6 @@
           rows="3"
         ></textarea>
       </label>
-      <TermField
-        v-model="form.forward_to"
-        label="Email 转发目标 · forward_to"
-        placeholder="catchall@your-real-mailbox.com"
-      />
     </div>
 
     <div class="step-actions">
@@ -58,7 +53,6 @@ const init = store.answers.cloudflare ?? {};
 const form = ref({
   cf_token: init.cf_token ?? "",
   zone_names: (init.zone_names ?? []) as string[],
-  forward_to: init.forward_to ?? "",
 });
 const zoneText = computed({
   get: () => form.value.zone_names.join("\n"),
@@ -88,9 +82,9 @@ function icon(s: string) {
 
 <style scoped>
 /* Local overrides only – shared styles come from theme.css */
-.tf { display: grid; grid-template-columns: 100px 1fr; border: 1px solid var(--border); background: var(--bg-base); transition: border-color 80ms; }
+.tf { display: grid; grid-template-columns: minmax(140px, max-content) minmax(0, 1fr); border: 1px solid var(--border); background: var(--bg-base); transition: border-color 80ms; }
 .tf:focus-within { border-color: var(--accent); }
-.tf-tag { background: var(--bg-panel); color: var(--fg-tertiary); padding: 10px 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; border-right: 1px solid var(--border); display: flex; align-items: flex-start; text-transform: uppercase; }
+.tf-tag { background: var(--bg-panel); color: var(--fg-tertiary); padding: 10px 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; border-right: 1px solid var(--border); display: flex; align-items: flex-start; white-space: nowrap; }
 .tf-textarea { background: transparent; border: 0; padding: 10px 12px; color: var(--fg-primary); font: inherit; font-size: 13px; outline: none; resize: vertical; min-height: 60px; width: 100%; }
 .tf-textarea::placeholder { color: var(--fg-tertiary); opacity: 0.6; }
 </style>

@@ -12,7 +12,7 @@
 xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal
 ```
 
-注册 → 支付 → OAuth → 写 `results.jsonl`。整体五分钟左右。
+注册 → 支付 → OAuth → 写 SQLite 运行时库（`output/webui.db`）。整体五分钟左右。
 
 调试时最常用的模式。每次跑一遍完整链路看哪里挂。
 
@@ -57,11 +57,11 @@ xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal \
 ### Member 循环单次时序（约 3 分钟稳态）
 
 1. 挑代理 + 挑子域 + 写临时 `cardw` 配置（跟单 owner pipeline 一致）
-2. `register()` —— Camoufox 过 Turnstile / IMAP OTP（约 2 分钟）
+2. `register()` —— Camoufox 过 Turnstile + CF KV 取 OTP（≈ 1 分钟）
 3. owner 的 Bearer 调 `POST /backend-api/accounts/{team_id}/invites`（< 1 秒）
 4. member 的 Bearer 调 `POST /backend-api/accounts/{team_id}/invites/accept`（< 1 秒）
 5. `card._exchange_refresh_token_with_session` —— Camoufox 重登（email + password + consent）拿 refresh_token（约 30 秒）
-6. 按 `results.jsonl` 惯例追加记录 → 推下游
+6. 按 SQLite runtime 追加记录 → 推下游
 
 ### 关键 API（从 chatgpt.com 前端 JS 逆出来的）
 
@@ -77,7 +77,7 @@ POST https://chatgpt.com/backend-api/accounts/{team_id}/invites/accept
 
 - 每个 member 单独挑 `proxy_pool.pick()` + `domain_pool.pick()` + 临时 cardw 配置，不关联
 - 任何单个 member 任何一步失败（注册 / 邀请 / 接受 / 重登 / CPA）都被 try/except 捕获，继续下一个
-- `--self-dealer-resume` 读 `results.jsonl` 里既有 owner（已付费）的 `team_account_id` + `refresh_token`，避免重复扣款
+- `--self-dealer-resume` 读 SQLite 里既有 owner（已付费）的 `team_account_id` + `refresh_token`，避免重复扣款
 
 ### 每个 member 两次 Codex OAuth（第一次必失败）
 
@@ -102,7 +102,7 @@ tail -f output/logs/daemon-*.log
 xvfb-run -a python3 -u pipeline.py --config CTF-pay/config.paypal.json --paypal --daemon
 
 # 看状态
-cat output/daemon_state.json | jq .
+cat SQLite runtime_meta[daemon_state] | jq .
 
 # 优雅停（跑完当前周期再退）
 pkill -TERM -f "pipeline.*--daemon"
@@ -151,7 +151,7 @@ loop:
 # 只注册
 python pipeline.py --register-only --cardw-config CTF-reg/config.paypal-proxy.json
 
-# 仅支付（用 registered_accounts.jsonl 里最新账号）
+# 仅支付（用 SQLite 里最新账号）
 xvfb-run -a python pipeline.py --pay-only --config CTF-pay/config.paypal.json --paypal
 ```
 

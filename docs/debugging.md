@@ -25,7 +25,7 @@ ls -lah /tmp/paypal_*.png
 ls -lah /tmp/rt_*.png
 
 # Daemon 状态
-cat output/daemon_state.json | jq .
+cat SQLite runtime_meta[daemon_state] | jq .
 ```
 
 ---
@@ -109,10 +109,10 @@ Webshare API 没有可用替换代理了（套餐每月配额耗尽）。
 
 ```bash
 # 升级 Webshare 套餐，或者
-# 手动改 daemon_state.json 把 webshare_rotation_disabled 设 false
+# 手动改 SQLite runtime_meta[daemon_state] 把 webshare_rotation_disabled 设 false
 jq '.webshare_rotation_disabled = false | .no_perm_cooldown_until = 0' \
-   output/daemon_state.json > /tmp/state.json && \
-   mv /tmp/state.json output/daemon_state.json
+   SQLite runtime_meta[daemon_state] > /tmp/state.json && \
+   mv /tmp/state.json SQLite runtime_meta[daemon_state]
 ```
 
 ### `socks5 auth not supported`
@@ -159,7 +159,7 @@ gost -L=socks5://:18898 -F=socks5://USER:PASS@HOST:PORT &
 ```bash
 # 总成功率
 jq -r '.total_succeeded as $s | .total_attempts as $t | "\($s)/\($t) = \($s/$t*100)%"' \
-   output/daemon_state.json
+   SQLite runtime_meta[daemon_state]
 
 # 每个 IP 的命中率
 grep "current_proxy_ip" output/logs/daemon-*.log | sort | uniq -c | sort -rn

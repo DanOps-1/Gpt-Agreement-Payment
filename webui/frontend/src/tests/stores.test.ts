@@ -52,4 +52,36 @@ describe("wizardStore", () => {
     s.setPreflight("cloudflare", { status: "ok", message: "", checks: [] });
     expect(s.isStepUnlocked(4)).toBe(true);
   });
+
+  it("isStepHidden gopay: keep step 6 (slot reused), hide 7 + 13", () => {
+    const s = useWizardStore();
+    s.setAnswer("payment", { method: "gopay" });
+    expect(s.isStepHidden(6)).toBe(false);
+    expect(s.isStepHidden(7)).toBe(true);
+    expect(s.isStepHidden(13)).toBe(true);
+  });
+
+  it("isStepHidden paypal: hide 7 + 13", () => {
+    const s = useWizardStore();
+    s.setAnswer("payment", { method: "paypal" });
+    expect(s.isStepHidden(6)).toBe(false);
+    expect(s.isStepHidden(7)).toBe(true);
+    expect(s.isStepHidden(13)).toBe(true);
+  });
+
+  it("isStepHidden card: hide 6", () => {
+    const s = useWizardStore();
+    s.setAnswer("payment", { method: "card" });
+    expect(s.isStepHidden(6)).toBe(true);
+    expect(s.isStepHidden(7)).toBe(false);
+    expect(s.isStepHidden(13)).toBe(false);
+  });
+
+  it("isStepHidden both: nothing hidden", () => {
+    const s = useWizardStore();
+    s.setAnswer("payment", { method: "both" });
+    expect(s.isStepHidden(6)).toBe(false);
+    expect(s.isStepHidden(7)).toBe(false);
+    expect(s.isStepHidden(13)).toBe(false);
+  });
 });

@@ -39,7 +39,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-    <img src="docs/images/logo-light.svg" width="160" alt="gpt-pp-team">
+    <img src="docs/images/logo-light.svg" width="160" alt="Gpt-Agreement-Payment">
   </picture>
 </p>
 ```
@@ -48,8 +48,8 @@
 
 ```html
 <p align="center">
-  <img src="docs/images/logo-light.svg#gh-light-mode-only" width="160" alt="gpt-pp-team">
-  <img src="docs/images/logo-dark.svg#gh-dark-mode-only" width="160" alt="gpt-pp-team">
+  <img src="docs/images/logo-light.svg#gh-light-mode-only" width="160" alt="Gpt-Agreement-Payment">
+  <img src="docs/images/logo-dark.svg#gh-dark-mode-only" width="160" alt="Gpt-Agreement-Payment">
 </p>
 ```
 
@@ -57,7 +57,7 @@
 
 ```html
 <h1>
-  <img src="docs/images/icon.svg" width="32" valign="middle"> gpt-pp-team
+  <img src="docs/images/icon.svg" width="32" valign="middle"> Gpt-Agreement-Payment
 </h1>
 ```
 

@@ -100,6 +100,15 @@ def test_run_start_then_409(client, monkeypatch):
     monkeypatch.setattr(runner_mod, "_drain", lambda proc: None)
     monkeypatch.setattr(runner_mod.subprocess, "Popen", fake_popen)
 
+    # Bypass config health gate — this test focuses on the runner state
+    # machine, not config validation (covered separately in test_config_health).
+    import webui.backend.routes.run as run_route
+    monkeypatch.setattr(
+        run_route,
+        "build_config_health",
+        lambda req: {"ok": True, "blocking": [], "checks": []},
+    )
+
     # Reset module state from prior tests
     runner_mod._proc = None
     runner_mod._ended_at = None
@@ -118,3 +127,21 @@ def test_run_start_then_409(client, monkeypatch):
 
     # Cleanup module state
     runner_mod._proc = None
+
+
+def test_gopay_auto_otp_skips_manual_fifo(tmp_path, monkeypatch):
+    import json
+    import webui.backend.runner as runner_mod
+
+    cfg = tmp_path / "pay.json"
+    cfg.write_text(json.dumps({
+        "gopay": {
+            "otp": {
+                "source": "http",
+                "url": "http://127.0.0.1:8765/latest",
+            },
+        },
+    }))
+    monkeypatch.setattr(runner_mod.s, "PAY_CONFIG_PATH", cfg)
+
+    assert runner_mod._gopay_auto_otp_enabled() is True

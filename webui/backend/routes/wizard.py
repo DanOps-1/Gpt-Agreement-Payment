@@ -1,35 +1,31 @@
-import json
+from __future__ import annotations
+
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
 from ..auth import CurrentUser
-from ..settings import get_data_dir
+from ..db import get_db
 
 router = APIRouter(prefix="/api/wizard", tags=["wizard"])
 
 
 class WizardState(BaseModel):
     current_step: int = 1
-    answers: dict = {}
-
-
-def _state_path():
-    return get_data_dir() / "webui_wizard_state.json"
+    answers: dict = Field(default_factory=dict)
 
 
 def _read() -> WizardState:
-    p = _state_path()
-    if not p.exists():
+    data = get_db().get_runtime_json("wizard_state", {})
+    if not isinstance(data, dict):
         return WizardState()
     try:
-        return WizardState(**json.loads(p.read_text(encoding="utf-8")))
+        return WizardState(**data)
     except Exception:
         return WizardState()
 
 
 def _write(state: WizardState) -> None:
-    p = _state_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+    get_db().set_runtime_json("wizard_state", state.model_dump())
 
 
 @router.get("/state")

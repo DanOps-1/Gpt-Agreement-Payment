@@ -1,12 +1,8 @@
 {
   "mail": {
-    "imap_server": "imap.qq.com",
-    "imap_port": 993,
-    "smtp_server": "smtp.qq.com",
-    "smtp_port": 465,
-    "email": "you@example.com",
-    "auth_code": "YOUR_IMAP_AUTH_CODE",
-    "catch_all_domain": "example.com"
+    "_comment": "OTP 走 Cloudflare Email Worker → KV（见 scripts/setup_cf_email_worker.py）；CF 凭证存 SQLite runtime_meta[secrets]，不在这里",
+    "catch_all_domain": "example.com",
+    "catch_all_domains": ["example.com"]
   },
   "card": {
     "number": "",

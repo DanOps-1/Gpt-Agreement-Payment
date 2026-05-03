@@ -36,6 +36,10 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import requests
+_REPO_DIR_BOOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_DIR_BOOT not in sys.path:
+    sys.path.insert(0, _REPO_DIR_BOOT)
+from webui.backend.db import get_db
 try:
     from curl_cffi.requests import Session as CurlCffiSession
     _HAS_CURL_CFFI = True
@@ -47,6 +51,14 @@ except Exception:
 _OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output")
 os.makedirs(os.path.join(_OUTPUT_DIR, "logs"), exist_ok=True)
 LOG_FILE = os.path.join(_OUTPUT_DIR, "logs", "card.log")
+
+# 让 `from cf_kv_otp_provider import ...` 在 card.py 直接执行/被 pipeline 子进程
+# 拉起时都能命中 `CTF-reg/` 下的实现。否则 RT / PayPal OTP 会在
+# `python CTF-pay/card.py ...` 的默认 sys.path 里找不到该模块。
+_REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_CTF_REG_DIR = os.path.join(_REPO_DIR, "CTF-reg")
+if os.path.isdir(_CTF_REG_DIR) and _CTF_REG_DIR not in sys.path:
+    sys.path.insert(0, _CTF_REG_DIR)
 
 def _init_log():
     """清空并初始化 log.txt"""
@@ -463,7 +475,9 @@ def _provision_openai_auth_via_local_bundle(cfg: dict, fresh_cfg: dict) -> dict:
         billing["currency"] = str(plan_cfg["billing_currency"]).upper()
 
     mail_cfg = ab_cfg.setdefault("mail", {})
-    for key in ("imap_server", "imap_port", "smtp_server", "smtp_port", "email", "auth_code", "catch_all_domain"):
+    # IMAP/SMTP 字段已废弃（OTP 走 CF Email Worker → KV，见 cf_kv_otp_provider）；
+    # 这里只保留 catch_all_domain / catch_all_domains / auto_provision。
+    for key in ("catch_all_domain", "catch_all_domains", "auto_provision"):
         if key in auto_cfg and auto_cfg.get(key) not in (None, ""):
             mail_cfg[key] = auto_cfg.get(key)
     if isinstance(auto_cfg.get("mail"), dict):
@@ -520,13 +534,7 @@ logging.basicConfig(
 )
 
 cfg = Config.from_file(config_path)
-mail = MailProvider(
-    cfg.mail.imap_server,
-    cfg.mail.imap_port,
-    cfg.mail.email,
-    cfg.mail.auth_code,
-    cfg.mail.catch_all_domain,
-)
+mail = MailProvider(cfg.mail.catch_all_domain)
 flow = AuthFlow(cfg)
 login_email = (os.getenv("LOCALAUTH_LOGIN_EMAIL") or "").strip()
 login_password = os.getenv("LOCALAUTH_LOGIN_PASSWORD", "")
@@ -1690,6 +1698,59 @@ def _extract_checkout_identifiers(data: dict) -> tuple[str, str, str]:
     return cs_id, processor_entity, checkout_url
 
 
+def _select_fresh_checkout_url(
+    *,
+    provider_url: str,
+    canonical_url: str,
+    fresh_cfg: dict,
+    checkout_payload: dict,
+) -> str:
+    """Choose which checkout URL should be exposed to callers.
+
+    ChatGPT's checkout API may return a provider/hosted URL (for example the
+    long hosted checkout URL) while the automation can also reconstruct the
+    canonical in-app URL:
+
+        https://chatgpt.com/checkout/{processor_entity}/{cs_live...}
+
+    Historically we always rewrote the API response to the canonical URL. That
+    is correct for embedded/custom checkout replay, but it hides the real
+    hosted/long link when the request was created with hosted checkout mode.
+
+    Selection is config driven:
+      - fresh_checkout.output_url_mode or fresh_checkout.plan.output_url_mode
+        can be provider/raw/long/hosted or canonical/chatgpt/short.
+      - If omitted, checkout_ui_mode=hosted defaults to provider; everything
+        else defaults to canonical.
+    """
+
+    provider_url = (provider_url or "").strip()
+    canonical_url = (canonical_url or "").strip()
+    plan_cfg = fresh_cfg.get("plan") or {}
+    explicit_mode = str(
+        plan_cfg.get("output_url_mode")
+        or fresh_cfg.get("output_url_mode")
+        or ""
+    ).strip().lower()
+    checkout_ui_mode = str(
+        plan_cfg.get("checkout_ui_mode")
+        or checkout_payload.get("checkout_ui_mode")
+        or ""
+    ).strip().lower()
+
+    provider_modes = {"provider", "raw", "long", "hosted", "pay_openai", "pay.openai.com"}
+    canonical_modes = {"canonical", "chatgpt", "short", "custom", "embedded"}
+
+    if explicit_mode in provider_modes:
+        return provider_url or canonical_url
+    if explicit_mode in canonical_modes:
+        return canonical_url or provider_url
+
+    if checkout_ui_mode in {"hosted", "hosted_checkout", "redirect"}:
+        return provider_url or canonical_url
+    return canonical_url or provider_url
+
+
 def _extract_checkout_totals(payload: dict | None) -> dict:
     payload = payload or {}
     total_summary = payload.get("total_summary") or {}
@@ -2446,14 +2507,18 @@ def generate_fresh_checkout(
                     f"https://chatgpt.com/checkout/{processor_entity}/{session_id}"
                     if processor_entity else ""
                 )
-                if canonical_chatgpt_url:
-                    fresh_url = canonical_chatgpt_url
-                elif not fresh_url and processor_entity:
-                    fresh_url = canonical_chatgpt_url
+                fresh_url = _select_fresh_checkout_url(
+                    provider_url=provider_url,
+                    canonical_url=canonical_chatgpt_url,
+                    fresh_cfg=fresh_cfg,
+                    checkout_payload=payload,
+                )
 
                 _log(f"      [fresh] session_id: {session_id}")
                 if provider_url and provider_url != fresh_url:
                     _log(f"      [fresh] provider_url: {provider_url}")
+                if canonical_chatgpt_url and canonical_chatgpt_url != fresh_url:
+                    _log(f"      [fresh] canonical_url: {canonical_chatgpt_url}")
                 if fresh_url:
                     _log(f"      [fresh] fresh_url: {fresh_url}")
 
@@ -2476,10 +2541,10 @@ def generate_fresh_checkout(
                             is_coupon_from_query_param=bool(
                                 promo_campaign.get("is_coupon_from_query_param")
                             ),
-                            referer_url=fresh_url or provider_url,
+                            referer_url=canonical_chatgpt_url or provider_url or fresh_url,
                         )
 
-                if fresh_cfg.get("warmup_route_data", True) and fresh_url and cookie_header:
+                if fresh_cfg.get("warmup_route_data", True) and canonical_chatgpt_url and cookie_header:
                     route_data_url = (
                         f"https://chatgpt.com/checkout/{processor_entity}/{session_id}.data"
                         "?_routes=routes%2Fcheckout.%24entity.%24checkoutId"
@@ -2500,6 +2565,8 @@ def generate_fresh_checkout(
                     "url": fresh_url,
                     "checkout_session_id": session_id,
                     "processor_entity": processor_entity,
+                    "provider_url": provider_url,
+                    "canonical_url": canonical_chatgpt_url,
                     "publishable_key": data.get("publishable_key", ""),
                     "client_secret": data.get("client_secret", ""),
                     "coupon_check": coupon_check,
@@ -4352,6 +4419,122 @@ def create_paypal_payment_method(
     return pm_id
 
 
+def _drive_gopay_from_redirect(
+    redirect_url: str,
+    cfg: dict,
+    otp_file: str = "",
+    session_id: str = "",
+) -> None:
+    """从 pm-redirects.stripe.com URL 接管 → Midtrans linking → GoPay PIN/OTP → 扣款。
+
+    复用 gopay 模块的 GoPayCharger.run_from_redirect。OTP 从 stdin（CLI）或
+    file-watch（webui runner）取。
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+    here = _Path(__file__).resolve().parent
+    if str(here) not in _sys.path:
+        _sys.path.insert(0, str(here))
+    import gopay as _gopay
+
+    auth_cfg = (cfg.get("fresh_checkout") or {}).get("auth") or {}
+    cs_session = _gopay._build_chatgpt_session(auth_cfg)
+    proxy = (cfg.get("proxy") or "").strip() or None
+    gopay_cfg = cfg.get("gopay") or {}
+
+    if otp_file:
+        provider = _gopay.file_watch_otp_provider(_Path(otp_file), timeout=300.0)
+    else:
+        provider = _gopay.build_configured_otp_provider(
+            gopay_cfg,
+            fallback_provider=_gopay.cli_otp_provider,
+            log=_log,
+        )
+
+    charger = _gopay.GoPayCharger(
+        cs_session, gopay_cfg,
+        otp_provider=provider, proxy=proxy,
+        runtime_cfg=cfg.get("runtime"),
+    )
+    _log(f"      [gopay] 从 redirect 接管 → {redirect_url[:80]}...")
+    result = charger.run_from_redirect(redirect_url, cs_id=session_id)
+    _log(f"      [gopay] 完成: {result}")
+
+
+def create_gopay_payment_method(
+    session: requests.Session,
+    pk: str,
+    card: dict,
+    session_id: str,
+    stripe_ver: str = STRIPE_VERSION_BASE,
+    ctx: dict = None,
+) -> str:
+    """创建 type=gopay 的 payment_method（印尼 e-wallet, ChatGPT Plus 用）"""
+    ctx = ctx or {}
+    guid = ctx.get("guid") or _gen_fingerprint()[0]
+    muid = ctx.get("muid") or _gen_fingerprint()[0]
+    sid  = ctx.get("sid")  or _gen_fingerprint()[0]
+    addr = card.get("address", {}) if card else {}
+    runtime_version = ctx.get("runtime_version") or DEFAULT_STRIPE_RUNTIME_VERSION
+    stripe_js_id = ctx.get("stripe_js_id", str(uuid.uuid4()))
+    elements_session_id = ctx.get("elements_session_id", _gen_elements_session_id())
+    elements_session_config_id = (
+        ctx.get("elements_session_config_id") or str(uuid.uuid4())
+    )
+    payment_method_checkout_config_id = (
+        ctx.get("payment_method_checkout_config_id")
+        or ctx.get("config_id")
+        or ""
+    )
+
+    data = {
+        "type": "gopay",
+        "billing_details[name]": (card or {}).get("name") or "John Doe",
+        "billing_details[email]": (card or {}).get("email") or "buyer@example.com",
+        "billing_details[address][country]": addr.get("country") or "US",
+        "billing_details[address][line1]": addr.get("line1") or "3110 Sunset Boulevard",
+        "billing_details[address][city]": addr.get("city") or "Los Angeles",
+        "billing_details[address][postal_code]": addr.get("postal_code") or "90026",
+        "billing_details[address][state]": addr.get("state") or "CA",
+        "payment_user_agent": (
+            f"stripe.js/{runtime_version}; stripe-js-v3/{runtime_version}; "
+            "payment-element; deferred-intent"
+        ),
+        "referrer": "https://chatgpt.com",
+        "time_on_page": str(ctx.get("time_on_page", random.randint(25000, 55000))),
+        "client_attribution_metadata[client_session_id]": stripe_js_id,
+        "client_attribution_metadata[checkout_session_id]": session_id,
+        "client_attribution_metadata[checkout_config_id]": payment_method_checkout_config_id,
+        "client_attribution_metadata[elements_session_id]": elements_session_id,
+        "client_attribution_metadata[elements_session_config_id]": elements_session_config_id,
+        "client_attribution_metadata[merchant_integration_source]": "elements",
+        "client_attribution_metadata[merchant_integration_subtype]": "payment-element",
+        "client_attribution_metadata[merchant_integration_version]": "2021",
+        "client_attribution_metadata[payment_intent_creation_flow]": "deferred",
+        "client_attribution_metadata[payment_method_selection_flow]": "automatic",
+        "client_attribution_metadata[merchant_integration_additional_elements][0]": "payment",
+        "client_attribution_metadata[merchant_integration_additional_elements][1]": "address",
+        "guid": guid,
+        "muid": muid,
+        "sid": sid,
+        "key": pk,
+        "_stripe_version": stripe_ver,
+    }
+
+    url = f"{STRIPE_API}/v1/payment_methods"
+    _log("[4/6] 创建 GoPay 支付方式 (payment_method type=gopay) ...")
+    _log_request("POST", url, data=data, tag="[4/6] create_gopay_payment_method")
+    resp = session.post(url, data=data, headers=_stripe_headers())
+    _log_response(resp, tag="[4/6] create_gopay_payment_method")
+    if resp.status_code != 200:
+        raise RuntimeError(f"创建 GoPay payment_method 失败 [{resp.status_code}]: {resp.text[:500]}")
+
+    pm = resp.json()
+    pm_id = pm["id"]
+    _log(f"      成功: {pm_id}  (gopay)")
+    return pm_id
+
+
 def _solve_arkose_funcaptcha(api_key: str, public_key: str, page_url: str, timeout: int = 120) -> str:
     """调用远端打码平台解 Arkose FunCaptcha"""
     if not api_key:
@@ -4800,7 +4983,7 @@ def _paypal_full_login(
 
         # 获取 OTP
         _log("      [L6-2] 等待 PayPal OTP ...")
-        otp = _fetch_paypal_otp_via_imap(paypal_cfg, timeout=90)
+        otp = _fetch_paypal_otp(paypal_cfg, timeout=90)
         if not otp:
             raise RuntimeError("PayPal 2FA OTP 获取失败")
         _log(f"      [L6-2] OTP: {otp}")
@@ -4859,67 +5042,63 @@ def _safe_screenshot(page, path: str):
         pass
 
 
-def _fetch_openai_login_otp(imap_server: str, imap_port: int, imap_user: str,
-                             imap_pass: str, target_email: str, timeout: int = 180) -> str:
-    """轮询 IMAP 查找 OpenAI 登录 OTP (格式: "Your ChatGPT/OpenAI code is XXXXXX")"""
-    import imaplib, re
-    import email as email_mod
+def _fetch_openai_login_otp(target_email: str, timeout: int = 180) -> str:
+    """从 CF KV 取 OpenAI 登录 OTP（worker 已替代 IMAP→QQ 转发链路）。
 
-    deadline = time.time() + timeout
-    since = time.time() - 30
-    while time.time() < deadline:
-        try:
-            conn = imaplib.IMAP4_SSL(imap_server, imap_port, timeout=15)
-            conn.login(imap_user, imap_pass)
-            conn.select("INBOX")
-            # 搜最近的 OpenAI 邮件
-            _st, data = conn.search(None, "FROM", "openai")
-            if data and data[0]:
-                for uid in reversed(data[0].split()[-30:]):
-                    _st2, msg_data = conn.fetch(uid, "(RFC822)")
-                    if not msg_data or not msg_data[0]:
-                        continue
-                    msg = email_mod.message_from_bytes(msg_data[0][1])
-                    # 时间过滤
-                    try:
-                        from email.utils import parsedate_to_datetime as _pdt
-                        if _pdt(msg.get("Date", "")).timestamp() < since:
-                            continue
-                    except Exception:
-                        pass
-                    # To 字段必须匹配（catch-all）
-                    to_field = (msg.get("To") or "") + " " + (msg.get("Delivered-To") or "")
-                    if target_email.lower() not in to_field.lower():
-                        continue
-                    subject = msg.get("Subject", "")
-                    # 优先从 Subject 提取
-                    m = re.search(r'code is (\d{6})', subject) or re.search(r'(\d{6})', subject)
-                    if m:
-                        code = m.group(1)
-                        conn.logout()
-                        return code
-                    # 退到正文
-                    for part in (msg.walk() if msg.is_multipart() else [msg]):
-                        if part.get_content_type() not in ("text/plain", "text/html"):
-                            continue
-                        payload = part.get_payload(decode=True)
-                        if not payload:
-                            continue
-                        body_text = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
-                        m = re.search(r'code is (\d{6})', body_text) or re.search(r'\b(\d{6})\b', body_text)
-                        if m:
-                            code = m.group(1)
-                            conn.logout()
-                            return code
-            conn.logout()
-        except Exception as e:
-            _log(f"      [RT-OTP] IMAP 异常: {e}")
-        time.sleep(5)
-    return ""
+    返回空串表示超时或 KV 路径配置缺失，调用方按需 fallback。
+    """
+    try:
+        from cf_kv_otp_provider import CloudflareKVOtpProvider
+    except ImportError as e:
+        _log(f"      [RT-OTP] cf_kv_otp_provider 不可用: {e}")
+        return ""
+    try:
+        provider = CloudflareKVOtpProvider.from_env_or_secrets()
+        return provider.wait_for_otp(target_email, timeout=timeout)
+    except TimeoutError:
+        _log(f"      [RT-OTP] CF KV 等 OTP 超时 {timeout}s")
+        return ""
+    except Exception as e:
+        _log(f"      [RT-OTP] CF KV 取 OTP 异常: {e}")
+        return ""
+
+
+_OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+
+
+def _resolve_codex_oauth_client_id(*values: str) -> str:
+    """Return the first non-placeholder Codex OAuth client id, or the
+    OpenAI Codex CLI's well-known constant as a final fallback. Treat
+    ``YOUR_*`` placeholders as absent — they would 400 at authorize."""
+    candidates = [os.getenv("OAUTH_CODEX_CLIENT_ID", ""), *values]
+    for value in candidates:
+        client_id = (value or "").strip()
+        if not client_id:
+            continue
+        if client_id.startswith("YOUR_") or client_id.endswith("_CLIENT_ID"):
+            continue
+        return client_id
+    return _OPENAI_CODEX_CLIENT_ID
+
+
+def _codex_oauth_client_id_from_config(cfg: dict) -> str:
+    """Resolve the Codex OAuth client_id from payment config/env."""
+    if not isinstance(cfg, dict):
+        cfg = {}
+    cpa_cfg = cfg.get("cpa") or {}
+    fresh_cfg = cfg.get("fresh_checkout") or {}
+    auth_cfg = fresh_cfg.get("auth") or {}
+    return _resolve_codex_oauth_client_id(
+        (cpa_cfg or {}).get("oauth_client_id", ""),
+        cfg.get("oauth_client_id", ""),
+        cfg.get("codex_oauth_client_id", ""),
+        auth_cfg.get("oauth_client_id", ""),
+    )
 
 
 def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: dict,
-                                          proxy_url: str = "") -> str:
+                                          proxy_url: str = "",
+                                          oauth_client_id: str = "") -> str:
     """
     支付成功后重新登录换 refresh_token。
     流程：
@@ -4943,7 +5122,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
     def _b64url_nopad(raw: bytes) -> str:
         return _b64.urlsafe_b64encode(raw).decode().rstrip("=")
 
-    codex_client_id = "YOUR_OPENAI_CODEX_CLIENT_ID"
+    codex_client_id = _resolve_codex_oauth_client_id(oauth_client_id)
     codex_redirect = "http://localhost:1455/auth/callback"
     codex_state = _b64url_nopad(_secrets.token_bytes(24))
     verifier = _b64url_nopad(_secrets.token_bytes(64))
@@ -5000,7 +5179,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                 url = route.request.url
                 if "localhost:1455" in url and "code=" in url:
                     code_captured["url"] = url
-                    _log(f"      [RT] 拦截 callback: {url[:150]}")
+                    _log("      [RT] 拦截 callback: code=<redacted>")
                 try:
                     route.fulfill(status=200, content_type="text/html", body="<html>OK</html>")
                 except Exception:
@@ -5037,7 +5216,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                 _log(f"      [RT] 邮箱填写失败: {e}")
                 return ""
 
-            # [3] 填密码
+            # [3] 填密码（OpenAI 现在很多场景走 passwordless，没密码框就跳过到 OTP）
             try:
                 page.wait_for_selector('input[type="password"]', state="visible", timeout=20000)
                 pwd_input = page.query_selector('input[type="password"]:visible')
@@ -5052,9 +5231,8 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                         break
                 time.sleep(5)
             except Exception as e:
-                _log(f"      [RT] 密码填写失败: {e}")
-                _safe_screenshot(page, "/tmp/rt_pwd_fail.png")
-                return ""
+                _log(f"      [RT] 密码框超时（passwordless 路径），跳过到 OTP 等待: {str(e)[:80]}")
+                _safe_screenshot(page, "/tmp/rt_pwd_skip.png")
 
             # [4] 处理 OTP / Turnstile / 各种中间页
             _log(f"      [RT] 密码后 URL: {page.url[:120]}")
@@ -5084,18 +5262,11 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                     page.query_selector('input[inputmode="numeric"]')):
                     if not otp_fetched:
                         _log("      [RT] 检测到 OTP 页面，从 IMAP 取验证码 ...")
-                        otp_code = _fetch_openai_login_otp(
-                            imap_server=mail_cfg.get("imap_server", "imap.qq.com"),
-                            imap_port=int(mail_cfg.get("imap_port", 993)),
-                            imap_user=mail_cfg.get("email", ""),
-                            imap_pass=mail_cfg.get("auth_code", ""),
-                            target_email=email,
-                            timeout=180,
-                        )
+                        otp_code = _fetch_openai_login_otp(target_email=email, timeout=180)
                         if not otp_code:
                             _log("      [RT] OTP 获取超时")
                             return ""
-                        _log(f"      [RT] OTP: {otp_code}")
+                        _log(f"      [RT] OTP 已获取 (len={len(otp_code)})")
                         # 填入 OTP
                         filled = False
                         single = page.query_selector('input[autocomplete="one-time-code"]:visible') or \
@@ -5131,6 +5302,49 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                             except Exception:
                                 pass
                             break
+                # /add-phone 页（OpenAI 风控强制塞这一步）— 找 Skip 按钮跳过
+                if "/add-phone" in cur or "phone-number" in cur:
+                    if not getattr(page, "_addphone_dumped", False):
+                        try:
+                            _safe_screenshot(page, "/tmp/rt_addphone.png")
+                            btns = page.evaluate("""
+                                () => Array.from(document.querySelectorAll('button,a[role=button],a,[role=button]')).map(b => ({
+                                    text: (b.innerText||'').trim().slice(0,40),
+                                    href: b.href||'',
+                                    testid: b.getAttribute('data-testid')||'',
+                                    type: b.getAttribute('type')||'',
+                                    tag: b.tagName
+                                })).filter(b => b.text || b.testid)
+                            """)
+                            _log(f"      [RT] add-phone 按钮列表: {btns}")
+                            page._addphone_dumped = True
+                        except Exception:
+                            pass
+                    skipped = False
+                    for sel in [
+                        'a:has-text("Skip")', 'button:has-text("Skip")',
+                        'a:has-text("Not now")', 'button:has-text("Not now")',
+                        'a:has-text("Maybe later")', 'button:has-text("Maybe later")',
+                        'a:has-text("Skip for now")', 'button:has-text("Skip for now")',
+                        '[data-testid*="skip"]',
+                        'a[href*="skip"]',
+                    ]:
+                        try:
+                            b = page.query_selector(sel)
+                            if b and b.is_visible():
+                                b.click()
+                                _log(f"      [RT] add-phone 跳过: {sel}")
+                                skipped = True
+                                time.sleep(2)
+                                break
+                        except Exception:
+                            pass
+                    # 找不到 Skip：OpenAI 强制要求 phone 验证，本次 OAuth 必失败。
+                    # 提前 break 避免 240s 空等（caller 通过 callback 没拿到 code 判失败）。
+                    if not skipped and not getattr(page, "_addphone_gaveup", False):
+                        page._addphone_gaveup = True
+                        _log("      [RT] add-phone 找不到 Skip 按钮，提前放弃避免 240s 空等")
+                        break
                 # Codex consent 授权页 — 自动点 Authorize
                 if "/consent" in cur or "/authorize" in cur:
                     if not getattr(page, "_consent_dumped", False):
@@ -5775,7 +5989,7 @@ def _paypal_browser_authorize(
                 else:
                     # 邮件 OTP 模式：等 IMAP 收码（3 分钟，PayPal 有时要 2 分钟才发）
                     _log("      [B5] 等待 PayPal 邮件 OTP (最长 180s) ...")
-                    otp = _fetch_paypal_otp_via_imap(paypal_cfg, timeout=180)
+                    otp = _fetch_paypal_otp(paypal_cfg, timeout=180)
                     if not otp:
                         _log("      [B5] OTP 首次超时，重发 ...")
                         for sel in ['button:has-text("Resend")', 'button:has-text("重新发送")',
@@ -5786,7 +6000,7 @@ def _paypal_browser_authorize(
                                 _log(f"      [B5] 重发 OTP: {sel}")
                                 break
                         time.sleep(3)
-                        otp = _fetch_paypal_otp_via_imap(paypal_cfg, timeout=120)
+                        otp = _fetch_paypal_otp(paypal_cfg, timeout=120)
                     if not otp:
                         _safe_screenshot(page, "/tmp/paypal_2fa_timeout.png")
                         raise RuntimeError("PayPal 2FA 邮件 OTP 获取超时")
@@ -6438,122 +6652,33 @@ def _handle_paypal_redirect(
 
 
 
-def _fetch_paypal_otp_via_imap(paypal_cfg: dict, timeout: int = 90) -> str:
-    """通过 IMAP 从 QQ 邮箱获取 PayPal 发送的验证码"""
-    imap_server = paypal_cfg.get("imap_server", "imap.qq.com")
-    imap_port = int(paypal_cfg.get("imap_port", 993))
-    imap_email = paypal_cfg.get("imap_email") or paypal_cfg.get("email")
-    imap_auth_code = paypal_cfg.get("imap_auth_code", "")
+def _fetch_paypal_otp(paypal_cfg: dict, timeout: int = 90) -> str:
+    """从 CF KV 取 PayPal 发送的 2FA OTP。
 
-    if not imap_auth_code:
-        _log("      未配置 IMAP 授权码，无法获取 PayPal OTP")
+    前提：PayPal 账户绑定的邮箱（`paypal_cfg["email"]`）已迁移到 catch-all
+    域名，PayPal 发的 OTP 邮件就会落进 otp-relay Worker 写到 KV。
+    若仍是 IMAP 邮箱（QQ 等），KV 里取不到，会超时返回空串。
+    """
+    target = (paypal_cfg.get("email") or "").strip()
+    if not target:
+        _log("      [PayPal OTP] 缺 paypal.email 配置")
         return ""
-
-    _log(f"      IMAP 连接: {imap_server}:{imap_port} ({imap_email})")
-    import imaplib
-    import email as email_mod
-    from email.header import decode_header as _decode_header
-
-    issued_after = time.time() - 30  # 只看最近 30 秒的邮件（点击发送按钮后的新邮件）
-    deadline = time.time() + timeout
-    poll_interval = 5
-
-    while time.time() < deadline:
-        try:
-            conn = imaplib.IMAP4_SSL(imap_server, imap_port, timeout=15)
-            conn.login(imap_email, imap_auth_code)
-            conn.select("INBOX")
-
-            # 搜索来自 PayPal 的未读邮件
-            search_criteria_list = [
-                '(UNSEEN FROM "paypal")',
-                '(FROM "paypal")',
-            ]
-            found_otp = ""
-            for criteria in search_criteria_list:
-                status, data = conn.search(None, criteria)
-                if status != "OK" or not data[0]:
-                    continue
-                uids = data[0].split()
-                # 从最新的开始检查
-                for uid in reversed(uids[-20:]):
-                    status2, msg_data = conn.fetch(uid, "(RFC822)")
-                    if status2 != "OK" or not msg_data[0]:
-                        continue
-                    raw = msg_data[0][1]
-                    msg = email_mod.message_from_bytes(raw)
-
-                    # 检查时间
-                    date_str = msg.get("Date", "")
-                    if date_str:
-                        try:
-                            from email.utils import parsedate_to_datetime as _pdt
-                            msg_time = _pdt(date_str).timestamp()
-                            if msg_time < issued_after:
-                                continue
-                        except Exception:
-                            pass
-
-                    # 提取邮件正文
-                    body = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            ct = part.get_content_type()
-                            if ct in ("text/plain", "text/html"):
-                                payload = part.get_payload(decode=True)
-                                if payload:
-                                    charset = part.get_content_charset() or "utf-8"
-                                    body += payload.decode(charset, errors="replace")
-                    else:
-                        payload = msg.get_payload(decode=True)
-                        if payload:
-                            charset = msg.get_content_charset() or "utf-8"
-                            body = payload.decode(charset, errors="replace")
-
-                    # 提取 6 位数字验证码，排除邮箱地址自身包含的数字
-                    email_digits = re.sub(r"\D", "", imap_email or "")
-
-                    # 策略1: 先在"验证码"/"code"关键词附近找 6 位数字
-                    for pattern in [
-                        r'(?:验证码|code|Code|CODE)[^\d]{0,20}(\d{6})',
-                        r'(\d{6})[^\d]{0,20}(?:验证码|code|Code)',
-                        r'(?:is|为|：|:)\s*(\d{6})',
-                    ]:
-                        m = re.search(pattern, body)
-                        if m:
-                            candidate = m.group(1)
-                            if candidate not in email_digits and candidate != "000000":
-                                found_otp = candidate
-                                _log(f"      IMAP 找到 PayPal OTP (上下文匹配): {found_otp}")
-                                break
-
-                    # 策略2: 兜底找所有 6 位数字，排除 000000 和邮箱数字
-                    if not found_otp:
-                        codes = re.findall(r'\b(\d{6})\b', body)
-                        for code in codes:
-                            if code in email_digits or code == "000000":
-                                continue
-                            found_otp = code
-                            _log(f"      IMAP 找到 PayPal OTP (兜底): {found_otp}")
-                            break
-
-                    if found_otp:
-                        break
-                if found_otp:
-                    break
-
-            conn.logout()
-            if found_otp:
-                return found_otp
-
-        except Exception as e:
-            _log(f"      IMAP 轮询异常: {e}")
-
-        _log(f"      IMAP 未找到 PayPal OTP，{poll_interval}s 后重试 ...")
-        time.sleep(poll_interval)
-
-    _log("      IMAP 等待 PayPal OTP 超时")
-    return ""
+    try:
+        from cf_kv_otp_provider import CloudflareKVOtpProvider
+    except ImportError as e:
+        _log(f"      [PayPal OTP] cf_kv_otp_provider 不可用: {e}")
+        return ""
+    try:
+        provider = CloudflareKVOtpProvider.from_env_or_secrets()
+        otp = provider.wait_for_otp(target, timeout=timeout)
+        _log(f"      [PayPal OTP] 收到 {otp} (key={target})")
+        return otp
+    except TimeoutError:
+        _log(f"      [PayPal OTP] CF KV 等 OTP 超时 {timeout}s key={target}")
+        return ""
+    except Exception as e:
+        _log(f"      [PayPal OTP] CF KV 取异常: {e}")
+        return ""
 
 
 def confirm_payment(
@@ -7229,8 +7354,6 @@ def poll_result(session: requests.Session, pk: str, session_id: str, stripe_ver:
     raise TimeoutError("轮询超时 (60s)")
 
 
-RESULTS_FILE = os.path.join(_OUTPUT_DIR, "results.jsonl")
-
 
 def _record_result(
     status: str,
@@ -7242,7 +7365,7 @@ def _record_result(
     error_msg: str = "",
     extra: dict = None,
 ):
-    """追加一条结果到 results.jsonl（每行一个 JSON）"""
+    """把支付结果写入 SQLite 运行时数据库。"""
     record = {
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         "status": status,
@@ -7261,8 +7384,7 @@ def _record_result(
             if k in allowed and v:
                 record[k] = v
     try:
-        with open(RESULTS_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        get_db().add_card_result(record)
     except Exception:
         pass
 
@@ -7808,6 +7930,8 @@ def run(
     offline_replay: bool = False,
     local_mock: bool = False,
     use_paypal: bool = False,
+    use_gopay: bool = False,
+    gopay_otp_file: str = "",
 ):
     _init_log()  # 初始化日志文件
 
@@ -7829,7 +7953,9 @@ def run(
         cfg.setdefault("local_mock", {})
         cfg["local_mock"]["enabled"] = True
 
-    # PayPal 模式校验
+    # PayPal / GoPay 模式校验
+    if use_paypal and use_gopay:
+        raise ValueError("--paypal 与 --gopay 互斥")
     paypal_cfg = cfg.get("paypal") or {}
     if use_paypal:
         has_login_creds = paypal_cfg.get("email") and paypal_cfg.get("password")
@@ -7842,6 +7968,10 @@ def run(
                 f"  [警告] PayPal 通常仅支持欧盟国家地址，当前 billing country={billing_country}。"
                 f"继续尝试，但可能被 Stripe 拒绝。"
             )
+    if use_gopay:
+        gopay_cfg = cfg.get("gopay") or {}
+        if not all(gopay_cfg.get(k) for k in ("country_code", "phone_number", "pin")):
+            raise ValueError("GoPay 模式需 cfg.gopay 提供 country_code / phone_number / pin")
 
     _FIRST_NAMES = [
         "JAMES", "JOHN", "ROBERT", "MICHAEL", "WILLIAM", "DAVID", "RICHARD", "JOSEPH",
@@ -8030,8 +8160,14 @@ def run(
     if use_paypal:
         # PayPal 必须走 shared_payment_method 模式（先创建 pm，再 confirm 引用）
         init_ctx["confirm_mode"] = "shared_payment_method"
+    elif use_gopay:
+        init_ctx["confirm_mode"] = "shared_payment_method"
+        init_ctx["payment_method_type"] = "gopay"
     else:
         init_ctx["confirm_mode"] = runtime_cfg.get("confirm_mode", "inline_payment_method_data")
+    # 把 processor_entity 透传给 manual_approval 阶段；默认 openai_llc（IDR/Plus 用）
+    if fresh_info and fresh_info.get("processor_entity"):
+        init_ctx["processor_entity"] = fresh_info["processor_entity"]
     init_ctx["frontend_execution"] = (
         runtime_cfg.get("frontend_execution")
         or DEFAULT_FRONTEND_EXECUTION
@@ -8190,6 +8326,11 @@ def run(
                 pm_id = create_paypal_payment_method(
                     http, pk, card, session_id, stripe_ver, ctx=init_ctx
                 )
+        elif use_gopay:
+            with _http_session_stage_proxy(http, stage_proxy_cfg, "payment_method"):
+                pm_id = create_gopay_payment_method(
+                    http, pk, card, session_id, stripe_ver, ctx=init_ctx
+                )
         elif init_ctx.get("confirm_mode") != "inline_payment_method_data":
             with _http_session_stage_proxy(http, stage_proxy_cfg, "payment_method"):
                 pm_id = create_payment_method(
@@ -8203,7 +8344,7 @@ def run(
                 pk,
                 session_id,
                 pm_id,
-                card if (not use_paypal and init_ctx.get("confirm_mode") == "inline_payment_method_data") else None,
+                card if (not use_paypal and not use_gopay and init_ctx.get("confirm_mode") == "inline_payment_method_data") else None,
                 captcha_token,
                 init_resp,
                 stripe_ver,
@@ -8214,7 +8355,7 @@ def run(
             )
 
         # PayPal 模式: 检测 redirect_to_url 并启动浏览器授权
-        if use_paypal:
+        if use_paypal or use_gopay:
             next_action = None
             for source_key in ("next_action", "payment_intent", "setup_intent"):
                 obj = confirm_data.get(source_key)
@@ -8235,16 +8376,23 @@ def run(
                 redirect_info = next_action.get("redirect_to_url", {})
                 paypal_redirect_url = redirect_info.get("url", "")
                 if paypal_redirect_url:
-                    _log(f"      PayPal redirect URL: {paypal_redirect_url[:100]}...")
-                    success = _handle_paypal_redirect(
-                        paypal_redirect_url,
-                        paypal_cfg,
-                        locale_profile=locale_profile,
-                        ctx=init_ctx,
-                    )
-                    if not success:
-                        raise RuntimeError("PayPal 授权失败或超时")
-                    _log("      PayPal 授权完成，继续 poll 结果 ...")
+                    _log(f"      redirect URL: {paypal_redirect_url[:100]}...")
+                    if use_gopay:
+                        _drive_gopay_from_redirect(
+                            paypal_redirect_url, cfg, gopay_otp_file,
+                            session_id=session_id,
+                        )
+                        _log("      GoPay 授权 + 扣款完成，继续 poll 结果 ...")
+                    else:
+                        success = _handle_paypal_redirect(
+                            paypal_redirect_url,
+                            paypal_cfg,
+                            locale_profile=locale_profile,
+                            ctx=init_ctx,
+                        )
+                        if not success:
+                            raise RuntimeError("PayPal 授权失败或超时")
+                        _log("      PayPal 授权完成，继续 poll 结果 ...")
                 else:
                     raise RuntimeError("PayPal confirm 返回了 redirect_to_url 但缺少 url 字段")
             else:
@@ -8259,7 +8407,11 @@ def run(
                         fresh_cfg = cfg.get("fresh_checkout") or {}
                         auth_cfg = fresh_cfg.get("auth") or {}
                         access_token = (auth_cfg.get("access_token") or "").strip()
-                        oai_device_id = (auth_cfg.get("oai_device_id") or "").strip()
+                        oai_device_id = (
+                            auth_cfg.get("oai_device_id")
+                            or auth_cfg.get("device_id")
+                            or ""
+                        ).strip()
                         cookie_header = (auth_cfg.get("cookie_header") or "").strip()
                         processor_entity = init_ctx.get("processor_entity") or "openai_ie"
                         # 推断: processor_entity 可能在 init_resp 或 fresh_info
@@ -8291,6 +8443,17 @@ def run(
                         _log(f"      [manual_approval] ChatGPT approve: {ar.status_code} body={ar.text[:200]}")
                         if ar.status_code != 200:
                             raise RuntimeError(f"ChatGPT approve 失败: {ar.status_code} {ar.text[:200]}")
+                        try:
+                            approve_payload = ar.json() or {}
+                        except Exception:
+                            approve_payload = {}
+                        approve_result = str(approve_payload.get("result") or "").lower()
+                        if approve_result and approve_result != "approved":
+                            # result=blocked is the signal that this confirm path needs
+                            # an hCaptcha-backed retry. Surface the literal word so the
+                            # outer confirm retry handler falls into the existing solver
+                            # path instead of polling Stripe until timeout.
+                            raise RuntimeError(f"manual_approval approve blocked: result={approve_result}")
                     except Exception as e_ap:
                         _log(f"      [manual_approval] approve 异常: {e_ap}")
                         raise
@@ -8335,6 +8498,13 @@ def run(
                             url = (na.get("redirect_to_url") or {}).get("url", "")
                             if url:
                                 _log(f"      [manual_approval] 拿到 redirect: {url[:100]}")
+                                if use_gopay:
+                                    _drive_gopay_from_redirect(
+                                        url, cfg, gopay_otp_file,
+                                        session_id=session_id,
+                                    )
+                                    got_redirect = True
+                                    break
                                 success = _handle_paypal_redirect(
                                     url, paypal_cfg,
                                     locale_profile=locale_profile, ctx=init_ctx,
@@ -8472,10 +8642,10 @@ def run(
 
     # 记录结果
     chatgpt_email = fresh_cfg.get("_chatgpt_email", card.get("email", ""))
-    payment_channel = "paypal" if use_paypal else "card"
+    payment_channel = "gopay" if use_gopay else ("paypal" if use_paypal else "card")
     result_state = result.get("state", "unknown")
 
-    # 从 registered_accounts.jsonl 查最近一条匹配 email 的 refresh_token
+    # 从数据库查最近一条匹配 email 的账号凭证。
     extra_info = {}
     # 支付成功时记录 Team workspace account_id
     try:
@@ -8492,28 +8662,13 @@ def run(
     # 支付成功才拿 refresh_token（失败不拿）
     if result_state == "succeeded" and chatgpt_email:
         try:
-            # 从 output/registered_accounts.jsonl 取本账号的 password
+            # 从 SQLite 主存储取本账号的 password。
             import os as _os
             _password = ""
-            accounts_file = _os.path.join(_OUTPUT_DIR, "registered_accounts.jsonl")
-            # 向后兼容：也回退到旧路径（项目根目录）
-            if not _os.path.exists(accounts_file):
-                legacy = _os.path.join(
-                    _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-                    "registered_accounts.jsonl",
-                )
-                if _os.path.exists(legacy):
-                    accounts_file = legacy
-            if _os.path.exists(accounts_file):
-                with open(accounts_file, "r", encoding="utf-8") as af:
-                    for line in reversed(af.readlines()):
-                        try:
-                            entry = json.loads(line)
-                        except Exception:
-                            continue
-                        if entry.get("email") == chatgpt_email:
-                            _password = entry.get("password", "") or ""
-                            break
+            try:
+                _password = (get_db().find_latest_registered_account(chatgpt_email) or {}).get("password", "") or ""
+            except Exception:
+                _password = ""
 
             # 加载 CTF-reg/config.paypal-proxy.json 里的 mail 配置（供 IMAP 取 OTP）
             _mail_cfg = {}
@@ -8532,11 +8687,12 @@ def run(
             if _password and _mail_cfg:
                 _log("      [RT] 支付成功，重新登录拿 refresh_token ...")
                 rt_value = _exchange_refresh_token_with_session(
-                    email=chatgpt_email,
-                    password=_password,
-                    mail_cfg=_mail_cfg,
-                    proxy_url=_build_proxy_url_from_cfg(cfg.get("proxy")) if isinstance(cfg, dict) else "",
-                )
+	                    email=chatgpt_email,
+	                    password=_password,
+	                    mail_cfg=_mail_cfg,
+	                    proxy_url=_build_proxy_url_from_cfg(cfg.get("proxy")) if isinstance(cfg, dict) else "",
+	                    oauth_client_id=_codex_oauth_client_id_from_config(cfg),
+	                )
                 if rt_value:
                     extra_info["refresh_token"] = rt_value
                     _log(f"      [RT] ✅ 获得 refresh_token 长度={len(rt_value)}")
@@ -8598,6 +8754,16 @@ def main():
         help="使用 PayPal 支付（需要配置文件中包含 paypal 段，仅支持欧盟国家地址）",
     )
     parser.add_argument(
+        "--gopay",
+        action="store_true",
+        help="使用 GoPay tokenization (印尼 e-wallet, ChatGPT Plus)",
+    )
+    parser.add_argument(
+        "--gopay-otp-file",
+        default="",
+        help="webui 模式: gopay 从这个文件读 WhatsApp OTP",
+    )
+    parser.add_argument(
         "--json-result",
         action="store_true",
         help="输出结构化 JSON 结果到 stdout（供 pipeline 解析）",
@@ -8615,11 +8781,14 @@ def main():
             offline_replay=args.offline_replay,
             local_mock=args.local_mock,
             use_paypal=args.paypal,
+            use_gopay=args.gopay,
+            gopay_otp_file=args.gopay_otp_file,
         )
         if args.json_result and result:
             print("CARD_RESULT_JSON=" + json.dumps(result, ensure_ascii=False), flush=True)
     except Exception as e:
-        err_msg = f"\n[ERROR] {type(e).__name__}: {e}"
+        import traceback as _tb
+        err_msg = f"\n[ERROR] {type(e).__name__}: {e}\n{_tb.format_exc()}"
         print(err_msg, file=sys.stderr)
         # 记录失败
         _record_result(

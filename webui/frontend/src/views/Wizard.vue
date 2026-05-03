@@ -3,7 +3,7 @@
     <header class="wizard-header">
       <div class="brand">
         <span class="brand-prompt">$</span>
-        <span class="brand-name">gpt-mitm</span>
+        <span class="brand-name">gpt-pay</span>
         <span class="brand-sub">// 配置向导</span>
         <span class="brand-clock">{{ clock }}</span>
       </div>
@@ -60,9 +60,10 @@ import { api } from "../api/client";
 import Step01 from "../components/steps/Step01_Welcome.vue";
 import Step02 from "../components/steps/Step02_System.vue";
 import Step03 from "../components/steps/Step03_Cloudflare.vue";
-import Step04 from "../components/steps/Step04_IMAP.vue";
+import Step04 from "../components/steps/Step04_CloudflareKV.vue";
 import Step05 from "../components/steps/Step05_Proxy.vue";
 import Step06 from "../components/steps/Step06_PayPal.vue";
+import Step06GoPay from "../components/steps/Step06_GoPay.vue";
 import Step07 from "../components/steps/Step07_Card.vue";
 import Step08 from "../components/steps/Step08_Captcha.vue";
 import Step09 from "../components/steps/Step09_VLM.vue";
@@ -76,7 +77,14 @@ const STEPS = [Step01, Step02, Step03, Step04, Step05, Step06, Step07, Step08, S
 
 const store = useWizardStore();
 const router = useRouter();
-const currentStepComponent = computed(() => STEPS[store.currentStep - 1]);
+const currentStepComponent = computed(() => {
+  // Step 6 = payment-specific config: PayPal / GoPay 同位
+  if (store.currentStep === 6) {
+    const pm = (store.answers.payment as any)?.method;
+    if (pm === "gopay") return Step06GoPay;
+  }
+  return STEPS[store.currentStep - 1];
+});
 const progressPct = computed(() => (store.currentStep / 14) * 100);
 
 const clock = ref("");

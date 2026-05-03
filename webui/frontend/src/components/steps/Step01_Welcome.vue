@@ -10,7 +10,7 @@
     <h3 class="step-h2">$&nbsp;支付方式</h3>
     <p class="step-sub">决定后面 step 6 (PayPal) 和 step 7 (卡) 哪些显示。"双备份"等同于两边都填，pipeline 按 <code>--paypal</code> 切换。</p>
 
-    <TermChoice v-model="payment" :options="paymentOptions" :cols="3" @update:modelValue="onPaymentChange" />
+    <TermChoice v-model="payment" :options="paymentOptions" :cols="2" @update:modelValue="onPaymentChange" />
   </section>
 </template>
 
@@ -28,12 +28,15 @@ const modeOptions = [
   { value: "batch", label: "batch — N×", desc: "批量：循环跑 N 个 pipeline" },
   { value: "self_dealer", label: "self_dealer — 1+N", desc: "自产自销：1 owner 付费 + N 个 member 上车" },
   { value: "daemon", label: "daemon — ∞", desc: "常驻：维护补号池容量" },
+  { value: "free_register", label: "free_register — 免费号 + rt + CPA", desc: "循环注册免费 ChatGPT 号 → OAuth 拿 refresh_token → 推 CPA(free)，不走支付" },
+  { value: "free_backfill_rt", label: "free_backfill_rt — 老号补 rt", desc: "读数据库里的老号记录给账号补 rt + 推 CPA，跳过已成功/已注销" },
 ];
 
 const paymentOptions = [
-  { value: "paypal", label: "PayPal", desc: "走 PayPal 登录扣余额，需 PayPal 账号 + IMAP 收 OTP" },
-  { value: "card", label: "纯卡", desc: "Stripe 直接刷卡，跳过 PayPal" },
-  { value: "both", label: "双备份", desc: "都填，pipeline 按 --paypal 切换" },
+  { value: "paypal", label: "PayPal", desc: "PayPal 余额支付 · 邮箱走 catch-all/CF KV" },
+  { value: "card", label: "纯卡", desc: "Stripe 直接刷卡" },
+  { value: "both", label: "双备份", desc: "PayPal + 卡，按 --paypal 切" },
+  { value: "gopay", label: "GoPay", desc: "印尼 e-wallet · Plus 专用 · WhatsApp OTP + PIN" },
 ];
 
 function onModeChange(v: string) {

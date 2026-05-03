@@ -8,8 +8,8 @@ body:
       value: |
         提交之前先看下：
 
-        - **账号被封、IP 被打标、PayPal 拒收** —— 这是预期，看 [反欺诈实证](https://github.com/DanOps-1/gpt-pp-team#-反欺诈实证)。别提 issue
-        - **怀疑是安全漏洞**（凭证泄露、注入之类）—— 看 [`SECURITY.md`](https://github.com/DanOps-1/gpt-pp-team/blob/main/SECURITY.md)，别公开提
+        - **账号被封、IP 被打标、PayPal 拒收** —— 这是预期，看 [反欺诈实证](https://github.com/DanOps-1/Gpt-Agreement-Payment#-反欺诈实证)。别提 issue
+        - **怀疑是安全漏洞**（凭证泄露、注入之类）—— 看 [`SECURITY.md`](https://github.com/DanOps-1/Gpt-Agreement-Payment/blob/main/SECURITY.md)，别公开提
         - **针对未授权目标使用** —— 别提 issue，并请停下
 
   - type: textarea

@@ -324,6 +324,22 @@ def browser_register(cfg, mail_provider) -> dict:
                         break
                 time.sleep(4)
 
+                # OpenAI 在 OTP 错误时会显示 "Incorrect code" 红字，反复点
+                # Continue 会触发 max_check_attempts 风控（永久卡死）。早退。
+                try:
+                    err = page.query_selector(
+                        'text=/incorrect code|invalid code|wrong code|验证码不正确|验证码错误/i'
+                    )
+                    if err and err.is_visible():
+                        page.screenshot(path="/tmp/browser_reg_otp_rejected.png")
+                        raise RuntimeError(
+                            f"OpenAI 拒绝 OTP {otp_code}（OTP 抽取错误，可能是 hex 颜色/tracking id 假阳性）"
+                        )
+                except RuntimeError:
+                    raise
+                except Exception:
+                    pass
+
             # [6] /about-you：Full name + Age（单框）
             logger.info(f"[browser-reg] OTP 后 URL: {page.url[:120]}")
             time.sleep(5)  # 等重定向到 /about-you
@@ -555,7 +571,7 @@ def browser_register(cfg, mail_provider) -> dict:
                 result["refresh_token"] = result.get("refresh_token", "") or ""
             else:
                 try:
-                    codex_client_id = "YOUR_OPENAI_CODEX_CLIENT_ID"
+                    codex_client_id = (os.getenv("OAUTH_CODEX_CLIENT_ID", "") or "").strip() or "app_EMoamEEZ73f0CkXaXp7hrann"
                     codex_redirect = "http://localhost:1455/auth/callback"
                     codex_scope = "openid email profile offline_access"
                     codex_state = _b64url_no_pad(secrets.token_bytes(24))

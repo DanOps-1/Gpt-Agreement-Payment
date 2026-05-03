@@ -10,6 +10,14 @@ CTF-pay/paypal_cf_persist/
 CTF-pay/paypal_cf_persist.bak-*/
 CTF-pay/paypal_cf_persist.bak_*/
 
+# WhatsApp/Web relay 持久化 session（含本机登录态 / 浏览器缓存）
+CTF-pay/whatsapp_relay/
+webui/whatsapp_relay/node_modules/
+webui/whatsapp_relay/.wwebjs_cache/
+webui/whatsapp_relay/.wwebjs_auth/
+webui/whatsapp_relay/.wa-session/
+webui/whatsapp_relay/baileys-gopay/
+
 # 运行时产物（账号凭证 / 支付结果 / 日志 / 域池状态 / CF API token）
 output/
 
@@ -37,9 +45,15 @@ __pycache__/
 # IDE / 工具
 .vscode/
 .idea/
+.claude/
+.codex/
 .serena/
 .superpowers/
 docs/superpowers/
+
+# Agent/Codex collaboration-only instructions; keep out of public releases.
+AGENTS.md
+CLAUDE.md
 
 # 操作系统
 .DS_Store

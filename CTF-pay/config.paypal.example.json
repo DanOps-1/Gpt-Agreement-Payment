@@ -52,12 +52,9 @@
     }
   ],
   "paypal": {
-    "email": "you@example.com",
+    "_comment": "PayPal 邮箱必须是 catch-all zone 内的地址；2FA OTP 经 CF Email Worker → KV 自动取（见 SQLite runtime_meta[secrets].cloudflare），不再需要 IMAP 字段。",
+    "email": "you@your-catch-all-zone.com",
     "password": "YOUR_PAYPAL_PASSWORD",
-    "imap_server": "imap.example.com",
-    "imap_port": 993,
-    "imap_email": "you@example.com",
-    "imap_auth_code": "YOUR_IMAP_AUTH_CODE",
     "cookies": ""
   },
   "captcha": {

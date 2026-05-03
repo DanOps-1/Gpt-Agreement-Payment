@@ -1,11 +1,6 @@
 {
   "mail": {
-    "imap_server": "imap.example.com",
-    "imap_port": 993,
-    "smtp_server": "smtp.example.com",
-    "smtp_port": 465,
-    "email": "you@example.com",
-    "auth_code": "YOUR_IMAP_AUTH_CODE",
+    "_comment": "OTP 走 Cloudflare Email Worker → KV（见 scripts/setup_cf_email_worker.py + scripts/otp_email_worker.js）。CF 凭证存 SQLite runtime_meta[secrets].cloudflare 段，不在这里。",
     "catch_all_domain": "subdomain.example.com",
     "catch_all_domains": [
       "subdomain.example.com"

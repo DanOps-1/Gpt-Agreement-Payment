@@ -131,10 +131,7 @@ cp CTF-reg/config.example.json              CTF-reg/config.noproxy.json
 ```json
 {
   "mail": {
-    "imap_server": "imap.example.com",
-    "imap_port": 993,
-    "email": "you@example.com",
-    "auth_code": "YOUR_IMAP_AUTH_CODE",
+    "_comment": "OTP 走 CF Email Worker → KV，凭证在 SQLite runtime_meta[secrets]，这里只配 catch-all 域名",
     "catch_all_domain": "subdomain.example.com",
     "catch_all_domains": ["subdomain.example.com"],
     "auto_provision": {
@@ -153,6 +150,28 @@ cp CTF-reg/config.example.json              CTF-reg/config.noproxy.json
   "proxy": "socks5://USER:PASS@PROXY_HOST:PORT"
 }
 ```
+
+> **OTP 接收：CF Email Worker → KV**（不再用 IMAP 拉 QQ 邮箱）
+>
+> 注册和 PayPal 登录的 OTP 邮件都经 Cloudflare Email Routing → `otp-relay`
+> Worker → KV 落库（毫秒级，见 [`scripts/setup_cf_email_worker.py`](../scripts/setup_cf_email_worker.py) 一键部署 + [`scripts/otp_email_worker.js`](../scripts/otp_email_worker.js)）。
+>
+> 一次性配好后，OTP 凭证写到 `SQLite runtime_meta[secrets]`：
+>
+> ```json
+> {
+>   "cloudflare": {
+>     "api_token": "cfut_...",
+>     "account_id": "<account-id>",
+>     "otp_kv_namespace_id": "<kv-namespace-id>",
+>     "otp_worker_name": "otp-relay",
+>     "zone_names": ["zone-a.example", "zone-b.example"]
+>   }
+> }
+> ```
+>
+> 也可以用环境变量 `CF_API_TOKEN` / `CF_ACCOUNT_ID` / `CF_OTP_KV_NAMESPACE_ID`
+> 临时覆盖。
 
 `mail.auto_provision` 是多 zone 域池配置：
 

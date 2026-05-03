@@ -10,7 +10,7 @@ body:
 
         - **新 hCaptcha 题型**：附 prompt 截图和 `/tmp/hcaptcha_auto_solver*/` 里的 `round_XX.json`
         - **协议阶段变更**（Stripe / PayPal / OpenAI 出 breaking change）：附相关流量抓包或 response body 让我们核对新结构
-        - **涉及未授权使用**第三方服务的请求：别提交。看 [`SECURITY.md`](https://github.com/DanOps-1/gpt-pp-team/blob/main/SECURITY.md)
+        - **涉及未授权使用**第三方服务的请求：别提交。看 [`SECURITY.md`](https://github.com/DanOps-1/Gpt-Agreement-Payment/blob/main/SECURITY.md)
 
   - type: textarea
     id: motivation

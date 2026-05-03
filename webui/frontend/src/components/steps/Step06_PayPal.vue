@@ -11,13 +11,11 @@
     <template v-else>
       <div class="term-divider" data-tail="──────────">步骤 06: PayPal</div>
       <h2 class="step-h">$&nbsp;PayPal 凭据<span class="term-cursor"></span></h2>
-      <p class="step-sub">第一次跑要人肉过一次邮箱 OTP 2FA。这里只校验字段格式，不真登录避免触发 2FA。</p>
+      <p class="step-sub">PayPal 邮箱必须是 Step 03 配的 catch-all 域名下的地址（如 you@your-zone.com），2FA OTP 经 CF Worker → KV 自动取，不再用 IMAP。</p>
 
       <div class="form-stack">
-        <TermField v-model="form.email" label="PayPal 邮箱 · email" />
+        <TermField v-model="form.email" label="PayPal 邮箱 · email" placeholder="必须是 catch-all zone 内的地址" />
         <TermField v-model="form.password" label="PayPal 密码 · password" type="password" />
-        <TermField v-model="form.imap_server" label="IMAP 服务器 · imap_server" placeholder="留空 = 用 Step 4" />
-        <TermField v-model="form.imap_auth_code" label="IMAP 授权码 · imap_auth_code" type="password" />
       </div>
 
       <div v-if="warning" class="result-block result--warn" style="margin-top:16px">
@@ -40,8 +38,6 @@ const init = store.answers.paypal ?? {};
 const form = ref({
   email: init.email ?? "",
   password: init.password ?? "",
-  imap_server: init.imap_server ?? "",
-  imap_auth_code: init.imap_auth_code ?? "",
 });
 
 const warning = computed(() => {

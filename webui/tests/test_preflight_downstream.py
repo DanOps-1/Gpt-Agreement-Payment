@@ -38,8 +38,8 @@ def test_team_system_bad_creds(client):
 @respx.mock
 def test_cpa_ok(client):
     _login(client)
-    respx.get("https://cpa.example.com/api/v0/health").mock(
-        return_value=Response(200, json={"status": "ok"})
+    respx.get("https://cpa.example.com/api/v0/management/auth-files").mock(
+        return_value=Response(200, json=[])
     )
     r = client.post("/api/preflight/cpa", json={
         "base_url": "https://cpa.example.com/api",

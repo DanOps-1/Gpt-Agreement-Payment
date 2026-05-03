@@ -12,7 +12,7 @@ flowchart LR
     D --> E[Camoufox PayPal<br/>协议授权]
     E --> F[Stripe poll<br/>state=succeeded]
     F --> G[Camoufox 二次登录<br/>Codex OAuth + PKCE]
-    G --> H[refresh_token<br/>output/results.jsonl]
+    G --> H[refresh_token<br/>output/webui.db &#40;SQLite&#41;]
     H --> I[可选: 推 gpt-team /<br/>CPA / 其他下游]
 ```
 
@@ -21,7 +21,7 @@ flowchart LR
 ## 文件组织
 
 ```
-gpt-pp-team/
+Gpt-Agreement-Payment/
 ├── pipeline.py                     # 编排器：单次 / 批量 / daemon / self-dealer
 ├── CTF-pay/                        # Stripe + PayPal 协议重放
 │   ├── card.py                     # 主程序，约 8000 行
@@ -34,14 +34,14 @@ gpt-pp-team/
 │   ├── browser_register.py         # Camoufox 真浏览器注册
 │   ├── auth_flow.py                # 纯 HTTP 注册（备用）
 │   ├── sentinel.py                 # OpenAI Sentinel PoW token
-│   ├── mail_provider.py            # IMAP catch-all 取 OTP
+│   ├── mail_provider.py            # 生成 catch-all 邮箱 + 委托 cf_kv_otp_provider 取 OTP
+│   ├── cf_kv_otp_provider.py       # 从 Cloudflare KV 读 OTP（worker 写入）
 │   ├── http_client.py              # curl_cffi / requests 工厂
 │   └── config.py                   # dataclass 配置定义
 ├── docs/                           # 详细文档
 └── output/                         # 运行时产物（gitignored）
-    ├── results.jsonl
-    ├── registered_accounts.jsonl
-    ├── daemon_state.json
+    ├── webui.db                  # SQLite runtime store
+    ├── SQLite runtime_meta[daemon_state]
     └── logs/
 ```
 
@@ -91,7 +91,8 @@ gpt-pp-team/
 | `browser_register.py` | Camoufox 真浏览器注册主路径，过 Cloudflare Turnstile |
 | `auth_flow.py` | 纯 HTTP 注册路径，备用（覆盖率不全） |
 | `sentinel.py` | OpenAI Sentinel PoW token 生成（浏览器指纹模拟 + SHA-3） |
-| `mail_provider.py` | IMAP catch-all 取注册 / 登录 OTP |
+| `mail_provider.py` | catch-all 邮箱生成 + 委托 KV 取 OTP |
+| `cf_kv_otp_provider.py` | 从 CF KV 读 worker 写入的 OTP（替代 IMAP） |
 | `http_client.py` | HTTP 客户端工厂，优先 curl_cffi 做 TLS 指纹 |
 | `config.py` | dataclass 配置定义 |
 
@@ -161,7 +162,7 @@ GET https://auth.openai.com/oauth/authorize
 走流程：
 
 1. 填邮箱 + 密码
-2. 可能触发 IMAP OTP（轮询登录码邮件）
+2. 可能触发邮箱 OTP（CF Email Worker → KV，毫秒级落库）
 3. Codex consent 页点 Continue
 4. Playwright route 拦 `localhost:1455` callback，提取 `code`
 5. POST `/oauth/token` with `code_verifier` → 拿到 `refresh_token`
@@ -185,29 +186,18 @@ WebshareQuotaExhausted      # Webshare 替换代理配额耗尽
 
 ## 数据流
 
-### `output/results.jsonl`
+### `output/webui.db`
 
-每条 pipeline 结果一行 JSON：
+运行时账号 / 支付 / OAuth 状态都存放在 SQLite 数据库 `output/webui.db` 中。主要表包括：
 
-```json
-{"ts": "2026-04-27T03:14:22Z",
- "status": "succeeded",
- "chatgpt_email": "abc123@your-domain.example",
- "session_id": "cs_live_a1b2c3...",
- "channel": "paypal",
- "team_account_id": "38a7aff4-...-...",
- "refresh_token": "rt_...",
- "invite_permission": "ok",
- "team_gpt_account_pk": 12345,
- "email_domain": "your-domain.example",
- "cpa_import": {"status": "ok", "account_id": "..."}}
-```
+- `registered_accounts`：注册成功账号的完整凭证（`password` / `access_token` / `session_token` / `device_id` / cookies 等）
+- `pipeline_results`：pipeline 单次 / 批量 / self-dealer 的结果摘要
+- `card_results`：`card.py` 的支付终态和补字段结果
+- `oauth_status`：free-only / RT 维护时的 OAuth 状态机
 
-### `output/registered_accounts.jsonl`
+> 这部分是运行时数据，不再使用 JSONL 作为主存储。
 
-每个注册成功的账号一行 JSON，包含完整凭证（`password` / `access_token` / `session_token` / `device_id` / cookies）。**这个文件含敏感数据**，gitignore 已经排除。
-
-### `output/daemon_state.json`
+### `SQLite runtime_meta[daemon_state]`
 
 daemon 模式的状态快照（重启续跑用）：
 

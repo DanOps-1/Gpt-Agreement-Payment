@@ -34,8 +34,8 @@ sudo curl -sSfL \
 ## 第二步：核心 Python 依赖
 
 ```bash
-git clone https://github.com/DanOps-1/gpt-pp-team
-cd gpt-pp-team
+git clone https://github.com/DanOps-1/Gpt-Agreement-Payment
+cd Gpt-Agreement-Payment
 
 pip install requests curl_cffi playwright camoufox browserforge mitmproxy pybase64
 
@@ -83,7 +83,7 @@ cp CTF-reg/config.example.json              CTF-reg/config.noproxy.json
    - `Zone` → `DNS` → `Edit`
    - `Zone` → `Zone` → `Read`
 4. Zone Resources 选你要管的 zone
-5. 创建后写到 `output/secrets.json`：
+5. 创建后写到 `SQLite runtime_meta[secrets]`：
 
 ```json
 {

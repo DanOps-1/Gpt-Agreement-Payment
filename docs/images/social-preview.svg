@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" fill="none" stroke-linecap="round" stroke-linejoin="round" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace">
-  <title>gpt-pp-team — social preview</title>
+  <title>Gpt-Agreement-Payment — social preview</title>
 
   <!-- 背景 -->
   <rect width="1280" height="640" fill="#0d1117"/>
@@ -29,7 +29,7 @@
   </g>
 
   <!-- 标题与副标题（右侧）-->
-  <text x="440" y="290" font-size="84" font-weight="700" fill="#e6edf3" letter-spacing="-1.5">gpt-pp-team</text>
+  <text x="440" y="290" font-size="84" font-weight="700" fill="#e6edf3" letter-spacing="-1.5">Gpt-Agreement-Payment</text>
 
   <text x="440" y="350" font-size="30" fill="#8b949e">ChatGPT Team 订阅协议端到端重放工具</text>
   <text x="440" y="392" font-size="30" fill="#8b949e">含 hCaptcha 视觉求解器与反欺诈实证数据</text>

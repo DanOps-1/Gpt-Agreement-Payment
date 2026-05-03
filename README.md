@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="docs/images/logo-light.png#gh-light-mode-only" width="120" alt="gpt-pp-team logo">
-  <img src="docs/images/logo-dark.png#gh-dark-mode-only"   width="120" alt="gpt-pp-team logo">
+  <img src="docs/images/logo-light.png#gh-light-mode-only" width="120" alt="Gpt-Agreement-Payment logo">
+  <img src="docs/images/logo-dark.png#gh-dark-mode-only"   width="120" alt="Gpt-Agreement-Payment logo">
 </p>
 
-# gpt-pp-team
+# Gpt-Agreement-Payment
 
 ChatGPT Team 订阅协议的端到端重放工具，附带从零实现的 hCaptcha 视觉求解器，以及一组真实运行采集的反欺诈机制实证数据。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
-[![CI](https://img.shields.io/github/actions/workflow/status/DanOps-1/gpt-pp-team/ci.yml?label=CI)](https://github.com/DanOps-1/gpt-pp-team/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/DanOps-1/Gpt-Agreement-Payment/ci.yml?label=CI)](https://github.com/DanOps-1/Gpt-Agreement-Payment/actions)
 [![Use](https://img.shields.io/badge/use-CTF%20%2F%20bug%20bounty-red)](#法律边界)
 
 > [!CAUTION]
@@ -39,7 +39,7 @@ flowchart LR
     D --> E[Camoufox PayPal<br/>协议授权]
     E --> F[Stripe poll<br/>state=succeeded]
     F --> G[Camoufox 二次登录<br/>Codex OAuth + PKCE]
-    G --> H[refresh_token<br/>output/results.jsonl]
+    G --> H[refresh_token<br/>output/webui.db &#40;SQLite&#41;]
 ```
 
 详细子系统拆解、文件分工、协议链路细节看 [`docs/architecture.md`](docs/architecture.md)。
@@ -96,8 +96,8 @@ WebUI 已内置一个基于守宫 GIF 重新生成的默认宠物素材包，路
 ### 装
 
 ```bash
-git clone https://github.com/DanOps-1/gpt-pp-team
-cd gpt-pp-team
+git clone https://github.com/DanOps-1/Gpt-Agreement-Payment
+cd Gpt-Agreement-Payment
 pip install requests curl_cffi playwright camoufox browserforge mitmproxy pybase64
 playwright install firefox
 camoufox fetch
@@ -206,11 +206,11 @@ xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal --da
 
 ## Star History
 
-<a href="https://star-history.com/#DanOps-1/gpt-pp-team&Date">
+<a href="https://star-history.com/#DanOps-1/Gpt-Agreement-Payment&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=DanOps-1/gpt-pp-team&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=DanOps-1/gpt-pp-team&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=DanOps-1/gpt-pp-team&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=DanOps-1/Gpt-Agreement-Payment&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=DanOps-1/Gpt-Agreement-Payment&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=DanOps-1/Gpt-Agreement-Payment&type=Date" />
   </picture>
 </a>
 

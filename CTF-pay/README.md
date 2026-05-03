@@ -173,3 +173,175 @@ CTF 场景下当前协议主链，按真实抓包整理如下：
 回放工件默认写到：
 
 - `/tmp/ctf_local_mock_latest.json`
+
+## GoPay WhatsApp OTP 自动接收
+
+GoPay linking 会把 OTP 发到 WhatsApp。旧流程只支持 CLI / WebUI 手动输入；
+现在 `gopay.py` 支持自动从 WebUI WhatsApp 登录 sidecar、本地 HTTP relay、
+state/log 文件或命令取码。
+
+### 1. WebUI 推荐路径：只暴露一个 WhatsApp 登录入口
+
+WebUI GoPay 配置页只显示一个入口：
+
+```text
+WhatsApp 登录 / 扫码接收 GoPay OTP
+```
+
+点击后进入 `/whatsapp`，扫码登录 WhatsApp。登录页可以自由选择
+`baileys` 或 `wwebjs` 引擎：默认推荐 Baileys（`@whiskeysockets/baileys`）
+直接监听 WhatsApp multi-device socket；如需回退到旧的
+`whatsapp-web.js`/Chromium 路径，在页面下拉选择 `whatsapp-web.js`
+并重启 sidecar 即可。`WEBUI_WA_ENGINE=wwebjs` 仍可作为首次启动默认值。
+sidecar 会监听新消息，提取 GoPay OTP，并写入：
+
+```text
+SQLite runtime_meta[wa_state] / HTTP relay
+```
+
+注意：GoPay/WhatsApp 的 OTP 模板有时会被 WhatsApp 标记为敏感消息，
+linked device（WhatsApp Web）只能看到类似“你收到了一次性密码，只能在主要
+设备上查看”的占位提示，拿不到验证码正文。这不是解析正则问题，而是
+WhatsApp Web 不下发 OTP 正文。WebUI runner 会在支付日志出现
+`[gopay] waiting WhatsApp OTP from file: ...` 时自动弹出 GoPay OTP 兜底
+输入框；把手机主设备上看到的验证码填进去后，会写入同一个
+`SQLite runtime_meta[wa_state] / HTTP relay`，支付流程继续。
+
+WebUI 导出 GoPay 配置时会自动写入：
+
+```json
+{
+  "gopay": {
+    "otp": {
+      "source": "file",
+      "path": "SQLite runtime_meta[wa_state] / HTTP relay",
+      "timeout": 300,
+      "interval": 1
+    }
+  }
+}
+```
+
+sidecar 依赖在 `webui/whatsapp_relay/`：
+
+```bash
+cd webui/whatsapp_relay
+npm install
+```
+
+当前依赖包含：
+
+- `@whiskeysockets/baileys`：默认引擎；
+- `whatsapp-web.js`：备用引擎。
+
+### 2. 可选：独立 HTTP relay
+
+仓库内置一个很小的 HTTP relay，只负责接收你自己控制的 WhatsApp webhook /
+通知转发内容，提取 6 位 OTP，写入 `SQLite runtime_meta[wa_state]`，并暴露 `/latest`
+给支付流程轮询：
+
+```bash
+python CTF-pay/whatsapp_otp_relay.py --port 8765
+```
+
+本地快速自测：
+
+```bash
+curl -X POST http://127.0.0.1:8765/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"from":"gopay","text":"Kode verifikasi GoPay Anda adalah 123456"}'
+
+curl http://127.0.0.1:8765/latest
+```
+
+`/webhook` 兼容 Meta WhatsApp Cloud API 常见 webhook 形态：
+
+- `GET /webhook?hub.mode=subscribe&hub.verify_token=...&hub.challenge=...`
+  用于 webhook 校验；
+- `POST /webhook` 接收 `entry[].changes[].value.messages[]` 消息。
+
+如果你用 Android 通知转发、已有 WhatsApp Web bridge 或其他自建 relay，只要把
+消息文本 POST 到 `/ingest`，或自己提供一个返回最新 OTP 的 `/latest` 接口即可。
+
+### 3. 手动配置 `gopay.otp`
+
+示例见 `CTF-pay/config.gopay.example.json`：
+
+```json
+{
+  "gopay": {
+    "country_code": "62",
+    "phone_number": "81234567890",
+    "pin": "YOUR_6_DIGIT_GOPAY_PIN",
+    "otp": {
+      "source": "file",
+      "path": "SQLite runtime_meta[wa_state] / HTTP relay",
+      "timeout": 300,
+      "interval": 1,
+      "code_regex": "(?<!\\d)(\\d{6})(?!\\d)",
+      "issued_after_slack_s": 15
+    }
+  }
+}
+```
+
+也支持文件轮询：
+
+```json
+{
+  "gopay": {
+    "otp": {
+      "source": "file",
+      "path": "SQLite runtime_meta[wa_state]",
+      "timeout": 300,
+      "interval": 1
+    }
+  }
+}
+```
+
+HTTP relay 轮询：
+
+```json
+{
+  "gopay": {
+    "otp": {
+      "source": "http",
+      "url": "http://127.0.0.1:8765/latest",
+      "timeout": 300,
+      "interval": 1
+    }
+  }
+}
+```
+
+或命令轮询：
+
+```json
+{
+  "gopay": {
+    "otp": {
+      "source": "command",
+      "command": ["python", "scripts/get_latest_wa_otp.py"],
+      "timeout": 300,
+      "interval": 2
+    }
+  }
+}
+```
+
+### 4. 运行
+
+CLI / pipeline 只要不传 `--gopay-otp-file`，就会优先使用 `gopay.otp`：
+
+```bash
+python CTF-pay/gopay.py --config CTF-pay/config.gopay.example.json
+python CTF-pay/card.py auto --config CTF-pay/config.paypal.json --gopay
+python pipeline.py --config CTF-pay/config.paypal.json --gopay
+```
+
+WebUI 模式下，如果配置里存在非手动 `gopay.otp`，runner 会跳过旧的
+`--gopay-otp-file` 手动弹窗，让 `gopay.py` 直接轮询自动 OTP provider。
+如果自动 provider 等待的是文件路径，runner 也会识别等待日志并打开同一个
+手动兜底弹窗，用于处理 WhatsApp Web “主要设备可见”占位消息。如果没有配置
+`gopay.otp`，行为保持不变：运行页弹窗手动输入 WhatsApp OTP。

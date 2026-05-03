@@ -566,7 +566,7 @@ class AuthFlow:
         构建用于获取 refresh_token 的 Codex OAuth 授权 URL。
         参考 any-auto-register 的实现：独立 client_id + redirect_uri + 可控 PKCE。
         """
-        client_id = (os.getenv("OAUTH_CODEX_CLIENT_ID", "") or "").strip() or "YOUR_OPENAI_CODEX_CLIENT_ID"
+        client_id = (os.getenv("OAUTH_CODEX_CLIENT_ID", "") or "").strip() or "app_EMoamEEZ73f0CkXaXp7hrann"
         redirect_uri = (os.getenv("OAUTH_CODEX_REDIRECT_URI", "") or "").strip() or "http://localhost:1455/auth/callback"
         scope = (os.getenv("OAUTH_CODEX_SCOPE", "") or "").strip() or "openid email profile offline_access"
         state = self._b64url_no_pad(secrets.token_bytes(24))

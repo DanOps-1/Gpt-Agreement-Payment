@@ -1,0 +1,16 @@
+{
+  "name": "gpt-pay-whatsapp-relay",
+  "private": true,
+  "version": "0.1.0",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.21",
+    "pino": "^9.14.0",
+    "qrcode": "^1.5.4",
+    "whatsapp-web.js": "^1.26.0"
+  }
+}
