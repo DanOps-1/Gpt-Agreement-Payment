@@ -12,7 +12,7 @@ flowchart LR
     D --> E[Camoufox PayPal<br/>协议授权]
     E --> F[Stripe poll<br/>state=succeeded]
     F --> G[Camoufox 二次登录<br/>Codex OAuth + PKCE]
-    G --> H[refresh_token<br/>output/webui.db (SQLite)]
+    G --> H[refresh_token<br/>output/webui.db &#40;SQLite&#41;]
     H --> I[可选: 推 gpt-team /<br/>CPA / 其他下游]
 ```
 
