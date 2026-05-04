@@ -213,8 +213,12 @@ class CloudflareKVOtpProvider:
         key = email_addr.strip().lower()
         if issued_after is None:
             issued_after = time.time()
-        # 3s grace —— Worker 写入比 issued_after 早一点也算（CF 时钟轻微偏差）
-        accept_threshold_s = issued_after - 3.0
+        # 放宽 grace 到 600s —— 等同 Worker 写 KV 的 TTL：
+        # 注册场景下每次都是全新随机邮箱（catch-all 域），KV 里能命中的
+        # 一定是当次注册触发的邮件；OpenAI 常常在 email 提交瞬间就发 OTP，
+        # 而 wait_for_otp 在 OTP 页面才被调用，两者间可能差 30-60s，
+        # 用窄 grace 会把真正的 OTP 当成旧值丢弃（实测命中点）。
+        accept_threshold_s = issued_after - 600.0
 
         deadline = time.time() + timeout
         start = time.time()

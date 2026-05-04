@@ -93,11 +93,19 @@ def browser_register(cfg, mail_provider) -> dict:
     from browserforge.fingerprints import Screen
 
     email = mail_provider.create_mailbox()
-    # 密码 = 邮箱去掉 @（便于外部按 email 反推密码）；长度不足 8 时追加后缀
-    password = email.replace("@", "")
-    if len(password) < 8:
-        password = f"{password}2026OpenAI"
-    first_name, last_name = _gen_name()
+    # 优先复用 mail_provider 算法生成的同源 persona（邮箱前缀与 first/last 一致 + 密码=local 倒序）
+    persona = getattr(mail_provider, "last_persona", None)
+    if persona is not None:
+        password = persona.password
+        first_name = persona.first
+        last_name = persona.last
+        logger.info(f"[browser-reg] 使用 mail_provider 同源 persona")
+    else:
+        # 兼容 resume / 老路径：邮箱去 @ 当密码 + 独立挑名字
+        password = email.replace("@", "")
+        if len(password) < 8:
+            password = f"{password}2026OpenAI"
+        first_name, last_name = _gen_name()
     bmonth, bday, byear = _gen_birthday()
     logger.info(f"[browser-reg] 创建账号: {email}")
     logger.info(f"[browser-reg] 密码: {password}  姓名: {first_name} {last_name}")
