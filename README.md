@@ -104,6 +104,8 @@ python -m venv ~/.venvs/ctfml
 
 完整依赖清单和系统包看 [`docs/installation.md`](docs/installation.md)。
 
+macOS 直接用 `python ...` 跑；Linux 无桌面环境时再在前面加 `xvfb-run -a`。
+
 ### 配
 
 复制模板，填值：
@@ -118,11 +120,14 @@ cp CTF-reg/config.paypal-proxy.example.json   CTF-reg/config.paypal-proxy.json
 ### 跑
 
 ```bash
-# 单次完整流程
+# macOS / 有桌面的 Linux
+python pipeline.py --config CTF-pay/config.paypal.json --paypal
+
+# Linux 无桌面环境
 xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal
 
-# 持续维护补号池
-xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal --daemon
+# 持续维护补号池（Linux 无桌面时同样可在前面加 xvfb-run -a）
+python pipeline.py --config CTF-pay/config.paypal.json --paypal --daemon
 ```
 
 四种运行模式（单次 / 批量 / self-dealer / daemon）的差异和参数看 [`docs/operating-modes.md`](docs/operating-modes.md)。

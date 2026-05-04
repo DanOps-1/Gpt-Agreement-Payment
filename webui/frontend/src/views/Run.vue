@@ -379,7 +379,7 @@ const status = ref<RunStatus>({
   started_at: null, ended_at: null, exit_code: null, log_count: 0,
 });
 
-const cmdPreview = ref("xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal");
+const cmdPreview = ref("python -u pipeline.py --config CTF-pay/config.paypal.json --paypal");
 const lines = ref<{ seq: number; ts: number; line: string }[]>([]);
 const starting = ref(false);
 const stopping = ref(false);

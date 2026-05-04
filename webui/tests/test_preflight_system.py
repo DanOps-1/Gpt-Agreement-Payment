@@ -25,3 +25,16 @@ def test_system_preflight_each_check_has_status(client):
 def test_system_preflight_requires_auth(client):
     r = client.post("/api/preflight/system", json={})
     assert r.status_code == 401
+
+
+def test_system_preflight_allows_missing_xvfb_on_macos(monkeypatch):
+    import webui.backend.preflight.system as system_mod
+
+    monkeypatch.setattr(system_mod.runtime_env.sys, "platform", "darwin")
+    monkeypatch.setattr(system_mod.shutil, "which", lambda name: "/usr/local/bin/camoufox" if name == "camoufox" else None)
+    monkeypatch.setattr(system_mod.runtime_env, "xvfb_check", lambda: ("ok", "macOS 不需要 xvfb-run；将直接启动 python"))
+
+    body = system_mod.check()
+    xvfb = next(c for c in body.checks if c.name == "xvfb-run")
+    assert xvfb.status == "ok"
+    assert "macOS" in xvfb.message
