@@ -4,29 +4,29 @@
       <div class="brand">
         <span class="brand-prompt">$</span>
         <span class="brand-name">gpt-pay</span>
-        <span class="brand-sub">// WhatsApp 登录</span>
+        <span class="brand-sub">// WhatsApp Login</span>
         <span class="brand-clock">{{ clock }}</span>
       </div>
       <div class="run-nav">
-        <RouterLink to="/wizard" class="nav-link">配置向导</RouterLink>
-        <RouterLink to="/run" class="nav-link">运行</RouterLink>
-        <button class="header-btn" @click="logout">退出</button>
+        <RouterLink to="/wizard" class="nav-link">Wizard</RouterLink>
+        <RouterLink to="/run" class="nav-link">Run</RouterLink>
+        <button class="header-btn" @click="logout">Logout</button>
       </div>
     </header>
 
     <main class="wa-main">
       <section class="wa-panel">
-        <div class="term-divider" data-tail="──────────">WhatsApp 登录入口</div>
-        <h2 class="wa-title">扫码登录 WhatsApp Web<span class="term-cursor"></span></h2>
+        <div class="term-divider" data-tail="──────────">WhatsApp Login Entrance</div>
+        <h2 class="wa-title">Scan QR Code for WhatsApp Web<span class="term-cursor"></span></h2>
         <p class="wa-sub">
-          这里是前端唯一的 WhatsApp 登录入口。你可以在启动前自由切换 Baileys / whatsapp-web.js；
-          扫码连接后，后台 sidecar 会自动监听 WhatsApp 消息，提取 GoPay OTP，并写入 SQLite 运行时库供支付流程读取。
+          This is the only WhatsApp Login entrance in the frontend. You can freely switch between Baileys / whatsapp-web.js before starting.
+          Once connected, the backend sidecar automatically monitors WhatsApp messages, extracts GoPay OTPs, and writes them to the SQLite runtime database for the payment process.
         </p>
 
         <div class="engine-row">
           <TermSelect
             :model-value="selectedEngine"
-            label="引擎 · engine"
+            label="Engine · engine"
             :options="engineOptions"
             @update:modelValue="onEngineChange"
           />
@@ -42,40 +42,40 @@
           <TermBtn :loading="starting" @click="startQr">
             {{ startButtonLabel }}
           </TermBtn>
-          <TermBtn v-if="status.running" variant="danger" @click="stop">停止 sidecar</TermBtn>
-          <TermBtn variant="danger" :loading="loggingOut" @click="logoutWa">退出 WhatsApp 登录</TermBtn>
+          <TermBtn v-if="status.running" variant="danger" @click="stop">Stop sidecar</TermBtn>
+          <TermBtn variant="danger" :loading="loggingOut" @click="logoutWa">Logout WhatsApp Login</TermBtn>
         </div>
 
         <div v-if="status.qr_data_url" class="qr-box">
           <img :src="status.qr_data_url" alt="WhatsApp login QR" />
-          <p>打开 WhatsApp → 已连接设备 → 连接设备，扫描二维码。</p>
+          <p>Open WhatsApp -> Linked Devices -> Link a Device, scan the QR code.</p>
         </div>
         <div v-else-if="status.status === 'connected'" class="connected-box">
           <div class="ok-mark">✓</div>
           <div>
-            <strong>WhatsApp 已连接</strong>
-            <p>收到 GoPay OTP 后会自动写入 SQLite：<code>{{ status.database || "output/webui.db" }}</code></p>
+            <strong>WhatsApp Connected</strong>
+            <p>GoPay OTPs will be automatically written to SQLite: <code>{{ status.database || "output/webui.db" }}</code></p>
           </div>
         </div>
         <div v-else class="empty-box">
-          点击“启动 WhatsApp 登录”后，这里会显示二维码。
+          QR code will be displayed here after clicking "Start WhatsApp Login".
         </div>
 
         <div v-if="status.engine || status.preferred_engine" class="engine-box">
-          <span class="engine-label">当前引擎</span>
+          <span class="engine-label">Current Engine</span>
           <code>{{ status.engine || status.preferred_engine }}</code>
-          <span class="engine-meta">偏好：{{ status.preferred_engine || "baileys" }}</span>
-          <span v-if="savingEngine" class="engine-saving">保存中…</span>
+          <span class="engine-meta">Preference: {{ status.preferred_engine || "baileys" }}</span>
+          <span v-if="savingEngine" class="engine-saving">Saving...</span>
         </div>
 
         <div v-if="status.latest?.otp" class="latest-box">
-          <span class="latest-label">最近 OTP</span>
+          <span class="latest-label">Latest OTP</span>
           <code>{{ status.latest.otp }}</code>
           <span class="latest-text">{{ status.latest.text }}</span>
         </div>
 
         <details class="debug-box">
-          <summary>调试状态</summary>
+          <summary>Debug Status</summary>
           <pre>{{ statusJson }}</pre>
         </details>
       </section>
@@ -129,8 +129,8 @@ const loggingOut = ref(false);
 const savingEngine = ref(false);
 const selectedEngine = ref("baileys");
 const engineOptions = [
-  { value: "baileys", label: "Baileys (推荐)", desc: "直连 WhatsApp multi-device socket，启动更轻" },
-  { value: "wwebjs", label: "whatsapp-web.js", desc: "Chromium 路径，兼容旧环境 / 调试用" },
+  { value: "baileys", label: "Baileys (recommended)", desc: "Directly connect to WhatsApp multi-device socket, lighter startup" },
+  { value: "wwebjs", label: "whatsapp-web.js", desc: "Chromium path, compatible with old environments / for debugging" },
 ];
 const clock = ref("");
 let clockTimer: ReturnType<typeof setInterval> | undefined;
@@ -139,16 +139,16 @@ let preferredEngineHydrated = false;
 
 const statusLabel = computed(() => {
   switch (status.value.status) {
-    case "stopped": return "未启动";
-    case "starting": return "启动中...";
-    case "loading": return `加载中 (${status.value.percent ?? 0}%)`;
-    case "awaiting_qr_scan": return "等待扫码";
-    case "authenticated": return "已认证，正在连接";
-    case "connected": return "已连接 ✓";
-    case "disconnected": return `已断开 (${status.value.reason || "未知"})`;
-    case "auth_failure": return `认证失败：${status.value.error || ""}`;
-    case "error": return `错误：${status.value.error || ""}`;
-    default: return status.value.status || "未知";
+    case "stopped": return "Not Started";
+    case "starting": return "Starting...";
+    case "loading": return `Loading (${status.value.percent ?? 0}%)`;
+    case "awaiting_qr_scan": return "Awaiting QR Scan";
+    case "authenticated": return "Authenticated, connecting";
+    case "connected": return "Connected ✓";
+    case "disconnected": return `Disconnected (${status.value.reason || "Unknown"})`;
+    case "auth_failure": return `Auth Failure：${status.value.error || ""}`;
+    case "error": return `Error: ${status.value.error || ""}`;
+    default: return status.value.status || "Unknown";
   }
 });
 
@@ -168,9 +168,9 @@ const connectClass = computed(() => {
 
 const startButtonLabel = computed(() => {
   const engine = selectedEngine.value || "baileys";
-  if (status.value.running && status.value.engine === engine) return "刷新登录状态";
-  if (status.value.running) return `切换到 ${engine} 并重启`;
-  return `启动 ${engine}`;
+  if (status.value.running && status.value.engine === engine) return "Refresh login status";
+  if (status.value.running) return `Switch to ${engine} and restart`;
+  return `Start ${engine}`;
 });
 
 const statusJson = computed(() => JSON.stringify(status.value, null, 2));
@@ -201,7 +201,7 @@ async function onEngineChange(engine: string) {
     status.value = r.data;
     selectedEngine.value = r.data?.preferred_engine || next;
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "保存引擎偏好失败");
+    message.error(e.response?.data?.detail || "Failed to save engine preference");
   } finally {
     savingEngine.value = false;
   }
@@ -213,7 +213,7 @@ async function startQr() {
     await api.post("/whatsapp/start", { mode: "qr", engine: selectedEngine.value || "baileys" });
     await refresh();
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "启动失败");
+    message.error(e.response?.data?.detail || "Start failed");
   } finally {
     starting.value = false;
   }
@@ -224,7 +224,7 @@ async function stop() {
     await api.post("/whatsapp/stop");
     await refresh();
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "停止失败");
+    message.error(e.response?.data?.detail || "Stop failed");
   }
 }
 
@@ -233,9 +233,9 @@ async function logoutWa() {
   try {
     await api.post("/whatsapp/logout");
     await refresh();
-    message.success("已退出 WhatsApp 登录");
+    message.success("Logged out from WhatsApp Login");
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "退出失败");
+    message.error(e.response?.data?.detail || "Logout failed");
   } finally {
     loggingOut.value = false;
   }

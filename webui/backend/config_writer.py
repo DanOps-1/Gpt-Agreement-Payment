@@ -98,8 +98,8 @@ def _project_pay(answers: dict) -> dict:
                 "gost_listen_port": gost_port,
                 "sync_team_proxy": proxy.get("sync_team_proxy", True),
             }
-            # webshare 模式下 pipeline._ensure_gost_alive 会拉起本地 gost 中继；
-            # card.py 直接连这个地址出网（避开 example 模板透传的 USER:PASS 占位）
+            # webshare mode: pipeline._ensure_gost_alist will start local gost relay;
+            # card.py connects directly to this address (bypassing example template's USER:PASS placeholder)
             out["proxy"] = f"socks5://127.0.0.1:{gost_port}"
         elif mode == "none":
             out["proxy"] = ""
@@ -112,9 +112,9 @@ def _project_reg(answers: dict) -> dict:
     """Map flat wizard answers onto CTF-reg config schema."""
     out: dict = {}
     pm = _payment_method(answers)
-    # mail.catch_all_domain(s) 来自 Step03 Cloudflare 的 zone_names
-    # IMAP 字段（imap_server/port/email/auth_code）已彻底删除——OTP 走
-    # CF Email Worker → KV，凭证存 SQLite runtime_meta[secrets]。
+    # mail.catch_all_domain(s) comes from Step03 Cloudflare zone_names
+    # IMAP fields (imap_server/port/email/auth_code) are fully removed — OTP goes via
+    # CF Email Worker → KV, credentials stored in SQLite runtime_meta[secrets].
     zones = (answers.get("cloudflare") or {}).get("zone_names") or []
     if zones:
         out["mail"] = {
@@ -143,14 +143,14 @@ def _project_reg(answers: dict) -> dict:
 
 
 def _write_secrets(answers: dict) -> str | None:
-    """合并 Cloudflare 凭证到 SQLite runtime_meta[secrets]。
+    """Merge Cloudflare credentials into SQLite runtime_meta[secrets].
 
-    输入合成：
-      - api_token / zone_names: Step03 cloudflare 的 cf_token + zone_names
+    Input composition:
+      - api_token / zone_names: Step03 cloudflare cf_token + zone_names
       - account_id / otp_kv_namespace_id / otp_worker_name: Step04 cloudflare_kv
-      - forward_to (可选): Step03 forward_to
+      - forward_to (optional): Step03 forward_to
 
-    返回存储位置描述；如无任何字段则返回 None。
+    Returns storage location description; returns None if no fields exist.
     """
     cf = answers.get("cloudflare") or {}
     kv = answers.get("cloudflare_kv") or {}
@@ -166,8 +166,8 @@ def _write_secrets(answers: dict) -> str | None:
         cf_section["otp_kv_namespace_id"] = kv["kv_namespace_id"]
     if kv.get("worker_name"):
         cf_section["otp_worker_name"] = kv["worker_name"]
-    # 注：fallback_to 不写 secrets——它只是给 Worker 部署时绑的
-    # FALLBACK_TO env var 用，pipeline.py 这边没人读它。
+    # Note: fallback_to is not written to secrets — it's only used for the
+    # FALLBACK_TO env var bound to the Worker at deploy time; pipeline.py doesn't read it.
 
     if not cf_section:
         return None
@@ -186,9 +186,9 @@ def write_configs(answers: dict) -> dict:
     pay_skeleton = json.loads(s.PAY_EXAMPLE_PATH.read_text(encoding="utf-8"))
     reg_skeleton = json.loads(s.REG_EXAMPLE_PATH.read_text(encoding="utf-8"))
 
-    # Skeleton 里 auto_register.config_path 默认指向 .example.json 模板，
-    # 直接 merge 后 pipeline 子进程会读到模板。用 wizard 实际写的真实
-    # reg 路径覆盖它。
+    # Skeleton's auto_register.config_path points to the .example.json template by default,
+    # so a direct merge would make the pipeline sub-process read the template.
+    # Override it with the actual reg path written by the wizard.
     auth = pay_skeleton.setdefault("fresh_checkout", {}).setdefault("auth", {})
     auto = auth.setdefault("auto_register", {})
     auto["config_path"] = str(s.REG_CONFIG_PATH)

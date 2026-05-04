@@ -1,40 +1,40 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">步骤 10: 订阅方案</div>
+    <div class="term-divider" data-tail="──────────">Step 10: Subscription Plan</div>
     <h2 class="step-h">$&nbsp;Subscription plan<span class="term-cursor"></span></h2>
-    <p class="step-sub">选 Plus 或 Team；多数字段都有默认值。</p>
+    <p class="step-sub">Select Plus or Team; most fields have default values.</p>
 
     <div class="form-stack">
       <TermChoice
         v-model="form.plan_type"
         :options="[
-          { value: 'team', label: 'Team', desc: 'chatgptteamplan · 多席位 · 1 个月免费' },
-          { value: 'plus', label: 'Plus', desc: 'chatgptplusplan · 单用户 · 1 个月免费' },
+          { value: 'team', label: 'Team', desc: 'chatgptteamplan · Multi-seat · 1 month free' },
+          { value: 'plus', label: 'Plus', desc: 'chatgptplusplan · Single user · 1 month free' },
         ]"
         :cols="2"
       />
-      <TermField v-if="form.plan_type === 'team'" v-model="form.workspace_name" label="Workspace 名 · workspace_name" />
-      <TermField v-if="form.plan_type === 'team'" v-model="form.seat_quantity" label="席位数 · seat_quantity" type="number" />
+      <TermField v-if="form.plan_type === 'team'" v-model="form.workspace_name" label="Workspace Name · workspace_name" />
+      <TermField v-if="form.plan_type === 'team'" v-model="form.seat_quantity" label="Seat Quantity · seat_quantity" type="number" />
       <TermChoice
         v-model="form.price_interval"
         :options="[
-          { value: 'month', label: '月付', desc: '按月计费' },
-          { value: 'year', label: '年付', desc: '按年计费（通常有折扣）' },
+          { value: 'month', label: 'Monthly', desc: 'Billed monthly' },
+          { value: 'year', label: 'Yearly', desc: 'Billed yearly (usually discounted)' },
         ]"
         :cols="2"
       />
       <TermChoice
         v-model="form.checkout_ui_mode"
         :options="[
-          { value: 'custom', label: '短链 / 站内', desc: 'checkout_ui_mode=custom，输出 chatgpt.com/checkout 短入口' },
-          { value: 'hosted', label: '长链 / 托管', desc: 'checkout_ui_mode=hosted，优先输出 OpenAI 托管支付长链接' },
+          { value: 'custom', label: 'Short Link / In-site', desc: 'checkout_ui_mode=custom, outputs chatgpt.com/checkout short entry' },
+          { value: 'hosted', label: 'Long Link / Hosted', desc: 'checkout_ui_mode=hosted, prioritizes OpenAI hosted payment long link' },
         ]"
         :cols="2"
       />
-      <TermField v-model="form.promo_campaign_id" :label="`优惠码 ID · promo_campaign_id`" :placeholder="defaultPromo" />
+      <TermField v-model="form.promo_campaign_id" :label="`Promo Code ID · promo_campaign_id`" :placeholder="defaultPromo" />
       <TermSelect
         v-model="form.billing_region"
-        label="账单地区 · billing_region"
+        label="Billing Region · billing_region"
         :options="billingRegionOptions"
       />
     </div>
@@ -52,11 +52,11 @@ const store = useWizardStore();
 const init = store.answers.team_plan ?? {};
 
 const billingRegionOptions = [
-  { value: "US", label: "美国 · US / USD", desc: "billing_country=US，billing_currency=USD" },
-  { value: "JP", label: "日本 · JP / JPY", desc: "billing_country=JP，billing_currency=JPY" },
-  { value: "GB", label: "英国 · GB / GBP", desc: "billing_country=GB，billing_currency=GBP" },
-  { value: "SG", label: "新加坡 · SG / SGD", desc: "billing_country=SG，billing_currency=SGD" },
-  { value: "ID", label: "印度尼西亚 · ID / IDR", desc: "billing_country=ID，billing_currency=IDR（GoPay/印尼场景）" },
+  { value: "US", label: "USA · US / USD", desc: "billing_country=US, billing_currency=USD" },
+  { value: "JP", label: "Japan · JP / JPY", desc: "billing_country=JP, billing_currency=JPY" },
+  { value: "GB", label: "UK · GB / GBP", desc: "billing_country=GB, billing_currency=GBP" },
+  { value: "SG", label: "Singapore · SG / SGD", desc: "billing_country=SG, billing_currency=SGD" },
+  { value: "ID", label: "Indonesia · ID / IDR", desc: "billing_country=ID, billing_currency=IDR (GoPay/Indonesian scenario)" },
 ];
 
 const billingCurrencyByCountry: Record<string, string> = {
@@ -78,8 +78,8 @@ function inferPlanType(): "team" | "plus" {
 }
 
 function defaultCouponFromQuery(planType: "team" | "plus"): boolean {
-  // Team 免费试用通常来自 query coupon；Plus 的 plus-1-month-free 走普通
-  // promo_campaign 标记即可。保留已有配置时不会强制覆盖。
+  // Team free trial usually comes from query coupon; Plus's plus-1-month-free uses normal flow
+  // promo_campaign marking is sufficient. Does not force override when existing config is kept.
   return planType === "team";
 }
 

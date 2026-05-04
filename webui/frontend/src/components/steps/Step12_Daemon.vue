@@ -1,15 +1,15 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">步骤 12: Daemon</div>
-    <h2 class="step-h">$&nbsp;Daemon 参数<span class="term-cursor"></span></h2>
-    <p class="step-sub" v-if="!isDaemon" style="color: var(--warn)">当前模式不是 daemon，跳过即可。</p>
+    <div class="term-divider" data-tail="──────────">Step 12: Daemon</div>
+    <h2 class="step-h">$&nbsp;Daemon Parameters<span class="term-cursor"></span></h2>
+    <p class="step-sub" v-if="!isDaemon" style="color: var(--warn)">Current mode is not daemon, you can skip this step.</p>
 
     <div v-if="isDaemon" class="form-stack">
-      <TermField v-model="form.target_ok_accounts" label="目标可用号数 · target_ok_accounts" type="number" />
-      <TermField v-model="form.poll_interval_s" label="轮询间隔秒 · poll_interval_s" type="number" />
-      <TermField v-model="form.rate_limit_per_hour" label="每小时上限 · rate_limit_per_hour" type="number" />
-      <TermField v-model="form.max_consecutive_failures" label="连续失败上限 · max_consecutive_failures" type="number" />
-      <TermField v-model="form.seat_limit" label="席位上限 · seat_limit" type="number" />
+      <TermField v-model="form.target_ok_accounts" label="Target OK Accounts · target_ok_accounts" type="number" />
+      <TermField v-model="form.poll_interval_s" label="Poll Interval Seconds · poll_interval_s" type="number" />
+      <TermField v-model="form.rate_limit_per_hour" label="Rate Limit Per Hour · rate_limit_per_hour" type="number" />
+      <TermField v-model="form.max_consecutive_failures" label="Max Consecutive Failures · max_consecutive_failures" type="number" />
+      <TermField v-model="form.seat_limit" label="Seat Limit · seat_limit" type="number" />
     </div>
   </section>
 </template>

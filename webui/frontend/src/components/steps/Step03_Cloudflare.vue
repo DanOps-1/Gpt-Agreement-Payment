@@ -1,8 +1,8 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">步骤 03: cloudflare</div>
-    <h2 class="step-h">$&nbsp;cloudflare<span class="term-cursor"></span></h2>
-    <p class="step-sub">API token 必须有 DNS:Edit + Email Routing:Edit 权限，覆盖你列出的所有 zone。</p>
+    <div class="term-divider" data-tail="──────────">Step 03: Cloudflare</div>
+    <h2 class="step-h">$&nbsp;Cloudflare<span class="term-cursor"></span></h2>
+    <p class="step-sub">API token must have DNS:Edit + Email Routing:Edit permissions, covering all zones you list.</p>
 
     <div class="form-stack">
       <TermField
@@ -12,18 +12,18 @@
         placeholder="cf api token"
       />
       <label class="tf">
-        <span class="tf-tag">Zone 列表 · zone_names</span>
+        <span class="tf-tag">Zone List · zone_names</span>
         <textarea
           v-model="zoneText"
           class="tf-textarea"
-          placeholder="一行一个，如 example.com"
+          placeholder="One per line, e.g. example.com"
           rows="3"
         ></textarea>
       </label>
     </div>
 
     <div class="step-actions">
-      <TermBtn :loading="loading" @click="run">测试 token + zones</TermBtn>
+      <TermBtn :loading="loading" @click="run">Test token + zones</TermBtn>
     </div>
 
     <div v-if="result" class="result-block" :class="`result--${result.status}`">

@@ -1,27 +1,27 @@
 <template>
   <section class="step-fade-in">
     <template v-if="store.isStepHidden(13)">
-      <div class="term-divider" data-tail="──────────">步骤 13: Stripe Runtime — 已跳过</div>
-      <h2 class="step-h">$&nbsp;此步已跳过<span class="term-cursor"></span></h2>
-      <p class="step-sub">你在 step 1 选了"PayPal"支付，走 redirect 路径不需要 Stripe runtime hashes（version 有 fallback，js_checksum/rv_timestamp 仅 inline confirm 路径需要）。</p>
+      <div class="term-divider" data-tail="──────────">Step 13: Stripe Runtime — Skipped</div>
+      <h2 class="step-h">$&nbsp;This step is skipped<span class="term-cursor"></span></h2>
+      <p class="step-sub">You chose "PayPal" payment in step 1. The redirect path does not require Stripe runtime hashes (version has a fallback, js_checksum/rv_timestamp are only needed for the inline confirm path).</p>
       <div class="step-actions">
-        <button class="term-btn term-btn--ghost" @click="goStep1">返回 step 1 修改</button>
+        <button class="term-btn term-btn--ghost" @click="goStep1">Go back to step 1 to modify</button>
       </div>
     </template>
     <template v-else>
-      <div class="term-divider" data-tail="──────────">步骤 13: Stripe Runtime</div>
+      <div class="term-divider" data-tail="──────────">Step 13: Stripe Runtime</div>
       <h2 class="step-h">$&nbsp;Stripe runtime hashes<span class="term-cursor"></span></h2>
-      <p class="step-sub">这一步最容易卡。点"自动嗅探"启 headless Camoufox 走一遍 chatgpt.com pricing 拿当前 hashes。失败可以手填。</p>
+      <p class="step-sub">This step is most likely to get stuck. Click "Auto Sniff" to launch a headless Camoufox and go through the chatgpt.com pricing flow to get the current hashes. If it fails, you can fill it manually.</p>
 
       <div class="step-actions">
-        <TermBtn :loading="sniffing" @click="sniff">自动嗅探</TermBtn>
+        <TermBtn :loading="sniffing" @click="sniff">Auto Sniff</TermBtn>
       </div>
 
       <div v-if="logLines.length" class="sniff-log">
         <div v-for="(line, i) in logLines" :key="i" class="sniff-line">{{ line }}</div>
       </div>
 
-      <div class="term-divider" style="margin-top:20px">手动填写</div>
+      <div class="term-divider" style="margin-top:20px">Manual Entry</div>
       <div class="form-stack">
         <TermField v-model="form.version" label="version" />
         <TermField v-model="form.js_checksum" label="js_checksum" />
@@ -61,7 +61,7 @@ function sniff() {
     const data = JSON.parse((e as MessageEvent).data);
     form.value = { ...form.value, ...data };
     logLines.value.push(`[result] version=${data.version} js=${data.js_checksum} rv=${data.rv_timestamp}`);
-    message.success("hashes 已填入");
+    message.success("hashes filled");
   });
   es.addEventListener("error", (e) => {
     const m = e instanceof MessageEvent && e.data ? JSON.parse(e.data) : { reason: "stream error" };

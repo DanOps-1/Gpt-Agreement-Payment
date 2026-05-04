@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" fill="none" stroke-linecap="round" stroke-linejoin="round" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace">
   <title>Gpt-Agreement-Payment — social preview</title>
 
-  <!-- 背景 -->
+  <!-- Background -->
   <rect width="1280" height="640" fill="#0d1117"/>
 
-  <!-- 装饰：左上 + 右下角的协议栈层条纹 -->
+  <!-- Decoration: stripe layers in top-left and bottom-right -->
   <g stroke="#21262d" stroke-width="1">
     <line x1="0" y1="80"  x2="320" y2="80"/>
     <line x1="0" y1="120" x2="320" y2="120"/>
@@ -14,7 +14,7 @@
     <line x1="960"  y1="560" x2="1280" y2="560"/>
   </g>
 
-  <!-- Logo（左侧，居中竖直）-->
+  <!-- Logo (left, centered vertically) -->
   <g transform="translate(140 200) scale(0.94)">
     <circle cx="128" cy="128" r="100" stroke="#e6edf3" stroke-width="8"/>
     <line x1="128" y1="36" x2="128" y2="220" stroke="#e6edf3" stroke-width="3" opacity="0.35"/>
@@ -28,19 +28,19 @@
     </g>
   </g>
 
-  <!-- 标题与副标题（右侧）-->
+  <!-- Title and Subtitle (right) -->
   <text x="440" y="290" font-size="84" font-weight="700" fill="#e6edf3" letter-spacing="-1.5">Gpt-Agreement-Payment</text>
 
-  <text x="440" y="350" font-size="30" fill="#8b949e">ChatGPT Team 订阅协议端到端重放工具</text>
-  <text x="440" y="392" font-size="30" fill="#8b949e">含 hCaptcha 视觉求解器与反欺诈实证数据</text>
+  <text x="440" y="350" font-size="30" fill="#8b949e">End-to-end replay tool for ChatGPT Team subscription protocols</text>
+  <text x="440" y="392" font-size="30" fill="#8b949e">Incl. hCaptcha visual solver and anti-fraud empirical data</text>
 
-  <!-- 三条核心 -->
+  <!-- Three core pillars -->
   <g font-size="22" fill="#7d8590" font-family="ui-monospace, monospace">
     <text x="440" y="470">▸  hCaptcha solver  ·  VLM + CLIP + Playwright</text>
-    <text x="440" y="510">▸  daemon  ·  12 路自愈环 · 无人值守跑数周</text>
-    <text x="440" y="550">▸  研究材料  ·  IP 字符串级指纹 / 批次关联实证</text>
+    <text x="440" y="510">▸  daemon  ·  12-way self-healing loop · Runs for weeks unattended</text>
+    <text x="440" y="550">▸  Research Materials  ·  IP string-level fingerprinting / Batch correlation</text>
   </g>
 
-  <!-- 右下角 license / use -->
+  <!-- Footer license / use -->
   <text x="1240" y="610" text-anchor="end" font-size="18" fill="#484f58" font-family="ui-monospace, monospace">MIT  ·  CTF / bug bounty only  ·  AS IS</text>
 </svg>

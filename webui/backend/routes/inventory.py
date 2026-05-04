@@ -31,13 +31,13 @@ def _load_cpa_cfg() -> dict:
     try:
         cfg = json.loads(s.PAY_CONFIG_PATH.read_text(encoding="utf-8"))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"读 PAY_CONFIG_PATH 失败: {e}")
+        raise HTTPException(status_code=500, detail=f"Read PAY_CONFIG_PATH failed: {e}")
     cpa = (cfg.get("cpa") or {})
     if not cpa.get("enabled"):
         raise HTTPException(status_code=400,
-                            detail="CPA 未启用：请先在 wizard Step11 填 base_url + admin_key 并启用")
+                            detail="CPA not enabled: fill in base_url + admin_key in wizard Step 11 and enable it")
     if not (cpa.get("base_url") and cpa.get("admin_key")):
-        raise HTTPException(status_code=400, detail="CPA 配置缺 base_url 或 admin_key")
+        raise HTTPException(status_code=400, detail="CPA config missing base_url or admin_key")
     return cpa
 
 
@@ -61,7 +61,7 @@ def _do_cpa_push(account: dict, cpa_cfg: dict) -> dict:
     except Exception as e:
         status = f"error: {type(e).__name__}: {str(e)[:120]}"
 
-    # 记一条 pipeline_results 让 inventory 的 cpa_status 能反映本次推送
+    # Record a pipeline_result so inventory's cpa_status reflects this push
     try:
         get_db().add_pipeline_result({
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -87,9 +87,9 @@ def check_accounts(req: CheckRequest, user: str = CurrentUser):
     Body: {ids: [account_id, ...], timeout_s?, max_workers?}.
     Returns per-account {id, email, status, message} (status: valid|invalid|unknown)."""
     if not req.ids:
-        raise HTTPException(status_code=400, detail="ids 不能为空")
+        raise HTTPException(status_code=400, detail="ids cannot be empty")
     if len(req.ids) > 500:
-        raise HTTPException(status_code=400, detail="单次最多 500 个")
+        raise HTTPException(status_code=400, detail="max 500 per request")
     workers = max(1, min(int(req.max_workers), 8))
     timeout = max(2.0, min(float(req.timeout_s), 30.0))
     results = validate_accounts(req.ids, max_workers=workers, timeout_s=timeout)
@@ -107,7 +107,7 @@ def delete_accounts(req: IdsRequest, user: str = CurrentUser):
     """Hard-delete accounts by id. Associated pipeline_results / card_results /
     oauth_status rows are kept (audit trail; lookup by email still works)."""
     if not req.ids:
-        raise HTTPException(status_code=400, detail="ids 不能为空")
+        raise HTTPException(status_code=400, detail="ids cannot be empty")
     n = get_db().delete_registered_accounts(req.ids)
     return {"deleted": n, "requested": len(req.ids)}
 
@@ -118,9 +118,9 @@ def cpa_push(req: IdsRequest, user: str = CurrentUser):
     pipeline._cpa_import_after_team. Each row's stored refresh_token (or
     fallback access_token) is used; records outcome to pipeline_results."""
     if not req.ids:
-        raise HTTPException(status_code=400, detail="ids 不能为空")
+        raise HTTPException(status_code=400, detail="ids cannot be empty")
     if len(req.ids) > 100:
-        raise HTTPException(status_code=400, detail="单次最多 100 个")
+        raise HTTPException(status_code=400, detail="max 100 per request")
     cpa_cfg = _load_cpa_cfg()
     db = get_db()
     results: list[dict] = []

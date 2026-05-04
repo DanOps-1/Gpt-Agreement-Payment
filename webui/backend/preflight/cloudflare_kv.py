@@ -1,12 +1,12 @@
 """Preflight check for Cloudflare KV-backed OTP path.
 
-替代原 IMAP preflight。OTP 现在走 CF Email Routing → otp-relay Worker → KV
-（见 scripts/setup_cf_email_worker.py 一键部署 + scripts/otp_email_worker.js）。
+Replaces original IMAP preflight. OTP now goes through CF Email Routing → otp-relay Worker → KV
+(see scripts/setup_cf_email_worker.py one-click deploy + scripts/otp_email_worker.js).
 
-校验三件事：
-  1. token 能访问指定 account（也是 setup 脚本的最低门槛）
-  2. KV namespace ID 在该 account 下确实存在 + 可读
-  3. (可选) worker 名字下确实有 script 部署着
+Checks three things:
+  1. Token can access the specified account (minimum threshold for setup script)
+  2. KV namespace ID exists and is readable under that account
+  3. (Optional) Worker name has a script deployed
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class CloudflareKVInput(BaseModel):
 
 
 def _http_get(token: str, path: str) -> Tuple[int, dict]:
-    """GET 不经过 http_proxy，避开本机 mitm 代理。"""
+    """GET bypasses http_proxy, avoids local mitm proxy."""
     req = urllib.request.Request(
         CF + path,
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
@@ -58,21 +58,21 @@ def _http_get(token: str, path: str) -> Tuple[int, dict]:
 
 def _err_msg(resp: dict) -> str:
     errs = resp.get("errors") or []
-    return "; ".join(f"[{e.get('code','?')}] {(e.get('message') or '')[:160]}" for e in errs) or "未知错误"
+    return "; ".join(f"[{e.get('code','?')}] {(e.get('message') or '')[:160]}" for e in errs) or "unknown error"
 
 
 def check(body: dict) -> PreflightResult:
     cfg = CloudflareKVInput.model_validate(body)
     checks: list[CheckResult] = []
 
-    # 1) token + account 访问
+    # 1) token + account access
     code, data = _http_get(cfg.api_token, f"/accounts/{cfg.account_id}")
     if not data.get("success"):
         checks.append(
             CheckResult(
                 name="account",
                 status="fail",
-                message=f"无法访问 account: {_err_msg(data)}",
+                message=f"Cannot access account: {_err_msg(data)}",
             )
         )
         return aggregate(checks)
@@ -81,7 +81,7 @@ def check(body: dict) -> PreflightResult:
         CheckResult(name="account", status="ok", message=f"account: {aname}")
     )
 
-    # 2) KV namespace ID 可读
+    # 2) KV namespace ID readable
     code, data = _http_get(
         cfg.api_token,
         f"/accounts/{cfg.account_id}/storage/kv/namespaces/{cfg.kv_namespace_id}",
@@ -91,7 +91,7 @@ def check(body: dict) -> PreflightResult:
             CheckResult(
                 name="kv_namespace",
                 status="fail",
-                message=f"KV namespace {cfg.kv_namespace_id[:12]}... 不可访问: {_err_msg(data)}",
+                message=f"KV namespace {cfg.kv_namespace_id[:12]}... inaccessible: {_err_msg(data)}",
             )
         )
     else:
@@ -104,7 +104,7 @@ def check(body: dict) -> PreflightResult:
             )
         )
 
-    # 3) Worker 存在 — 用 list scripts 间接判断（GET script 单条返回 multipart 不便解析）
+    # 3) Worker exists — use list scripts (GET single script returns multipart, hard to parse)
     code, data = _http_get(
         cfg.api_token,
         f"/accounts/{cfg.account_id}/workers/scripts?per_page=100",
@@ -114,7 +114,7 @@ def check(body: dict) -> PreflightResult:
             CheckResult(
                 name="worker",
                 status="warn",
-                message=f"无法列 workers (token 可能缺 Workers Scripts:Read): {_err_msg(data)}",
+                message=f"Cannot list workers (token may lack Workers Scripts:Read): {_err_msg(data)}",
             )
         )
     else:
@@ -124,7 +124,7 @@ def check(body: dict) -> PreflightResult:
                 CheckResult(
                     name="worker",
                     status="ok",
-                    message=f"worker '{cfg.worker_name}' 已部署",
+                    message=f"worker '{cfg.worker_name}' deployed",
                 )
             )
         else:
@@ -133,8 +133,8 @@ def check(body: dict) -> PreflightResult:
                     name="worker",
                     status="warn",
                     message=(
-                        f"worker '{cfg.worker_name}' 未找到；"
-                        f"先跑 scripts/setup_cf_email_worker.py 部署"
+                        f"worker '{cfg.worker_name}' not found; "
+                        f"run scripts/setup_cf_email_worker.py first to deploy"
                     ),
                 )
             )

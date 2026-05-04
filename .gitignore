@@ -1,16 +1,16 @@
-# mitmproxy 抓包（大文件，可能含敏感 cookies/tokens）
+# mitmproxy captures (large files, may contain sensitive cookies/tokens)
 /flows
 flows.gz
 flows_*/
 *.har
 *_har
 
-# PayPal Camoufox 持久化 profile（含 session cookies）
+# PayPal Camoufox persistent profile (contains session cookies)
 CTF-pay/paypal_cf_persist/
 CTF-pay/paypal_cf_persist.bak-*/
 CTF-pay/paypal_cf_persist.bak_*/
 
-# WhatsApp/Web relay 持久化 session（含本机登录态 / 浏览器缓存）
+# WhatsApp/Web relay persistent session (contains local login state / browser cache)
 CTF-pay/whatsapp_relay/
 webui/whatsapp_relay/node_modules/
 webui/whatsapp_relay/.wwebjs_cache/
@@ -18,17 +18,17 @@ webui/whatsapp_relay/.wwebjs_auth/
 webui/whatsapp_relay/.wa-session/
 webui/whatsapp_relay/baileys-gopay/
 
-# 运行时产物（账号凭证 / 支付结果 / 日志 / 域池状态 / CF API token）
+# Runtime products (account credentials / payment results / logs / domain pool state / CF API token)
 output/
 
-# 用户实际配置（保留 *.example.json，忽略实际填写过的）
+# User-specific configuration (keep *.example.json, ignore actual filled configurations)
 CTF-pay/config.paypal.json
 CTF-pay/config.paypal-*.json
 CTF-reg/config.paypal-proxy.json
 CTF-reg/config.paypal-proxy-*.json
 CTF-reg/config.noproxy.json
 
-# pipeline 注册临时 config（运行时产物）
+# Pipeline registration temporary config (runtime product)
 CTF-pay/pipeline_pay_*.json
 CTF-reg/pipeline_cardw_*.json
 
@@ -37,12 +37,12 @@ __pycache__/
 *.pyc
 *.pyo
 
-# 备份（含 webui config_writer 写的 *.bak.<unix_ts>，里面是旧的真实凭据）
+# Backups (includes *.bak.<unix_ts> written by webui config_writer, containing old real credentials)
 *.bak_*
 *.bak-*
 *.bak.*
 
-# IDE / 工具
+# IDE / Tools
 .vscode/
 .idea/
 .claude/
@@ -55,7 +55,7 @@ docs/superpowers/
 AGENTS.md
 CLAUDE.md
 
-# 操作系统
+# OS
 .DS_Store
 Thumbs.db
 

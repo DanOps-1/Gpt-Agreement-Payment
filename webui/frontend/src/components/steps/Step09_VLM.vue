@@ -1,17 +1,17 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">步骤 09: VLM</div>
-    <h2 class="step-h">$&nbsp;VLM endpoint (可选)<span class="term-cursor"></span></h2>
-    <p class="step-sub">家宽 / 伪家宽出口通常不触发 hCaptcha；不填会自动降级到 CLIP。</p>
+    <div class="term-divider" data-tail="──────────">Step 09: VLM</div>
+    <h2 class="step-h">$&nbsp;VLM endpoint (Optional)<span class="term-cursor"></span></h2>
+    <p class="step-sub">Residential or pseudo-residential exit nodes usually don't trigger hCaptcha; if empty, it will auto-fallback to CLIP.</p>
 
-    <TermToggle v-model="enabled">启用 VLM</TermToggle>
+    <TermToggle v-model="enabled">Enable VLM</TermToggle>
 
     <div v-if="enabled" class="form-stack" style="margin-top:16px">
       <TermField v-model="form.base_url" label="Base URL · base_url" placeholder="https://api.openai.com/v1" />
       <TermField v-model="form.api_key" label="API Key · api_key" type="password" />
       <TermField v-model="form.model" label="Model · model" placeholder="gpt-4o-mini" />
       <div class="step-actions">
-        <TermBtn :loading="loading" @click="run">测试 1× completion</TermBtn>
+        <TermBtn :loading="loading" @click="run">Test 1× completion</TermBtn>
       </div>
     </div>
 

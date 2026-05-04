@@ -4,13 +4,13 @@
       <div class="brand">
         <span class="brand-prompt">$</span>
         <span class="brand-name">gpt-pay</span>
-        <span class="brand-sub">// 配置向导</span>
+        <span class="brand-sub">// Configuration Wizard</span>
         <span class="brand-clock">{{ clock }}</span>
       </div>
       <div class="run-nav">
-        <RouterLink to="/wizard" class="nav-link active">配置向导</RouterLink>
-        <RouterLink to="/run" class="nav-link">运行</RouterLink>
-        <button class="header-btn" @click="logout" title="esc / Ctrl+L">退出</button>
+        <RouterLink to="/wizard" class="nav-link active">Configuration Wizard</RouterLink>
+        <RouterLink to="/run" class="nav-link">Run</RouterLink>
+        <button class="header-btn" @click="logout" title="esc / Ctrl+L">Logout</button>
       </div>
     </header>
 
@@ -20,7 +20,7 @@
       <main class="wizard-main">
         <Transition name="step" mode="out-in">
           <component v-if="loaded" :is="currentStepComponent" :key="store.currentStep" />
-          <div v-else class="wizard-loading">加载配置中<span class="term-cursor"></span></div>
+          <div v-else class="wizard-loading">Loading configuration<span class="term-cursor"></span></div>
         </Transition>
       </main>
 
@@ -29,22 +29,22 @@
 
     <nav class="wizard-foot">
       <button class="foot-btn" :disabled="store.currentStep <= 1" @click="prev" title="h or ←">
-        <span class="fb-key">[H]</span> 上一步
+        <span class="fb-key">[H]</span> Previous
       </button>
       <span class="foot-progress">
         <span class="fp-bar"><span class="fp-fill" :style="{ width: progressPct + '%' }"></span></span>
         <span class="fp-text">{{ String(store.currentStep).padStart(2,'0') }} / 14</span>
       </span>
       <button class="foot-btn foot-btn--primary" :disabled="store.currentStep >= 14" @click="next" title="l or →">
-        下一步 <span class="fb-key">[L]</span>
+        Next <span class="fb-key">[L]</span>
       </button>
     </nav>
 
     <div class="hotkeys">
-      <span><kbd>H</kbd>/<kbd>←</kbd> 上一步</span>
-      <span><kbd>L</kbd>/<kbd>→</kbd> 下一步</span>
-      <span><kbd>1-9</kbd> 跳到对应步</span>
-      <span><kbd>Esc</kbd> 退出登录</span>
+      <span><kbd>H</kbd>/<kbd>←</kbd> Previous</span>
+      <span><kbd>L</kbd>/<kbd>→</kbd> Next</span>
+      <span><kbd>1-9</kbd> Jump to step</span>
+      <span><kbd>Esc</kbd> Logout</span>
     </div>
   </div>
 </template>
@@ -78,7 +78,7 @@ const STEPS = [Step01, Step02, Step03, Step04, Step05, Step06, Step07, Step08, S
 const store = useWizardStore();
 const router = useRouter();
 const currentStepComponent = computed(() => {
-  // Step 6 = payment-specific config: PayPal / GoPay 同位
+  // Step 6 = payment-specific config: PayPal / GoPay co-located
   if (store.currentStep === 6) {
     const pm = (store.answers.payment as any)?.method;
     if (pm === "gopay") return Step06GoPay;

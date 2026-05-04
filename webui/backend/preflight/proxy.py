@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from ._common import CheckResult, PreflightResult, aggregate
 
 
-# Camoufox 不支持 socks5+auth；CTF-reg/browser_register.py 期望本地
-# 127.0.0.1:18899 上有一条无 auth 的 gost socks5 中继转发到上游。
+# Camoufox does not support socks5+auth; CTF-reg/browser_register.py expects a
+# local unauthenticated gost socks5 relay on 127.0.0.1:18899 forwarding upstream.
 GOST_RELAY_PORT = 18899
 
 
@@ -36,7 +36,7 @@ def _port_listening(port: int) -> bool:
 def _spawn_gost_relay(upstream_url: str, listen_port: int) -> tuple[bool, str]:
     """Spawn `gost -L=socks5://:N -F=<upstream>` as a daemon. Returns (ok, msg)."""
     if not subprocess.run(["which", "gost"], capture_output=True).stdout.strip():
-        return False, "gost 未安装：apt 不带，到 https://github.com/go-gost/gost/releases 下二进制扔到 /usr/local/bin/"
+        return False, "gost not installed: apt doesn't ship it, download binary from https://github.com/go-gost/gost/releases and put in /usr/local/bin/"
     log_path = f"/tmp/gost-{listen_port}.log"
     cmd = ["gost", f"-L=socks5://:{listen_port}", f"-F={upstream_url}"]
     try:
@@ -49,16 +49,16 @@ def _spawn_gost_relay(upstream_url: str, listen_port: int) -> tuple[bool, str]:
         finally:
             os.close(fd)
     except Exception as e:
-        return False, f"spawn 失败: {e}"
-    # 等监听就绪
+        return False, f"spawn failed: {e}"
+    # Wait for listen to be ready
     deadline = time.time() + 4
     while time.time() < deadline:
         if proc.poll() is not None:
-            return False, f"gost 启动后立即退出 (rc={proc.returncode})，见 {log_path}"
+            return False, f"gost exited immediately after start (rc={proc.returncode}), see {log_path}"
         if _port_listening(listen_port):
             return True, f"started PID={proc.pid} log={log_path}"
         time.sleep(0.2)
-    return False, f"gost 4s 内未监听 :{listen_port}，见 {log_path}"
+    return False, f"gost did not listen on :{listen_port} within 4s, see {log_path}"
 
 
 def check(body: dict) -> PreflightResult:
@@ -74,7 +74,7 @@ def check(body: dict) -> PreflightResult:
 
     checks: list[CheckResult] = []
 
-    # 直连上游：先确认 proxy 本身能用
+    # Direct upstream: first verify proxy itself works
     try:
         with httpx.Client(proxy=proxy_url, timeout=15.0) as c:
             ip = c.get("https://api.ipify.org").text.strip()
@@ -83,7 +83,7 @@ def check(body: dict) -> PreflightResult:
                                       message=f"proxy connect failed: {e}")])
     checks.append(CheckResult(name="exit_ip", status="ok", message=ip))
 
-    # 国家检测
+    # Country check
     try:
         with httpx.Client(timeout=10.0) as c:
             geo = c.get(f"http://ip-api.com/json/{ip}").json()
@@ -99,7 +99,7 @@ def check(body: dict) -> PreflightResult:
         checks.append(CheckResult(name="country", status="warn",
                                   message=f"geo lookup failed: {e}"))
 
-    # socks5+auth → CTF-reg 走 Camoufox，需要本地 :18899 无 auth 中继
+    # socks5+auth -> CTF-reg via Camoufox, needs local :18899 unauth relay
     if _is_socks5_with_auth(proxy_url):
         if _port_listening(GOST_RELAY_PORT):
             checks.append(CheckResult(name="gost_relay", status="ok",
@@ -109,20 +109,20 @@ def check(body: dict) -> PreflightResult:
             if ok:
                 checks.append(CheckResult(name="gost_relay", status="ok",
                                           message=f"auto-spawned: {info}"))
-                # 验证中继真能转发
+                # Verify relay can actually forward
                 try:
                     with httpx.Client(proxy=f"socks5://127.0.0.1:{GOST_RELAY_PORT}",
                                       timeout=10.0) as c:
                         ip2 = c.get("https://api.ipify.org").text.strip()
                     if ip2 == ip:
                         checks.append(CheckResult(name="gost_forward", status="ok",
-                                                  message=f"relay → {ip2}"))
+                                                  message=f"relay -> {ip2}"))
                     else:
                         checks.append(CheckResult(name="gost_forward", status="warn",
                                                   message=f"exit IP mismatch: direct={ip} relay={ip2}"))
                 except Exception as e:
                     checks.append(CheckResult(name="gost_forward", status="fail",
-                                              message=f"relay 起来了但转发失败: {e}"))
+                                              message=f"relay started but forward failed: {e}"))
             else:
                 checks.append(CheckResult(name="gost_relay", status="fail",
                                           message=info))

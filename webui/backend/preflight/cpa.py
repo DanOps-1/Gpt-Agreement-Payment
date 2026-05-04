@@ -29,9 +29,9 @@ def check(body: dict) -> PreflightResult:
                                       message=f"auth-files reachable ({n} entries)")])
     if r.status_code in (401, 403):
         return aggregate([CheckResult(name="management", status="fail",
-                                      message=f"HTTP {r.status_code} — admin_key 无效或被拒",
+                                      message=f"HTTP {r.status_code} — admin_key invalid or rejected",
                                       details=(r.text[:500] +
-                                               "\n⚠ 该服务对错误 key 会限频/封 IP，请勿连续重试"))])
+                                               "\n⚠ This service rate-limits/blocks IPs on bad keys, do not retry repeatedly"))])
     return aggregate([CheckResult(name="management", status="fail",
                                   message=f"HTTP {r.status_code}",
                                   details=r.text[:1000])])

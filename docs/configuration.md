@@ -200,24 +200,24 @@ export CTF_VLM_MODEL="gpt-4o"
 
 ---
 
-## 调优环境变量
+## Optimization Environment Variables
 
-| 变量 | 默认 | 作用 |
+| Variable | Default | Role |
 |---|---|---|
-| `SKIP_SIGNUP_CODEX_RT` | `1` | 跳过 signup 阶段已知失败的 OAuth 路径，省 ~30s/账号 |
-| `SKIP_HERMES_FAST_PATH` | `1` | 跳过 PayPal 对非浏览器 session 返 `genericError` 的端点，省 5–10s/支付 |
-| `CTF_VLM_BASE_URL` | `https://api.openai.com/v1` | hCaptcha solver 的 VLM endpoint |
-| `CTF_VLM_API_KEY` | （空） | VLM bearer token |
-| `CTF_VLM_MODEL` | `gpt-4o` | VLM 模型 ID |
+| `SKIP_SIGNUP_CODEX_RT` | `1` | Skips known failing OAuth paths during signup, saving ~30s/account |
+| `SKIP_HERMES_FAST_PATH` | `1` | Skips PayPal endpoints that return `genericError` for non-browser sessions, saving 5–10s/payment |
+| `CTF_VLM_BASE_URL` | `https://api.openai.com/v1` | VLM endpoint for the hCaptcha solver |
+| `CTF_VLM_API_KEY` | (Empty) | VLM bearer token |
+| `CTF_VLM_MODEL` | `gpt-4o` | VLM model ID |
 
 ---
 
-## 配置加载优先级
+## Configuration Loading Priority
 
-`load_config()` 的查找顺序：
+Order of precedence in `load_config()`:
 
-1. 命令行 `--config <path>` 显式指定
-2. 默认 `CTF-pay/config.auto.json`
-3. fallback 到模板 `CTF-pay/config.paypal.example.json`（只读）
+1. Explicitly specified via CLI `--config <path>`
+2. Default `CTF-pay/config.auto.json`
+3. Fallback to template `CTF-pay/config.paypal.example.json` (Read-only)
 
-环境变量覆盖比 config 优先级高，可以临时调参不用改文件。
+Environment variables take precedence over config files, allowing for temporary parameter adjustments without persistent changes.

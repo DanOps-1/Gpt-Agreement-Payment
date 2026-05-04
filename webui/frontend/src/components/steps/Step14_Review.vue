@@ -1,32 +1,32 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">步骤 14: 完成</div>
-    <h2 class="step-h">$&nbsp;Review + 导出<span class="term-cursor"></span></h2>
-    <p class="step-sub">下面是即将写入的两份配置（基于你填的答案的快照）。检查无误后点"写到 repo 路径"，会先备份再覆盖。</p>
+    <div class="term-divider" data-tail="──────────">Step 14: Finalize</div>
+    <h2 class="step-h">$&nbsp;Review + Export<span class="term-cursor"></span></h2>
+    <p class="step-sub">Below are the two configurations about to be written (snapshots based on your answers). After checking, click "Write to repo path", which will back up existing files before overwriting.</p>
 
-    <div class="review-label">所有答案</div>
+    <div class="review-label">All Answers</div>
     <pre class="review-pre">{{ prettyAll }}</pre>
 
     <div class="step-actions">
-      <TermBtn :loading="loading" @click="exportConfigs">写到 repo 路径</TermBtn>
-      <TermBtn variant="ghost" @click="copy">复制 JSON</TermBtn>
-      <TermBtn variant="ghost" @click="downloadJson">下载 JSON</TermBtn>
+      <TermBtn :loading="loading" @click="exportConfigs">Write to repo path</TermBtn>
+      <TermBtn variant="ghost" @click="copy">Copy JSON</TermBtn>
+      <TermBtn variant="ghost" @click="downloadJson">Download JSON</TermBtn>
     </div>
 
     <div v-if="result" class="result-block ok">
       <div class="result-head">
         <span class="result-icon">✓</span>
-        <span>已写入</span>
+        <span>Written Successfully</span>
       </div>
       <div class="export-paths">
         <div class="export-path">{{ result.pay_path }}</div>
         <div class="export-path">{{ result.reg_path }}</div>
         <div v-if="result.backups?.length" class="export-path" style="color: var(--fg-tertiary)">
-          备份：{{ result.backups.join(", ") }}
+          Backups: {{ result.backups.join(", ") }}
         </div>
       </div>
       <pre class="export-cmd">xvfb-run -a python pipeline.py --config {{ relPath(result.pay_path) }} --paypal</pre>
-      <TermBtn @click="goRun" style="margin-top:12px">立即在 Web 里运行 →</TermBtn>
+      <TermBtn @click="goRun" style="margin-top:12px">Run in Web now →</TermBtn>
     </div>
   </section>
 </template>
@@ -58,15 +58,15 @@ async function exportConfigs() {
   try {
     const r = await api.post<ExportResult>("/config/export", { answers: store.answers });
     result.value = r.data;
-    message.success("配置已写入");
+    message.success("Configuration written");
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "写入失败");
+    message.error(e.response?.data?.detail || "Write failed");
   } finally { loading.value = false; }
 }
 
 function copy() {
   navigator.clipboard.writeText(prettyAll.value);
-  message.success("已复制到剪贴板");
+  message.success("Copied to clipboard");
 }
 
 function downloadJson() {

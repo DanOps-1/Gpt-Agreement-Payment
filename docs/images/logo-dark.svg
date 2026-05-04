@@ -1,20 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" stroke-linecap="round" stroke-linejoin="round">
   <title>Gpt-Agreement-Payment logo (dark)</title>
-  <desc>外圆 = 求解器视场；内部对角两 tile = solver 锁定目标；垂直 | = 协议栈分层；水平 → = 协议重放穿越</desc>
+  <desc>Outer circle = Solver field of view; Inner diagonal tiles = Solver locked target; Vertical | = Protocol stack layering; Horizontal → = Protocol replay traversal</desc>
 
-  <!-- 外圆 / lens -->
+  <!-- Outer circle / lens -->
   <circle cx="128" cy="128" r="100" stroke="#e6edf3" stroke-width="8"/>
 
-  <!-- 协议栈分层 -->
+  <!-- Protocol stack layering -->
   <line x1="128" y1="36" x2="128" y2="220" stroke="#e6edf3" stroke-width="3" opacity="0.35"/>
 
-  <!-- 对角两个 tile 高亮 -->
+  <!-- Two diagonal tile highlights -->
   <rect x="78" y="78" width="42" height="42" fill="#e6edf3" fill-opacity="0.18"/>
   <rect x="136" y="136" width="42" height="42" fill="#e6edf3" fill-opacity="0.18"/>
   <rect x="78" y="78" width="42" height="42" stroke="#e6edf3" stroke-width="2.5"/>
   <rect x="136" y="136" width="42" height="42" stroke="#e6edf3" stroke-width="2.5"/>
 
-  <!-- 协议重放箭头 → 横穿 -->
+  <!-- Protocol replay arrow → horizontal traversal -->
   <g stroke="#e6edf3" stroke-width="8">
     <line x1="60" y1="128" x2="186" y2="128"/>
     <polyline points="170,112 188,128 170,144" fill="none"/>

@@ -88,8 +88,8 @@ function writeState(patch) {
 function extractOtp(text) {
   if (!text) return "";
   const patterns = [
-    /(?:otp|one[-\s]*time|verification|verify|code|kode|verifikasi|gopay|gojek|whatsapp|验证码|驗證碼)[^\d]{0,100}(\d{4,8})(?!\d)/gis,
-    /(?<!\d)(\d{4,8})(?!\d)[^\n\r]{0,100}(?:otp|one[-\s]*time|verification|verify|code|kode|verifikasi|gopay|gojek|验证码|驗證碼)/gis,
+    /(?:otp|one[-\s]*time|verification|verify|code|kode|verifikasi|gopay|gojek|whatsapp|verification code|captcha)[^\d]{0,100}(\d{4,8})(?!\d)/gis,
+    /(?<!\d)(\d{4,8})(?!\d)[^\n\r]{0,100}(?:otp|one[-\s]*time|verification|verify|code|kode|verifikasi|gopay|gojek|verification code|captcha)/gis,
     /(?<!\d)(\d{6})(?!\d)/g,
   ];
   for (const re of patterns) {
@@ -108,9 +108,7 @@ function extractOtp(text) {
 function looksLikeOtpPrivacyPlaceholder(text) {
   const s = String(text || "");
   return (
-    /一次性密码/.test(s) && /主要设备|主设备|使用 WhatsApp 的主要设备/.test(s)
-  ) || (
-    /one[-\s]*time password/i.test(s) && /primary device|main device/i.test(s)
+    /one-time password/.test(s) && /primary device|main device|use WhatsApp on primary device/.test(s)
   ) || (
     /kode|otp|verification|verifikasi/i.test(s) && /primary device|main device/i.test(s)
   );
@@ -183,7 +181,7 @@ function handleMessage(msg, source) {
     recordPrivacyBlocked(msg);
     return;
   }
-  if (/\b(gopay|gojek|otp|verification|verifikasi|kode)\b/i.test(body) || /一次性密码|验证码|驗證碼/.test(body)) {
+  if (/\b(gopay|gojek|otp|verification|verifikasi|kode)\b/i.test(body) || /one-time password|verification code|captcha/.test(body)) {
     console.log(`[msg_no_otp] source=${source} from=${msg.from || ""} type=${msg.type || ""} text=${body.slice(0, 220).replace(/\s+/g, " ")}`);
   }
 }

@@ -36,8 +36,8 @@ class _FakeOpener:
 
     def open(self, req, timeout=None):
         url = req.full_url
-        # 优先 endswith 精确匹配；不命中再用 contains 兜底（避免 /accounts/X
-        # 把 /accounts/X/workers/... 截胡）
+        # Prefer endswith exact match; fall back to contains (avoid /accounts/X
+        # intercepting /accounts/X/workers/...)
         for needle, resp in self.route_map.items():
             if url.endswith(needle):
                 return self._reply(resp)
@@ -108,7 +108,7 @@ def test_cf_kv_bad_token(client, monkeypatch):
 
 
 def test_cf_kv_worker_missing_warns(client, monkeypatch):
-    """worker 不存在不应硬 fail（用户可能晚点再 deploy），降级 warn。"""
+    """Missing worker should not hard-fail (user may deploy later), downgrade to warn."""
     _login(client)
     _patch_opener(monkeypatch, {
         "/accounts/acct-1": (200, {"success": True, "result": {"name": "MyAccount"}}),
@@ -122,5 +122,5 @@ def test_cf_kv_worker_missing_warns(client, monkeypatch):
         "worker_name": "otp-relay",
     })
     body = r.json()
-    # account + kv 都 ok，worker warn → 整体应该是 warn 或 ok（取 aggregate 规则）
+    # account + kv both ok, worker warn → overall should be warn or ok (per aggregate rules)
     assert body["status"] in ("warn", "ok")

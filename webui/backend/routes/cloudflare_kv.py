@@ -1,8 +1,8 @@
-"""Auto-setup endpoint：用户只填 API token，后端把 KV + Worker + 3 zone 的
-catch-all 路由全配好，返回写入 SQLite secrets 所需的字段。
+"""Auto-setup endpoint: user only provides API token, backend configures KV + Worker + catch-all
+routes for all zones, returning the fields needed to write SQLite secrets.
 
-复用 scripts/setup_cf_email_worker.py 的 CFClient（已重构成抛 CFError 而
-非 SystemExit），不再要求用户跑 CLI 脚本。
+Reuses CFClient from scripts/setup_cf_email_worker.py (refactored to raise CFError instead
+of SystemExit), no longer requires users to run CLI scripts.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from ..auth import CurrentUser
 from ..db import get_db
 
-# 把 scripts/ 加到 sys.path 以便 import setup_cf_email_worker
+# Add scripts/ to sys.path to import setup_cf_email_worker
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/cloudflare_kv", tags=["cloudflare_kv"])
 
 class AutoSetupInput(BaseModel):
     api_token: str
-    account_id: Optional[str] = None  # 不传时从 /accounts 列表里挑第一个
+    account_id: Optional[str] = None  # defaults to first from /accounts list
     zones: list[str] = []
     worker_name: str = "otp-relay"
     kv_name: str = "OTP_KV"
@@ -59,43 +59,43 @@ def _short_actions(actions: list) -> str:
 
 @router.post("/auto-setup", response_model=AutoSetupResult)
 def auto_setup(body: AutoSetupInput, user: str = CurrentUser):
-    """一键部署：建 KV → 上传 Worker → 给每 zone 切 catch-all → 落 SQLite secrets。"""
+    """One-click deploy: create KV → upload Worker → set catch-all per zone → write SQLite secrets."""
     if not WORKER_JS.exists():
-        raise HTTPException(status_code=500, detail=f"找不到 Worker 脚本: {WORKER_JS}")
+        raise HTTPException(status_code=500, detail=f"Worker script not found: {WORKER_JS}")
 
     client = CFClient(body.api_token)
 
-    # ── account_id：缺省自动发现（取第一个能访问的）
+    # ── account_id: auto-discover (pick first accessible)
     account_id = (body.account_id or "").strip()
     if not account_id:
         r = client._req("GET", "/accounts?per_page=10")
         if not r.get("success"):
-            raise HTTPException(status_code=400, detail=f"列 accounts 失败: {r.get('errors')}")
+            raise HTTPException(status_code=400, detail=f"List accounts failed: {r.get('errors')}")
         results = r.get("result") or []
         if not results:
-            raise HTTPException(status_code=400, detail="token 看不到任何 account")
+            raise HTTPException(status_code=400, detail="Token can't see any account")
         if len(results) > 1:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "token 可见多个 account，请明确指定 account_id："
+                    "Token sees multiple accounts, please specify account_id: "
                     + ", ".join(f"{a['id']}={a.get('name','?')}" for a in results)
                 ),
             )
         account_id = results[0]["id"]
 
-    # ── 校验 token 实际能访问 account
+    # ── Verify token can actually access the account
     try:
         info = client.verify_token(account_id)
     except CFError as e:
-        raise HTTPException(status_code=400, detail=f"token 校验失败: {e}")
+        raise HTTPException(status_code=400, detail=f"Token verification failed: {e}")
     account_name = (info.get("result") or {}).get("name", "?")
 
     # ── KV
     try:
         kv_id = client.find_or_create_kv(account_id, body.kv_name)
     except CFError as e:
-        raise HTTPException(status_code=400, detail=f"KV 失败: {e}")
+        raise HTTPException(status_code=400, detail=f"KV failed: {e}")
 
     # ── Worker
     try:
@@ -107,9 +107,9 @@ def auto_setup(body: AutoSetupInput, user: str = CurrentUser):
             fallback_to=body.fallback_to,
         )
     except CFError as e:
-        raise HTTPException(status_code=400, detail=f"Worker 上传失败: {e}")
+        raise HTTPException(status_code=400, detail=f"Worker upload failed: {e}")
 
-    # ── 每个 zone 切 catch-all
+    # ── Set catch-all per zone
     zones_results: list[ZoneResult] = []
     for zone in body.zones:
         zone = zone.strip()
@@ -125,7 +125,7 @@ def auto_setup(body: AutoSetupInput, user: str = CurrentUser):
         except CFError as e:
             zones_results.append(ZoneResult(zone=zone, ok=False, error=str(e)))
 
-    # ── 写 SQLite secrets（增量合并）
+    # ── Write SQLite secrets (incremental merge)
     db = get_db()
     existing = db.get_runtime_json("secrets", {})
     if not isinstance(existing, dict):

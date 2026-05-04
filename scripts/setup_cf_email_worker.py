@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""一键配 Cloudflare Email Worker + KV，用于接收 OTP 邮件。
+"""One-click setup Cloudflare Email Worker + KV for receiving OTP emails.
 
-跑这个脚本会做这些事（幂等，可反复跑）：
-  1. 校验 CF API token 权限
-  2. 找/建 KV namespace（默认名 OTP_KV）
-  3. 上传 scripts/otp_email_worker.js 为 Worker（默认名 otp-relay），
-     绑定 OTP_KV + 可选的 FALLBACK_TO 环境变量
-  4. 对每个 zone：启用 Email Routing（如未启用），把 catch-all 路由
-     切到这个 Worker
-  5. 把回填到 SQLite runtime_meta[secrets] 的字段打印出来
+Running this script does the following (idempotent, can re-run):
+  1. Validate CF API token permissions
+  2. Find/create KV namespace (default name OTP_KV)
+  3. Upload scripts/otp_email_worker.js as Worker (default name otp-relay),
+     binding OTP_KV + optional FALLBACK_TO env variable
+  4. For each zone: enable Email Routing (if not enabled), set catch-all route
+     to this Worker
+  5. Print the fields to backfill into SQLite runtime_meta[secrets]
 
-需要的 CF API token 权限：
-  - Account → Workers Scripts:Edit
-  - Account → Workers KV Storage:Edit
-  - Zone → Email Routing Rules:Edit
-  - Zone → Zone:Read
+Required CF API token permissions:
+  - Account -> Workers Scripts:Edit
+  - Account -> Workers KV Storage:Edit
+  - Zone -> Email Routing Rules:Edit
+  - Zone -> Zone:Read
 
-用法：
-  # token + account_id 走环境变量
+Usage:
+  # token + account_id from env
   CF_API_TOKEN=xxx CF_ACCOUNT_ID=yyy \\
     python scripts/setup_cf_email_worker.py --zones example.com,foo.com
 
-  # 或直接读 SQLite runtime_meta[secrets] 里 cloudflare.api_token + cloudflare.account_id
+  # or read from SQLite runtime_meta[secrets] cloudflare.api_token + cloudflare.account_id
   python scripts/setup_cf_email_worker.py --zones example.com
 
-  # 加 fallback：抓到 OTP 同时转发一份到 QQ（迁移期保险）
+  # with fallback: forward copy of OTP email (migration safety)
   python scripts/setup_cf_email_worker.py --zones example.com \\
-      --fallback-to your_qq@qq.com
+      --fallback-to your_fallback@example.com
 
-  # 仅 dry-run（只校验 token + 列 zone，不改任何东西）
+  # dry-run only (validate token + list zones, don't change anything)
   python scripts/setup_cf_email_worker.py --zones example.com --dry-run
 """
 from __future__ import annotations
@@ -50,7 +50,7 @@ WORKER_JS = Path(__file__).resolve().parent / "otp_email_worker.js"
 
 
 class CFError(RuntimeError):
-    """CFClient 操作失败（webui 端点会 catch 这个并转 HTTP error）。"""
+    """CFClient operation failed (webui endpoint catches this and converts to HTTP error)."""
 
 
 class CFClient:
@@ -93,29 +93,30 @@ class CFClient:
                     "errors": [{"code": e.code, "message": body_text[:400]}],
                 }
 
-    # ── token / account ─────────────────────────────────────
+    # ---- token / account ----------------------------------------------------
 
     def verify_token(self, account_id: str) -> dict:
-        """打 /accounts/{id} 当 token 可用性探测。
+        """Probe /accounts/{id} as token reachability check.
 
-        注：新格式 'cfat_' token 在 /user/tokens/verify 上会返 1000 Invalid
-        Token（端点是为旧 v1 token 设计的），但 token 本身有效。直接用
-        /accounts/{id} 验证，对所有 token 格式都靠谱。
+        Note: new format 'cfat_' tokens return 1000 Invalid Token on
+        /user/tokens/verify (that endpoint is designed for old v1 tokens),
+        but the token itself is valid. Using /accounts/{id} directly works
+        for all token formats reliably.
         """
         r = self._req("GET", f"/accounts/{account_id}")
         if not r.get("success"):
             raise CFError(
-                f"token 不能访问 account={account_id}: {_short(r)}"
+                f"token cannot access account={account_id}: {_short(r)}"
             )
         return r
 
     def get_zone_id(self, zone_name: str) -> str:
         r = self._req("GET", f"/zones?name={zone_name}")
         if not r.get("success") or not r.get("result"):
-            raise CFError(f"找不到 zone={zone_name!r}: {_short(r)}")
+            raise CFError(f"zone not found={zone_name!r}: {_short(r)}")
         return r["result"][0]["id"]
 
-    # ── KV ──────────────────────────────────────────────────
+    # ---- KV ----------------------------------------------------------------
 
     def find_or_create_kv(self, account_id: str, name: str) -> str:
         page = 1
@@ -125,7 +126,7 @@ class CFClient:
                 f"/accounts/{account_id}/storage/kv/namespaces?per_page=100&page={page}",
             )
             if not r.get("success"):
-                raise CFError(f"KV 列表失败: {_short(r)}")
+                raise CFError(f"KV list failed: {_short(r)}")
             for ns in r.get("result", []):
                 if ns.get("title") == name:
                     return ns["id"]
@@ -140,10 +141,10 @@ class CFClient:
             {"title": name},
         )
         if not c.get("success"):
-            raise CFError(f"KV 创建失败: {_short(c)}")
+            raise CFError(f"KV create failed: {_short(c)}")
         return c["result"]["id"]
 
-    # ── Worker upload ──────────────────────────────────────
+    # ---- Worker upload -----------------------------------------------------
 
     def upload_worker(
         self,
@@ -183,25 +184,26 @@ class CFClient:
             ctype=ctype,
         )
         if not r.get("success"):
-            raise CFError(f"Worker 上传失败: {_short(r)}")
+            raise CFError(f"Worker upload failed: {_short(r)}")
         return r["result"] or {}
 
-    # ── Email Routing ──────────────────────────────────────
+    # ---- Email Routing -----------------------------------------------------
 
     def ensure_email_routing_enabled(self, zone_id: str) -> None:
-        """尽力确认 Email Routing 已启用。
+        """Best-effort confirm Email Routing is enabled.
 
-        注：`GET /zones/{id}/email/routing` 端点跟 Email Routing Rules 不
-        是同一权限（Email Routing 总开关属于 Account 级别）。如果 token
-        只给了 Email Routing Rules:Edit（够用，catch-all rule 能改），这
-        个 GET 会返 10000 Authentication error。catch-all rule 能读且已
-        enabled=True 时，Email Routing 必然已启用，跳过 enable 即可。
+        Note: `GET /zones/{id}/email/routing` endpoint and Email Routing Rules
+        don't share the same permission scope (Email Routing master switch is
+        Account level). If the token only has Email Routing Rules:Edit (sufficient,
+        catch-all rule can be changed), this GET returns 10000 Authentication error.
+        When the catch-all rule is readable and already enabled=True, Email Routing
+        must already be enabled, so skip enabling.
         """
         r = self._req("GET", f"/zones/{zone_id}/email/routing")
         if r.get("success"):
             if (r.get("result") or {}).get("enabled"):
                 return
-            # 没启用 → 尝试 enable
+            # Not enabled -> try to enable
             e = self._req("POST", f"/zones/{zone_id}/email/routing/enable")
             if not e.get("success"):
                 errs = e.get("errors") or []
@@ -211,26 +213,26 @@ class CFClient:
                 ):
                     return
                 raise CFError(
-                    f"enable email routing 失败 zone={zone_id}: {_short(e)}"
+                    f"enable email routing failed zone={zone_id}: {_short(e)}"
                 )
             return
-        # GET 失败：通常是 token 缺 Email Routing 总开关读权限。如果
-        # caller 已经能读 / 改 catch-all rule，Email Routing 一定已启用，
-        # 这一步可以跳过。
+        # GET failed: usually token lacks Email Routing master switch read permission.
+        # If caller can already read/write the catch-all rule, Email Routing must
+        # already be enabled, so this step can be skipped.
         errs = r.get("errors") or []
         if any(e.get("code") == 10000 for e in errs):
             print(
-                f"      [info] zone={zone_id[:12]}... 读 email routing 总状态"
-                f" 无权限；假设已启用（catch-all rule 已能读说明启用了）"
+                f"      [info] zone={zone_id[:12]}... no permission to read email routing"
+                f" master status; assuming enabled (catch-all rule readable implies enabled)"
             )
             return
         raise CFError(
-            f"读 email routing 状态失败 zone={zone_id}: {_short(r)}"
+            f"read email routing status failed zone={zone_id}: {_short(r)}"
         )
 
     def set_catch_all_to_worker(self, zone_id: str, worker_script: str) -> None:
         body = {
-            "name": "catch-all → otp-relay worker",
+            "name": "catch-all -> otp-relay worker",
             "enabled": True,
             "matchers": [{"type": "all"}],
             "actions": [{"type": "worker", "value": [worker_script]}],
@@ -241,7 +243,7 @@ class CFClient:
             body,
         )
         if not r.get("success"):
-            raise CFError(f"catch-all 设置失败 zone={zone_id}: {_short(r)}")
+            raise CFError(f"catch-all set failed zone={zone_id}: {_short(r)}")
 
     def get_catch_all(self, zone_id: str) -> dict:
         r = self._req("GET", f"/zones/{zone_id}/email/routing/rules/catch_all")
@@ -289,34 +291,34 @@ def _load_secrets() -> dict:
         data = get_db().get_runtime_json("secrets", {})
         return data if isinstance(data, dict) else {}
     except Exception as e:
-        print(f"[warn] 读 SQLite runtime_meta[secrets] 失败: {e}", file=sys.stderr)
+        print(f"[warn] read SQLite runtime_meta[secrets] failed: {e}", file=sys.stderr)
         return {}
 
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="配置 Cloudflare Email Worker + KV 用于接收 OTP",
+        description="Configure Cloudflare Email Worker + KV for receiving OTP",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     p.add_argument(
         "--zones",
         required=True,
-        help="逗号分隔的 zone 列表，如 example.com,foo.com",
+        help="Comma-separated zone list, e.g. example.com,foo.com",
     )
     p.add_argument("--worker-name", default="otp-relay")
     p.add_argument("--kv-name", default="OTP_KV")
     p.add_argument(
         "--fallback-to",
         default="",
-        help="抓到 OTP 后同时 forward 邮件到这里（迁移期保险）",
+        help="Forward OTP email here as well (migration safety)",
     )
-    p.add_argument("--account-id", default="", help="覆盖环境变量 / SQLite runtime_meta[secrets]")
-    p.add_argument("--token", default="", help="覆盖环境变量 / SQLite runtime_meta[secrets]")
+    p.add_argument("--account-id", default="", help="Override env var / SQLite runtime_meta[secrets]")
+    p.add_argument("--token", default="", help="Override env var / SQLite runtime_meta[secrets]")
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="只校验 token + 解析 zone id，不改任何东西",
+        help="Only validate token + resolve zone ids, don't change anything",
     )
     args = p.parse_args()
 
@@ -331,14 +333,14 @@ def main() -> None:
     )
 
     if not token:
-        sys.exit("缺 CF_API_TOKEN（或 SQLite runtime_meta[secrets] 的 cloudflare.api_token）")
+        sys.exit("Missing CF_API_TOKEN (or SQLite runtime_meta[secrets] cloudflare.api_token)")
     if not account_id:
         sys.exit(
-            "缺 CF_ACCOUNT_ID。Cloudflare dashboard 右下角能看到 Account ID，"
-            "传 --account-id 或 CF_ACCOUNT_ID 或写进 SQLite runtime_meta[secrets]"
+            "Missing CF_ACCOUNT_ID. Cloudflare dashboard bottom-right shows Account ID, "
+            "pass --account-id or CF_ACCOUNT_ID or write into SQLite runtime_meta[secrets]"
         )
     if not WORKER_JS.exists():
-        sys.exit(f"找不到 Worker 脚本：{WORKER_JS}")
+        sys.exit(f"Worker script not found: {WORKER_JS}")
 
     client = CFClient(token)
 
@@ -349,31 +351,31 @@ def main() -> None:
 
 
 def _run_setup_cli(client: "CFClient", account_id: str, args) -> None:
-    print(f"[1/5] 校验 token 能访问 account={account_id} ...")
+    print(f"[1/5] Validating token can access account={account_id} ...")
     info = client.verify_token(account_id)
     aname = (info.get("result") or {}).get("name", "?")
     print(f"      OK: account name={aname!r}")
 
     zones = [z.strip() for z in args.zones.split(",") if z.strip()]
     if not zones:
-        sys.exit("--zones 解析后为空")
+        sys.exit("--zones resolved to empty")
 
-    print(f"[2/5] 解析 zone id（{len(zones)} 个）...")
+    print(f"[2/5] Resolving zone ids ({len(zones)}) ...")
     zone_ids = {}
     for zname in zones:
         zid = client.get_zone_id(zname)
         zone_ids[zname] = zid
-        print(f"      {zname} → {zid}")
+        print(f"      {zname} -> {zid}")
 
     if args.dry_run:
-        print("\n[dry-run] 校验通过。要正式执行去掉 --dry-run。")
+        print("\n[dry-run] Validation passed. Remove --dry-run to execute.")
         return
 
-    print(f"[3/5] 找/建 KV namespace '{args.kv_name}' ...")
+    print(f"[3/5] Find/create KV namespace '{args.kv_name}' ...")
     kv_id = client.find_or_create_kv(account_id, args.kv_name)
     print(f"      kv_id={kv_id}")
 
-    print(f"[4/5] 上传 Worker '{args.worker_name}' ...")
+    print(f"[4/5] Upload Worker '{args.worker_name}' ...")
     script_body = WORKER_JS.read_text(encoding="utf-8")
     client.upload_worker(
         account_id=account_id,
@@ -384,12 +386,12 @@ def _run_setup_cli(client: "CFClient", account_id: str, args) -> None:
     )
     print(
         f"      OK (FALLBACK_TO="
-        f"{args.fallback_to or '<none, 无备份转发>'})"
+        f"{args.fallback_to or '<none, no backup forward>'})"
     )
 
-    print(f"[5/5] 给每个 zone 启 Email Routing + 切 catch-all → Worker ...")
+    print(f"[5/5] Enable Email Routing + set catch-all -> Worker per zone ...")
     for zname, zid in zone_ids.items():
-        # 先看现状，免得静默覆盖了之前的 forward 规则
+        # Check current state to avoid silently overwriting previous forward rules
         cur = client.get_catch_all(zid)
         cur_actions = cur.get("actions") or []
         cur_summary = "; ".join(
@@ -398,12 +400,12 @@ def _run_setup_cli(client: "CFClient", account_id: str, args) -> None:
         print(f"      [{zname}] before: enabled={cur.get('enabled')} actions={cur_summary}")
         client.ensure_email_routing_enabled(zid)
         client.set_catch_all_to_worker(zid, args.worker_name)
-        print(f"      [{zname}] after:  worker='{args.worker_name}' ✓")
+        print(f"      [{zname}] after:  worker='{args.worker_name}' ok")
 
-    print("\n=== Done. 把这两个字段加到 SQLite runtime_meta[secrets]: ===")
+    print("\n=== Done. Add these two fields to SQLite runtime_meta[secrets]: ===")
     suggestion = {
         "cloudflare": {
-            "api_token": "(已有, 不变)",
+            "api_token": "(already present, unchanged)",
             "account_id": account_id,
             "otp_kv_namespace_id": kv_id,
             "otp_worker_name": args.worker_name,
@@ -412,8 +414,8 @@ def _run_setup_cli(client: "CFClient", account_id: str, args) -> None:
     print(json.dumps(suggestion, indent=2, ensure_ascii=False))
 
     print(
-        "\n验证：发一封测试邮件给一个 zone 下的随机地址（catch-all 会兜住），"
-        "等 3 秒后用 CF API GET KV 确认 OTP 已落库："
+        "\nVerify: send a test email to a random address under a zone (catch-all catches it), "
+        "wait 3 seconds, then check KV with CF API to confirm OTP was stored:"
     )
     print(
         f"  curl -s -H 'Authorization: Bearer $CF_API_TOKEN' \\\n"

@@ -1,7 +1,7 @@
 <template>
   <aside class="preflight">
     <div class="pre-head">
-      <span class="pre-prompt">$</span> 实时体检 <span class="pre-tail">{{ logCount }} 条</span>
+      <span class="pre-prompt">$</span> Preflight Status <span class="pre-tail">{{ logCount }} logs</span>
     </div>
 
     <div class="pre-summary">
@@ -11,11 +11,11 @@
       </span>
     </div>
 
-    <div class="pre-divider">// 日志流</div>
+    <div class="pre-divider">// Log Stream</div>
 
     <div class="pre-stream" ref="streamEl">
       <div v-if="!log.length" class="pre-empty">
-        等待第一次 preflight<span class="term-cursor"></span>
+        Waiting for first preflight<span class="term-cursor"></span>
       </div>
       <transition-group name="logrow" tag="div">
         <div v-for="e in log" :key="e.ts + e.name" class="pre-line" :class="e.status">
@@ -57,7 +57,7 @@ const summary = computed(() =>
     return {
       name: r.name,
       status: result?.status ?? "pending",
-      message: result?.message ?? "未运行",
+      message: result?.message ?? "Not running",
     };
   })
 );
@@ -167,7 +167,7 @@ watch(() => store.preflightLog.length, async () => {
 .pre-line.fail .pl-status { color: var(--err); }
 .pre-line.warn .pl-status { color: var(--warn); }
 
-/* tail -f 滚入动画 */
+/* tail -f Scroll-in animation */
 .logrow-enter-active { transition: all 220ms ease-out; }
 .logrow-enter-from {
   opacity: 0;

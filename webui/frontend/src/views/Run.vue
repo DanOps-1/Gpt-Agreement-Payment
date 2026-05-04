@@ -4,22 +4,22 @@
       <div class="brand">
         <span class="brand-prompt">$</span>
         <span class="brand-name">gpt-pay</span>
-        <span class="brand-sub">// 运行控制</span>
+        <span class="brand-sub">// RUN CONTROL</span>
         <span class="brand-clock">{{ clock }}</span>
       </div>
       <div class="run-nav">
-        <RouterLink to="/wizard" class="nav-link">配置向导</RouterLink>
-        <RouterLink to="/run" class="nav-link active">运行</RouterLink>
-        <button class="header-btn" @click="logout">退出</button>
+        <RouterLink to="/wizard" class="nav-link">Wizard</RouterLink>
+        <RouterLink to="/run" class="nav-link active">Run</RouterLink>
+        <button class="header-btn" @click="logout">Logout</button>
       </div>
     </header>
 
     <div class="run-body">
       <section class="run-controls">
-        <div class="term-divider" data-tail="──────────">参数</div>
+        <div class="term-divider" data-tail="──────────">PARAMS</div>
         <div class="form-stack">
           <div class="ctl-row">
-            <span class="ctl-label">模式</span>
+            <span class="ctl-label">MODE</span>
             <div class="mode-pills">
               <button
                 v-for="m in modes"
@@ -40,113 +40,113 @@
             <TermField v-model.number="form.self_dealer" label="member N" type="number" />
           </div>
           <div v-if="form.mode === 'free_register'" class="ctl-row sub">
-            <TermField v-model.number="form.count" label="注册数 (0=无限)" type="number" />
+            <TermField v-model.number="form.count" label="Registration Count (0=unlimited)" type="number" />
           </div>
 
           <div v-if="!isFreeMode" class="ctl-row toggles">
-            <TermToggle v-model="form.paypal" :disabled="form.gopay">PayPal 支付</TermToggle>
-            <TermToggle v-model="form.gopay" @update:modelValue="onGoPayToggle">GoPay (印尼)</TermToggle>
+            <TermToggle v-model="form.paypal" :disabled="form.gopay">PayPal Payment</TermToggle>
+            <TermToggle v-model="form.gopay" @update:modelValue="onGoPayToggle">GoPay (IDN)</TermToggle>
           </div>
           <div v-if="!isFreeMode" class="ctl-row toggles">
             <TermToggle v-model="form.pay_only">--pay-only</TermToggle>
             <TermToggle v-model="form.register_only" :disabled="form.pay_only">--register-only</TermToggle>
           </div>
           <p v-if="!isFreeMode" class="ctl-hint">
-            <code>--pay-only</code> 跳过注册，优先复用最近注册但未支付账号；
-            <code>--register-only</code> 只注册不支付。
+            <code>--pay-only</code> Skips registration, prioritizes reusing recent unpaid accounts;
+            <code>--register-only</code> Only register without payment.
           </p>
           <p v-else class="ctl-hint">
-            <code>{{ form.mode }}</code> 不走支付步骤；OTP 经 CF KV 取，OAuth 拿 rt 后推 CPA 用 <code>cpa.free_plan_tag</code>。
+            <code>{{ form.mode }}</code> Skips payment; OTP retrieved via CF KV, OAuth to get RT then push to CPA using <code>cpa.free_plan_tag</code>.
           </p>
         </div>
 
-        <div class="term-divider" data-tail="──────────">命令</div>
+        <div class="term-divider" data-tail="──────────">COMMAND</div>
         <pre class="cmd-preview">{{ cmdPreview }}</pre>
 
         <div v-if="configHealth" class="health-panel" :class="{ ok: configHealth.ok, fail: !configHealth.ok }">
           <div class="health-head">
-            <span class="health-title">配置健康检查</span>
+            <span class="health-title">Config Health Check</span>
             <span class="badge" :class="configHealth.ok ? 'badge-ok' : 'badge-err'">
-              {{ configHealth.ok ? "可启动" : "阻断启动" }}
+              {{ configHealth.ok ? "Startable" : "Blocked" }}
             </span>
-            <span class="health-meta">{{ configHealth.payment_kind }} / {{ configHealth.requires_email_otp ? "需要邮箱 OTP" : "不需要邮箱 OTP" }}</span>
+            <span class="health-meta">{{ configHealth.payment_kind }} / {{ configHealth.requires_email_otp ? "Requires Email OTP" : "No Email OTP" }}</span>
           </div>
           <div class="health-list">
             <div v-for="chk in visibleHealthChecks" :key="chk.name" class="health-row" :class="`health-${chk.status}`">
               <span class="health-status">{{ healthStatusLabel(chk.status) }}</span>
               <div class="health-body">
                 <strong>{{ chk.message }}</strong>
-                <div v-if="chk.missing?.length" class="health-sub">缺：{{ chk.missing.join(", ") }}</div>
-                <div v-if="chk.action" class="health-sub">处理：{{ chk.action }}</div>
-                <div v-if="chk.details" class="health-sub">详情：{{ chk.details }}</div>
+                <div v-if="chk.missing?.length" class="health-sub">Missing: {{ chk.missing.join(", ") }}</div>
+                <div v-if="chk.action" class="health-sub">Action: {{ chk.action }}</div>
+                <div v-if="chk.details" class="health-sub">Details: {{ chk.details }}</div>
               </div>
             </div>
           </div>
         </div>
 
         <div class="step-actions">
-          <TermBtn variant="ghost" :loading="configHealthLoading" @click="checkConfigHealth">检查配置</TermBtn>
-          <TermBtn v-if="!status.running" :loading="starting" @click="start">▶ 开始运行</TermBtn>
-          <TermBtn v-else variant="danger" :loading="stopping" @click="stop">■ 停止</TermBtn>
+          <TermBtn variant="ghost" :loading="configHealthLoading" @click="checkConfigHealth">Check Config</TermBtn>
+          <TermBtn v-if="!status.running" :loading="starting" @click="start">▶ Start Run</TermBtn>
+          <TermBtn v-else variant="danger" :loading="stopping" @click="stop">■ Stop</TermBtn>
         </div>
 
         <div class="status-line" :class="{ running: status.running }">
           <span v-if="status.running">
             <span class="status-dot">●</span>
-            运行中 PID {{ status.pid }} // 模式 {{ status.mode }} // {{ runtimeText }}
+            Running PID {{ status.pid }} // Mode {{ status.mode }} // {{ runtimeText }}
           </span>
           <span v-else-if="status.ended_at">
             <span class="status-dot ok" v-if="status.exit_code === 0">●</span>
             <span class="status-dot err" v-else>●</span>
-            上次运行已退出 // 退出码 {{ status.exit_code }} //
+            Last run exited // Exit Code {{ status.exit_code }} //
             {{ runtimeText }}
           </span>
           <span v-else>
-            <span class="status-dot idle">○</span> 空闲
+            <span class="status-dot idle">○</span> Idle
           </span>
         </div>
       </section>
 
       <section class="run-inventory">
-        <div class="term-divider inventory-divider" data-tail="──────────">账号库存</div>
+        <div class="term-divider inventory-divider" data-tail="──────────">Account Inventory</div>
         <div class="inventory-head">
           <div class="inventory-meta">
-            <span class="inventory-label">最近刷新</span>
+            <span class="inventory-label">Last Refresh</span>
             <span class="inventory-value">{{ inventoryUpdatedText }}</span>
           </div>
-          <TermBtn variant="ghost" :loading="inventoryLoading" @click="refreshInventory">刷新库存</TermBtn>
+          <TermBtn variant="ghost" :loading="inventoryLoading" @click="refreshInventory">Refresh Inventory</TermBtn>
         </div>
         <div v-if="inventoryError" class="inventory-error">
-          库存刷新失败：{{ inventoryError }}。如果刚更新过代码，重启后端 <code>python -m webui.server</code>。
+          Inventory refresh failed: {{ inventoryError }} . If you just updated the code, restart the backend <code>python -m webui.server</code>.
         </div>
 
         <div class="inventory-stats">
           <div class="inventory-stat">
-            <span class="inventory-stat-label">总账号</span>
+            <span class="inventory-stat-label">Total Accounts</span>
             <strong>{{ inventory.counts.registered_total }}</strong>
           </div>
           <div class="inventory-stat">
-            <span class="inventory-stat-label">可复用</span>
+            <span class="inventory-stat-label">Reusable</span>
             <strong>{{ inventory.counts.pay_only_eligible }}</strong>
           </div>
           <div class="inventory-stat">
-            <span class="inventory-stat-label">已消耗</span>
+            <span class="inventory-stat-label">Consumed</span>
             <strong>{{ inventory.counts.pay_only_consumed }}</strong>
           </div>
           <div class="inventory-stat">
-            <span class="inventory-stat-label">缺 auth</span>
+            <span class="inventory-stat-label">Missing auth</span>
             <strong>{{ inventory.counts.pay_only_no_auth }}</strong>
           </div>
           <div class="inventory-stat">
-            <span class="inventory-stat-label">有 RT</span>
+            <span class="inventory-stat-label">Has RT</span>
             <strong>{{ inventory.counts.with_refresh_token }}</strong>
           </div>
           <div class="inventory-stat">
-            <span class="inventory-stat-label">RT 待补</span>
+            <span class="inventory-stat-label">RT Missing</span>
             <strong>{{ inventory.counts.rt_missing }}</strong>
           </div>
           <div class="inventory-stat">
-            <span class="inventory-stat-label">RT 冷却</span>
+            <span class="inventory-stat-label">RT Cooldown</span>
             <strong>{{ inventory.counts.rt_cooldown }}</strong>
           </div>
         </div>
@@ -154,15 +154,15 @@
         <div v-if="inventory.accounts.length" class="inventory-toolbar">
           <label class="inventory-toolbar-check">
             <input type="checkbox" :checked="allSelected" @change="toggleSelectAll" />
-            <span>全选 ({{ selectedIds.size }} / {{ inventory.accounts.length }})</span>
+            <span>Select All ({{ selectedIds.size }} / {{ inventory.accounts.length }})</span>
           </label>
           <div class="inventory-toolbar-actions">
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="verifySelected">验证选中</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="unknownOrUncheckedIds.length === 0" @click="verifyAllUnknown">验证全部未检 ({{ unknownOrUncheckedIds.length }})</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="pushSelectedToCpa">推送选中→CPA</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="unpushedIds.length === 0" @click="pushAllUnpushed">推送全部未推送 ({{ unpushedIds.length }})</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="deleteSelected">删除选中</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="invalidIds.length === 0" @click="deleteAllInvalid">删除所有失效 ({{ invalidIds.length }})</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="verifySelected">Verify Selected</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="unknownOrUncheckedIds.length === 0" @click="verifyAllUnknown">Verify All Unknown ({{ unknownOrUncheckedIds.length }})</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="pushSelectedToCpa">Push Selected → CPA</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="unpushedIds.length === 0" @click="pushAllUnpushed">Push All Unpushed ({{ unpushedIds.length }})</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="deleteSelected">Delete Selected</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="invalidIds.length === 0" @click="deleteAllInvalid">Delete All Invalid ({{ invalidIds.length }})</TermBtn>
           </div>
         </div>
 
@@ -173,16 +173,16 @@
               <span class="inventory-email">{{ acc.email }}</span>
               <span class="badge" :class="planBadgeClass(acc.plan_tag)">{{ planLabel(acc.plan_tag) }}</span>
               <span class="badge" :class="checkBadgeClass(acc.last_check_status)" :title="acc.last_check_message">
-                <template v-if="checkingIds.has(acc.id)">⟳ 检查中</template>
+                <template v-if="checkingIds.has(acc.id)">⟳ Verifying...</template>
                 <template v-else>{{ checkLabel(acc.last_check_status) }}</template>
               </span>
               <span class="badge" :class="payBadgeClass(acc.pay_state)">{{ payStateLabel(acc) }}</span>
               <span class="badge" :class="rtBadgeClass(acc.rt_state)">{{ rtStateLabel(acc) }}</span>
               <span class="badge" :class="cpaBadgeClass(acc)" :title="acc.cpa_status">{{ cpaLabel(acc) }}</span>
-              <button v-if="!acc.cpa_pushed" class="inventory-row-action" :disabled="inventoryBusy" @click="pushOneToCpa(acc.id)">推送→CPA</button>
+              <button v-if="!acc.cpa_pushed" class="inventory-row-action" :disabled="inventoryBusy" @click="pushOneToCpa(acc.id)">Push → CPA</button>
             </div>
             <div class="inventory-row-sub">
-              <span>注册 {{ formatInventoryTs(acc.registered_at) }}</span>
+              <span>Registered {{ formatInventoryTs(acc.registered_at) }}</span>
               <span>attempts {{ acc.attempts }}</span>
               <span>auth {{ authSummary(acc) }}</span>
             </div>
@@ -198,7 +198,7 @@
           </div>
         </div>
         <div v-else class="inventory-empty">
-          暂无账号库存；先跑一次注册/支付，等数据库同步完成后再点刷新。
+          No account inventory; Run a registration/payment first, then refresh after database sync.
         </div>
       </section>
 
@@ -208,7 +208,7 @@
             <div class="otp-head">
               <span class="otp-prompt">$</span> GoPay WhatsApp OTP
             </div>
-            <p class="otp-desc">查 WhatsApp，把刚收到的 6 位 OTP 输进来。提交后 gopay.py 自动继续。</p>
+            <p class="otp-desc">Check WhatsApp and enter the 6-digit OTP you just received. gopay.py will continue automatically after submission.</p>
             <input
               class="otp-input"
               v-model="otpDialog.value"
@@ -219,7 +219,7 @@
               placeholder="000000"
             />
             <div class="otp-actions">
-              <TermBtn :loading="otpDialog.submitting" @click="submitOtp">提交</TermBtn>
+              <TermBtn :loading="otpDialog.submitting" @click="submitOtp">Submit</TermBtn>
             </div>
           </div>
         </div>
@@ -227,16 +227,16 @@
 
       <section class="run-logs">
         <div class="logs-head">
-          <span class="pre-prompt">$</span> 实时日志
-          <span class="logs-meta">{{ lines.length }} 行</span>
+          <span class="pre-prompt">$</span> Realtime Logs
+          <span class="logs-meta">{{ lines.length }} lines</span>
           <label class="auto-scroll-toggle">
             <input type="checkbox" v-model="autoScroll" />
-            <span>自动滚到底</span>
+            <span>Auto-scroll</span>
           </label>
         </div>
         <div class="logs-stream" ref="streamEl">
           <div v-if="!lines.length" class="logs-empty">
-            等待运行<span class="term-cursor"></span>
+            Waiting for run<span class="term-cursor"></span>
           </div>
           <div v-for="entry in lines" :key="entry.seq" class="log-line" :class="logClass(entry.line)">
             <span class="log-ts">{{ formatTs(entry.ts) }}</span>
@@ -267,8 +267,8 @@ const modes = [
   { value: "batch", label: "batch — N×" },
   { value: "self_dealer", label: "self-dealer" },
   { value: "daemon", label: "daemon ∞" },
-  { value: "free_register", label: "free_register — 免费号+rt+CPA" },
-  { value: "free_backfill_rt", label: "free_backfill_rt — 老号补rt" },
+  { value: "free_register", label: "free_register — Free Account+RT+CPA" },
+  { value: "free_backfill_rt", label: "free_backfill_rt — Account RT Backfill" },
 ];
 
 import { useWizardStore } from "../stores/wizard";
@@ -365,7 +365,7 @@ const form = ref({
   batch: 5,
   workers: 3,
   self_dealer: 4,
-  count: 0, // free_register 模式：注册多少个后停（0 = 无限）
+  count: 0, // free_register mode: how many to register before stopping (0 = unlimited)
 });
 
 const otpDialog = ref({ open: false, value: "", submitting: false });
@@ -429,13 +429,13 @@ const runtimeText = computed(() => {
   }
   if (status.value.started_at && status.value.ended_at) {
     const elapsed = Math.floor(status.value.ended_at - status.value.started_at);
-    return `耗时 ${formatElapsed(elapsed)}`;
+    return `Elapsed ${formatElapsed(elapsed)}`;
   }
   return "";
 });
 
 const inventoryUpdatedText = computed(() =>
-  inventory.value.generated_at ? formatInventoryTs(inventory.value.generated_at) : "未刷新"
+  inventory.value.generated_at ? formatInventoryTs(inventory.value.generated_at) : "Not Refreshed"
 );
 
 const visibleHealthChecks = computed(() => {
@@ -479,25 +479,25 @@ function authSummary(acc: InventoryAccount) {
 }
 
 function payStateLabel(acc: InventoryAccount) {
-  if (acc.pay_state === "reusable") return "可复用";
-  if (acc.pay_state === "consumed") return "已消耗";
-  return "缺 auth";
+  if (acc.pay_state === "reusable") return "Reusable";
+  if (acc.pay_state === "consumed") return "Consumed";
+  return "Auth missing";
 }
 
 function rtStateLabel(acc: InventoryAccount) {
   switch (acc.rt_state) {
     case "has_rt":
-      return "有 RT";
+      return "RT available";
     case "oauth_succeeded":
-      return "RT 已处理";
+      return "RT processed";
     case "dead":
       return "dead";
     case "cooldown":
-      return "RT 冷却";
+      return "RT cooldown";
     case "retryable":
-      return "可重试";
+      return "Retryable";
     default:
-      return "RT 待补";
+      return "RT missing";
   }
 }
 
@@ -522,24 +522,24 @@ function healthStatusLabel(status: ConfigHealthCheck["status"]) {
 
 function healthErrorText(payload: any) {
   const detail = payload?.response?.data?.detail;
-  if (!detail) return payload?.message || "配置健康检查失败";
+  if (!detail) return payload?.message || "Config health check failed";
   if (typeof detail === "string") return detail;
-  return detail.message || "配置健康检查未通过";
+  return detail.message || "Config health check failed";
 }
 
 function logClass(line: string) {
   if (/\b(ERROR|FAIL|TRACE|Traceback)\b/i.test(line)) return "log-err";
   if (/\b(WARN|WARNING)\b/i.test(line)) return "log-warn";
-  if (/\b(OK|SUCCESS|✓|完成|成功)\b/i.test(line)) return "log-ok";
+  if (/\b(OK|SUCCESS|✓|Complete|Success)\b/i.test(line)) return "log-ok";
   return "";
 }
 
-// ── 库存：选择 + 验证 + 删除 ─────────────────────────────────
+// ── Inventory: Select + Verify + Delete ─────────────────────────────────
 function checkLabel(s: InventoryAccount["last_check_status"]) {
-  if (s === "valid") return "✓ 有效";
-  if (s === "invalid") return "✗ 失效";
-  if (s === "unknown") return "？未知";
-  return "○ 未验";
+  if (s === "valid") return "✓ Valid";
+  if (s === "invalid") return "✗ Invalid";
+  if (s === "unknown") return "? Unknown";
+  return "○ Unchecked";
 }
 function checkBadgeClass(s: InventoryAccount["last_check_status"]) {
   if (s === "valid") return "badge-ok";
@@ -574,26 +574,26 @@ const unknownOrUncheckedIds = computed(() =>
 );
 
 async function runCheck(ids: number[], label: string) {
-  if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
+  if (!ids.length) { message.warning(`No accounts available to ${label}`); return; }
   inventoryBusy.value = true;
   ids.forEach(id => checkingIds.value.add(id));
   try {
     const r = await api.post("/inventory/accounts/check", { ids });
     const s = r.data?.summary || {};
-    message.success(`${label}完成：valid=${s.valid || 0}  invalid=${s.invalid || 0}  unknown=${s.unknown || 0}`);
+    message.success(`${label} completed: valid=${s.valid || 0}  invalid=${s.invalid || 0}  unknown=${s.unknown || 0}`);
     await refreshInventory();
   } catch (e: any) {
-    message.error(`${label}失败：${e?.response?.data?.detail || e?.message || e}`);
+    message.error(`${label} failed: ${e?.response?.data?.detail || e?.message || e}`);
   } finally {
     ids.forEach(id => checkingIds.value.delete(id));
     inventoryBusy.value = false;
   }
 }
 function verifySelected() {
-  runCheck(Array.from(selectedIds.value), "验证选中");
+  runCheck(Array.from(selectedIds.value), "Verify selected");
 }
 function verifyAllUnknown() {
-  runCheck(unknownOrUncheckedIds.value, "验证未检/未知");
+  runCheck(unknownOrUncheckedIds.value, "Verify unchecked/unknown");
 }
 
 function emailsForIds(ids: number[]): string[] {
@@ -601,26 +601,26 @@ function emailsForIds(ids: number[]): string[] {
   return ids.map(i => map.get(i) || `id=${i}`);
 }
 function confirmAndDelete(ids: number[], label: string) {
-  if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
+  if (!ids.length) { message.warning(`No accounts available to ${label}`); return; }
   const emails = emailsForIds(ids);
-  const preview = emails.slice(0, 5).join(", ") + (emails.length > 5 ? `, ... 共 ${emails.length} 个` : "");
+  const preview = emails.slice(0, 5).join(", ") + (emails.length > 5 ? `, ... total ${emails.length} accounts` : "");
   dialog.warning({
-    title: `确认${label}？`,
+    title: `Confirm ${label}?`,
     content: () => h("div", { style: "font-size:12px; line-height:1.6" }, [
-      h("div", `将永久删除 ${ids.length} 个账号（pipeline_results / card_results 等审计行保留）。`),
+      h("div", `Will permanently delete ${ids.length}  accounts (pipeline_results / card_results audit rows are kept).`),
       h("div", { style: "margin-top:6px; color:#7a7363; word-break:break-all" }, preview),
     ]),
-    positiveText: "确认删除",
-    negativeText: "取消",
+    positiveText: "Confirm Delete",
+    negativeText: "Cancel",
     onPositiveClick: async () => {
       inventoryBusy.value = true;
       try {
         const r = await api.post("/inventory/accounts/delete", { ids });
-        message.success(`已删除 ${r.data?.deleted ?? 0} 个`);
+        message.success(`Deleted ${r.data?.deleted ?? 0} `);
         selectedIds.value = new Set();
         await refreshInventory();
       } catch (e: any) {
-        message.error(`删除失败：${e?.response?.data?.detail || e?.message || e}`);
+        message.error(`Delete failed: ${e?.response?.data?.detail || e?.message || e}`);
       } finally {
         inventoryBusy.value = false;
       }
@@ -628,13 +628,13 @@ function confirmAndDelete(ids: number[], label: string) {
   });
 }
 function deleteSelected() {
-  confirmAndDelete(Array.from(selectedIds.value), "删除选中");
+  confirmAndDelete(Array.from(selectedIds.value), "Delete selected");
 }
 function deleteAllInvalid() {
-  confirmAndDelete(invalidIds.value, "删除所有失效");
+  confirmAndDelete(invalidIds.value, "Delete all invalid");
 }
 
-// ── plan + CPA 推送 ─────────────────────────────────
+// ── plan + CPA push ─────────────────────────────────
 function planLabel(p: string) {
   if (p === "team") return "team";
   if (p === "plus") return "plus";
@@ -646,9 +646,9 @@ function planBadgeClass(p: string) {
   return "badge-ghost";
 }
 function cpaLabel(acc: InventoryAccount) {
-  if (acc.cpa_pushed) return "✓ 已推 CPA";
+  if (acc.cpa_pushed) return "✓ CPA Pushed";
   if (acc.cpa_status && acc.cpa_status !== "ok") return `✗ ${acc.cpa_status}`;
-  return "○ 未推 CPA";
+  return "○ CPA Not Pushed";
 }
 function cpaBadgeClass(acc: InventoryAccount) {
   if (acc.cpa_pushed) return "badge-ok";
@@ -660,22 +660,22 @@ const unpushedIds = computed(() =>
 );
 
 async function pushCpa(ids: number[], label: string) {
-  if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
+  if (!ids.length) { message.warning(`No accounts available to ${label}`); return; }
   inventoryBusy.value = true;
   try {
     const r = await api.post("/inventory/accounts/cpa-push", { ids });
     const s = r.data?.summary || {};
-    message.success(`${label}完成：ok=${s.ok || 0}  no_rt=${s.no_rt || 0}  fail=${s.fail || 0}`);
+    message.success(`${label} completed: ok=${s.ok || 0}  no_rt=${s.no_rt || 0}  fail=${s.fail || 0}`);
     await refreshInventory();
   } catch (e: any) {
-    message.error(`${label}失败：${e?.response?.data?.detail || e?.message || e}`);
+    message.error(`${label} failed: ${e?.response?.data?.detail || e?.message || e}`);
   } finally {
     inventoryBusy.value = false;
   }
 }
-function pushOneToCpa(id: number) { pushCpa([id], "推送 CPA"); }
-function pushSelectedToCpa() { pushCpa(Array.from(selectedIds.value), "批量推送选中"); }
-function pushAllUnpushed() { pushCpa(unpushedIds.value, "推送所有未推送"); }
+function pushOneToCpa(id: number) { pushCpa([id], "Push CPA"); }
+function pushSelectedToCpa() { pushCpa(Array.from(selectedIds.value), "Batch push selected"); }
+function pushAllUnpushed() { pushCpa(unpushedIds.value, "Push all unpushed"); }
 
 async function refreshInventory() {
   if (inventoryLoading.value) return;
@@ -687,7 +687,7 @@ async function refreshInventory() {
   } catch (e: any) {
     inventoryError.value = e?.response?.status
       ? `HTTP ${e.response.status}${e.response.data?.detail ? `: ${e.response.data.detail}` : ""}`
-      : (e?.message || "请求失败");
+      : (e?.message || "Request failed");
   }
   finally {
     inventoryLoading.value = false;
@@ -729,17 +729,17 @@ async function start() {
     const health = await checkConfigHealth();
     if (!health?.ok) {
       const first = health?.blocking?.[0];
-      message.error(first?.message || "配置健康检查未通过，已阻止启动");
+      message.error(first?.message || "Config health check failed, startup blocked");
       return;
     }
     await api.post("/run/start", form.value);
-    message.success("已启动");
+    message.success("Started");
     lines.value = [];
     await refreshStatus();
     await refreshInventory();
     openStream();
   } catch (e: any) {
-    message.error(healthErrorText(e) || "启动失败");
+    message.error(healthErrorText(e) || "Start failed");
   } finally {
     starting.value = false;
   }
@@ -749,10 +749,10 @@ async function stop() {
   stopping.value = true;
   try {
     await api.post("/run/stop");
-    message.success("已发送 SIGTERM");
+    message.success("SIGTERM sent");
     await refreshStatus();
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "停止失败");
+    message.error(e.response?.data?.detail || "Stop failed");
   } finally {
     stopping.value = false;
   }
@@ -788,7 +788,7 @@ function openStream() {
     await refreshInventory();
   });
   eventSource.onerror = () => {
-    // 连接断开，不自动 retry
+    // Connection closed, no auto retry
     eventSource?.close();
     eventSource = null;
   };
@@ -802,7 +802,7 @@ async function logout() {
 async function submitOtp() {
   const v = otpDialog.value.value.trim();
   if (!v) {
-    message.warning("请输入 OTP");
+    message.warning("Please enter OTP");
     return;
   }
   otpDialog.value.submitting = true;
@@ -810,9 +810,9 @@ async function submitOtp() {
     await api.post("/run/otp", { otp: v });
     otpDialog.value.open = false;
     otpDialog.value.value = "";
-    message.success("OTP 已提交");
+    message.success("OTP submitted");
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "提交失败");
+    message.error(e.response?.data?.detail || "Submit failed");
   } finally {
     otpDialog.value.submitting = false;
   }
@@ -835,7 +835,7 @@ onMounted(async () => {
   tick();
   clockTimer = setInterval(tick, 1000);
 
-  // 从 wizard store 推断默认支付方式：card 不带 --paypal，其它都带
+  // Infer default payment method from wizard store: card without --paypal, others with it
   try {
     await store.loadFromServer();
     const pm = (store.answers.payment as any)?.method;

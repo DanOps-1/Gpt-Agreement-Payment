@@ -1,8 +1,8 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">步骤 05: 代理</div>
-    <h2 class="step-h">$&nbsp;代理<span class="term-cursor"></span></h2>
-    <p class="step-sub">PayPal 锁地区，Stripe 锁国家。出口必须在 EU/US。</p>
+    <div class="term-divider" data-tail="──────────">Step 05: Proxy</div>
+    <h2 class="step-h">$&nbsp;Proxy<span class="term-cursor"></span></h2>
+    <p class="step-sub">PayPal is region-locked, Stripe is country-locked. Exit node must be in EU/US.</p>
 
     <TermChoice
       v-model="form.mode"
@@ -13,51 +13,51 @@
     <div v-if="form.mode === 'webshare'" style="margin-top:16px">
       <div class="info-block">
         <p>
-          <strong>Webshare 模式 = 代理 + 12 路自愈</strong>。pipeline 在 daemon 模式下会自动:
+          <strong>Webshare Mode = Proxy + 12-way self-healing</strong>. In daemon mode, the pipeline will automatically:
         </p>
         <ul class="info-list">
-          <li>累计 N 次 <code>no_invite_permission</code> 触发换 IP（webshare API rotate）</li>
-          <li>同 zone 换够 IP 后自动切 CF zone</li>
-          <li>注册连续失败也切 zone</li>
-          <li>配额耗尽进 N 小时冷却</li>
-          <li>本地 gost 中继挂掉看门狗自动拉起</li>
-          <li>换 IP 后同步 gpt-team 全局代理</li>
+          <li>Rotate IP (Webshare API rotate) after N cumulative <code>no_invite_permission</code> errors</li>
+          <li>Rotate CF zone after rotating through enough IPs in the same zone</li>
+          <li>Rotate zone after consecutive registration failures</li>
+          <li>Enter N-hour cooldown when quota is exhausted</li>
+          <li>Auto-restart local gost relay via watchdog if it crashes</li>
+          <li>Sync gpt-team global proxy after IP rotation</li>
         </ul>
         <p style="margin-top:8px">
-          多数情况用默认参数即可，下方"高级"里能调阈值。详见 <code>docs/daemon-mode.md</code> 12 路自愈环。
+          Default parameters are usually sufficient. Thresholds can be adjusted in "Advanced" below. See <code>docs/daemon-mode.md</code> for the self-healing loop details.
         </p>
       </div>
 
       <div class="form-stack">
         <TermField v-model="form.api_key" label="Webshare API Key · api_key" type="password" />
-        <TermField v-model="form.lock_country" label="锁出口国 · lock_country" placeholder="US (锁出口国)" />
+        <TermField v-model="form.lock_country" label="Lock Exit Country · lock_country" placeholder="US (Lock country)" />
       </div>
 
       <div class="step-actions">
-        <TermBtn :loading="loading" @click="testWebshare">测试 Webshare</TermBtn>
+        <TermBtn :loading="loading" @click="testWebshare">Test Webshare</TermBtn>
         <button class="advanced-toggle" @click="showAdvanced = !showAdvanced">
-          {{ showAdvanced ? '▾' : '▸' }} 高级（轮换阈值 / gost / 下游同步）
+          {{ showAdvanced ? '▾' : '▸' }} Advanced (Rotation thresholds / gost / downstream sync)
         </button>
       </div>
 
       <div v-if="showAdvanced" class="form-stack" style="margin-top:12px">
-        <TermField v-model.number="form.refresh_threshold" label="换 IP 阈值 · refresh_threshold" type="number" placeholder="2 (累计 N 次 no_perm 后换 IP)" />
-        <TermField v-model.number="form.zone_rotate_after_ip_rotations" label="切 zone IP 轮换数 · zone_rotate_after_ip_rotations" type="number" placeholder="2 (同 zone 换 N 次 IP 后切 zone)" />
-        <TermField v-model.number="form.zone_rotate_on_reg_fails" label="切 zone 注册失败数 · zone_rotate_on_reg_fails" type="number" placeholder="3 (连续 N 次注册失败切 zone)" />
-        <TermField v-model.number="form.no_rotation_cooldown_s" label="配额冷却秒数 · no_rotation_cooldown_s" type="number" placeholder="10800 (配额耗尽冷却秒数)" />
-        <TermField v-model.number="form.gost_listen_port" label="gost 中继端口 · gost_listen_port" type="number" placeholder="18898 (本地 gost 中继端口)" />
+        <TermField v-model.number="form.refresh_threshold" label="IP rotation threshold · refresh_threshold" type="number" placeholder="2 (rotate IP after N no_perm errors)" />
+        <TermField v-model.number="form.zone_rotate_after_ip_rotations" label="IP rotations per zone · zone_rotate_after_ip_rotations" type="number" placeholder="2 (rotate zone after N IP rotations)" />
+        <TermField v-model.number="form.zone_rotate_on_reg_fails" label="Reg failures per zone · zone_rotate_on_reg_fails" type="number" placeholder="3 (rotate zone after N consecutive reg failures)" />
+        <TermField v-model.number="form.no_rotation_cooldown_s" label="Quota cooldown seconds · no_rotation_cooldown_s" type="number" placeholder="10800 (seconds to cooldown when quota exhausted)" />
+        <TermField v-model.number="form.gost_listen_port" label="gost relay port · gost_listen_port" type="number" placeholder="18898 (local gost relay port)" />
         <label class="toggle-row">
           <input type="checkbox" v-model="form.sync_team_proxy" />
-          <span>换 IP 后同步 gpt-team 全局代理 (sync_team_proxy)</span>
+          <span>Sync gpt-team global proxy after IP rotation (sync_team_proxy)</span>
         </label>
       </div>
     </div>
 
     <div v-if="form.mode === 'manual'" class="form-stack" style="margin-top:16px">
-      <TermField v-model="form.url" label="代理 URL · url" placeholder="socks5://user:pw@host:port" />
-      <TermField v-model="form.expected_country" label="期望国家 · expected_country" placeholder="US" />
+      <TermField v-model="form.url" label="Proxy URL · url" placeholder="socks5://user:pw@host:port" />
+      <TermField v-model="form.expected_country" label="Expected Country · expected_country" placeholder="US" />
       <div class="step-actions">
-        <TermBtn :loading="loading" @click="testProxy">测试出口 IP</TermBtn>
+        <TermBtn :loading="loading" @click="testProxy">Test Exit IP</TermBtn>
       </div>
     </div>
 
@@ -86,7 +86,7 @@ const form = ref({
   expected_country: init.expected_country ?? "US",
   api_key: init.api_key ?? "",
   lock_country: init.lock_country ?? "US",
-  // webshare 高级（默认值跟 pipeline.py 一致）
+  // webshare advanced (defaults match pipeline.py)
   refresh_threshold: init.refresh_threshold ?? 2,
   zone_rotate_after_ip_rotations: init.zone_rotate_after_ip_rotations ?? 2,
   zone_rotate_on_reg_fails: init.zone_rotate_on_reg_fails ?? 3,
@@ -99,9 +99,9 @@ const result = ref<PreflightResult | null>(null);
 const showAdvanced = ref(false);
 
 const modeOptions = [
-  { value: "webshare", label: "webshare", desc: "Webshare API 托管 + 12 路自愈" },
-  { value: "manual", label: "manual", desc: "手动 socks5/http" },
-  { value: "none", label: "none", desc: "不用代理（直连）" },
+  { value: "webshare", label: "webshare", desc: "Webshare API managed + 12-way self-healing" },
+  { value: "manual", label: "manual", desc: "Manual socks5/http" },
+  { value: "none", label: "none", desc: "No proxy (Direct)" },
 ];
 
 async function testProxy() {

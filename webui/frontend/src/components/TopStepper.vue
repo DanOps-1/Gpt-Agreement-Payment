@@ -17,7 +17,7 @@
       </span>
     </div>
     <div class="stepper-meta">
-      阶段: {{ currentPhase }} // 第 {{ store.currentStep }}/14 步
+      Phase: {{ currentPhase }} // Step {{ store.currentStep }}/14
     </div>
   </div>
 </template>
@@ -36,26 +36,26 @@ watch(() => store.currentStep, async () => {
   if (active) active.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
 });
 
-// step 6 槽位是「主支付方式」配置，PayPal / GoPay 共用 —— 标签随 pm 切换，
-// 否则选了 GoPay 时 stepper 还显示「PAYPAL」会跟实际表单错位。
+// step 6 slot is Main Payment Method config, PayPal / GoPay shared -- label switches with pm,
+// otherwise choosing GoPay would still show PAYPAL in stepper, misaligning with the actual form.
 const steps = computed(() => {
   const pm = (store.answers.payment as any)?.method;
   const paySlotTitle = pm === "gopay" ? "GOPAY" : "PAYPAL";
   return [
-    { n: 1, title: "模式", phase: "基础" },
-    { n: 2, title: "系统", phase: "基础" },
-    { n: 3, title: "CF", phase: "基础" },
-    { n: 4, title: "CF KV", phase: "基础" },
-    { n: 5, title: "代理", phase: "基础" },
-    { n: 6, title: paySlotTitle, phase: "支付" },
-    { n: 7, title: "卡片", phase: "支付" },
-    { n: 8, title: "打码", phase: "可选" },
-    { n: 9, title: "VLM", phase: "可选" },
-    { n: 10, title: "TEAM", phase: "下游" },
-    { n: 11, title: "推送", phase: "下游" },
-    { n: 12, title: "DAEMON", phase: "下游" },
-    { n: 13, title: "STRIPE", phase: "下游" },
-    { n: 14, title: "完成", phase: "出口" },
+    { n: 1, title: "Mode", phase: "Basic" },
+    { n: 2, title: "System", phase: "Basic" },
+    { n: 3, title: "CF", phase: "Basic" },
+    { n: 4, title: "CF KV", phase: "Basic" },
+    { n: 5, title: "Proxy", phase: "Basic" },
+    { n: 6, title: paySlotTitle, phase: "Payment" },
+    { n: 7, title: "Card", phase: "Payment" },
+    { n: 8, title: "Captcha", phase: "CAPTCHA" },
+    { n: 9, title: "VLM", phase: "CAPTCHA" },
+    { n: 10, title: "TEAM", phase: "Downstream" },
+    { n: 11, title: "Push", phase: "Downstream" },
+    { n: 12, title: "DAEMON", phase: "Downstream" },
+    { n: 13, title: "STRIPE", phase: "Downstream" },
+    { n: 14, title: "Complete", phase: "Complete" },
   ];
 });
 

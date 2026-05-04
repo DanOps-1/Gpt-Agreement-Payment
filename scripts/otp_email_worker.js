@@ -33,14 +33,14 @@ export default {
     const subjMatch = raw.match(/^Subject:\s*(.+?)(?:\r?\n[^\s])/ms);
     const subject = subjMatch ? subjMatch[1].trim().slice(0, 200) : '';
 
-    // 收件地址 + 发件地址里的数字（zone 名常含 6 位，会被 fallback regex
-    // 误抽成 OTP，比如 random@123456.example.com 这种 zone → "123456" 假阳性）
+    // Recipient + sender address digits (zone names often contain 6 digits, fallback regex
+    // false positive e.g. random@123456.example.com zone → "123456")
     const addrDigits = ((to + ' ' + from).match(/\d/g) || []).join('');
     const isFromAddr = (s) => addrDigits.length >= 6 && addrDigits.includes(s);
 
-    // OpenAI 邮件 HTML 里大量出现 #353740 / #10A37F 等品牌色 hex，fallback
-    // \b\d{6}\b 会把全数字 hex（如 #353740）误抽成 OTP。
-    // 用 negative lookbehind 排除前面是 # 的，并显式排除常见 CSS hex 上下文。
+    // OpenAI email HTML has many brand color hex like #353740 / #10A37F, fallback
+    // \b\d{6}\b grabs full-digit hex as OTP.
+    // Use negative lookbehind to exclude preceding #, explicitly exclude common CSS hex contexts.
     const isHexColor = (haystack, idx) => {
       if (idx > 0 && haystack[idx - 1] === '#') return true;
       // "color:353740" / "background-color: #353740" / "bgcolor=\"353740\""
@@ -53,7 +53,7 @@ export default {
     let otp = null;
     const candidates = [
       // "code is 123456", "verification code: 123456", etc.
-      /(?:code(?:\s*is)?|verification|one[-\s]*time|verify|验证码)[^\d]{0,40}(\d{6})\b/gi,
+      /(?:code(?:\s*is)?|verification|one[-\s]*time|verify|verification code)[^\d]{0,40}(\d{6})\b/gi,
       // ChatGPT subject template: "Your ChatGPT code is 123456"
       /chatgpt[^\d]{0,40}(\d{6})/gi,
       /openai[^\d]{0,40}(\d{6})/gi,
@@ -69,8 +69,8 @@ export default {
       if (otp) break;
     }
     if (!otp) {
-      // Body-only fallback: skip header section (从第一个空行后开始) so
-      // To:/From:/Delivered-To: 里的数字不参与 fallback 匹配
+      // Body-only fallback: skip header section (after first blank line) so
+      // To:/From:/Delivered-To: digits don't participate in fallback matching
       const bodyStart = raw.search(/\r?\n\r?\n/);
       const body = bodyStart >= 0 ? raw.slice(bodyStart) : raw;
       const re = /\b(\d{6})\b/g;

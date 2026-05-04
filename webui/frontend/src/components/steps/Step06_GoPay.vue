@@ -1,30 +1,30 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">步骤 06: GoPay 账号</div>
-    <h2 class="step-h">$&nbsp;GoPay (印尼 e-wallet)<span class="term-cursor"></span></h2>
-    <p class="step-sub">每个 ChatGPT Plus 订阅消耗 1 次 WhatsApp OTP + 2 次 PIN 输入。Lite 账号 (无印尼 KYC) 月限额约 IDR 2M ≈ 5-6 单。</p>
+    <div class="term-divider" data-tail="──────────">Step 06: GoPay Account</div>
+    <h2 class="step-h">$&nbsp;GoPay (Indonesian e-wallet)<span class="term-cursor"></span></h2>
+    <p class="step-sub">Each ChatGPT Plus subscription consumes 1 WhatsApp OTP + 2 PIN entries. Lite accounts (no Indonesian KYC) have a monthly limit of ~IDR 2M ≈ 5-6 orders.</p>
 
     <div class="form-stack">
-      <TermField v-model="form.country_code" label="国家码 · country_code" placeholder="86 (中国大陆) / 62 (印尼)" />
-      <TermField v-model="form.phone_number" label="手机号 · phone_number" placeholder="不带国家码，11 位数字" />
-      <TermField v-model="form.pin" label="6 位 PIN · pin" type="password" placeholder="登录 GoJek/GoPay 时设的 PIN" />
-      <TermField v-model.number="form.otp_timeout" label="OTP 等待超时秒数" type="number" />
+      <TermField v-model="form.country_code" label="Country Code · country_code" placeholder="86 (China) / 62 (Indonesia)" />
+      <TermField v-model="form.phone_number" label="Phone Number · phone_number" placeholder="Without country code, 11-digit number" />
+      <TermField v-model="form.pin" label="6-digit PIN · pin" type="password" placeholder="PIN set when logging into GoJek/GoPay" />
+      <TermField v-model.number="form.otp_timeout" label="OTP Wait Timeout (s)" type="number" />
       <TermSelect
         v-model="form.whatsapp_engine"
-        label="WhatsApp 引擎"
+        label="WhatsApp Engine"
         :options="engineOptions"
       />
     </div>
 
     <RouterLink class="wa-login-entry" to="/whatsapp">
       <span class="wa-login-prompt">$</span>
-      WhatsApp 登录 / 扫码接收 GoPay OTP
+      WhatsApp Login / Scan for GoPay OTP
     </RouterLink>
 
     <div class="hint-box">
-      <p>前端只保留上面的 WhatsApp 登录入口。扫码连接后，后台会自动监听 WhatsApp 消息并把 GoPay OTP 写给支付流程读取。</p>
-      <p>PIN 配置后自动用，绑定 + 扣款各用一次。</p>
-      <p>同号重复绑定时第一次会返 406「account already linked」，gopay.py 会自动重试一次。</p>
+      <p>The frontend only keeps the WhatsApp login portal above. Once scanned and connected, the backend automatically monitors WhatsApp messages and writes GoPay OTPs for the payment process to read.</p>
+      <p>PIN is used automatically after configuration, once for binding and once for payment.</p>
+      <p>When re-linking the same number, the first attempt may return 406 "account already linked", gopay.py will automatically retry once.</p>
     </div>
   </section>
 </template>
@@ -48,8 +48,8 @@ const form = ref({
 });
 
 const engineOptions = [
-  { value: "baileys", label: "Baileys (推荐)", desc: "直连 WhatsApp multi-device socket，启动更轻" },
-  { value: "wwebjs", label: "whatsapp-web.js", desc: "Chromium 路径，兼容旧环境 / 调试用" },
+  { value: "baileys", label: "Baileys (Recommended)", desc: "Direct WhatsApp multi-device socket connection, more lightweight" },
+  { value: "wwebjs", label: "whatsapp-web.js", desc: "Chromium-based, for compatibility/debugging" },
 ];
 
 watch(form, () => {

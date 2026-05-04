@@ -66,7 +66,7 @@ def test_pay_only_treats_already_paid_error_as_consumed(tmp_path, monkeypatch):
         "payment": {
             "status": "error",
             "email": "latest@example.com",
-            "error": '生成 fresh checkout 失败: modern [400]: {"detail":"User is already paid"}',
+            "error": 'Failed to generate fresh checkout: modern [400]: {"detail":"User is already paid"}',
         },
     })
 

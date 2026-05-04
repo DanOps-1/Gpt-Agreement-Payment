@@ -1,42 +1,42 @@
-# 调试手册
+# Debugging Manual
 
-[← 回到 README](../README.md)
+[← Back to README](../README.md)
 
-跑出问题时按这里的清单一项项排。
+Follow this checklist item by item when issues occur.
 
 ---
 
-## 日志位置
+## Log Locations
 
 ```bash
-# 完整 pipeline 日志
+# Complete pipeline logs
 tail -f output/logs/card.log
 
-# Daemon 主日志
+# Daemon main logs
 tail -f output/logs/daemon-*.log
 
-# hCaptcha solver 每轮产物
+# hCaptcha solver outputs per round
 ls -lah /tmp/hcaptcha_auto_solver_live/
 
-# PayPal 浏览器各阶段截图
+# Screenshots of PayPal browser stages
 ls -lah /tmp/paypal_*.png
 
-# 二次 OAuth 登录截图
+# Screenshots of second OAuth login
 ls -lah /tmp/rt_*.png
 
-# Daemon 状态
+# Daemon status
 cat SQLite runtime_meta[daemon_state] | jq .
 ```
 
 ---
 
-## 常见异常
+## Common Exceptions
 
 ### `CheckoutSessionInactive`
 
-Stripe session 失活了。Stripe 的 checkout session 默认 24 小时过期，长跑流程或机器睡了一觉再跑就会撞上。
+Stripe session has become inactive. Stripe checkout sessions expire after 24 hours by default. This occurs during long runs or if the machine sleeps and resumes.
 
-**自动恢复**：config 里设 `auto_refresh_on_inactive: true`，`card.py` 会自动重新生成 fresh checkout 续跑。
+**Automatic Recovery**: Set `auto_refresh_on_inactive: true` in config. `card.py` will automatically regenerate a fresh checkout and continue.
 
 ```json
 "fresh_checkout": {
@@ -46,25 +46,25 @@ Stripe session 失活了。Stripe 的 checkout session 默认 24 小时过期，
 
 ### `ChallengeReconfirmRequired`
 
-hCaptcha 结果失效。hCaptcha token 有 TTL（约 2 分钟），在 confirm 之前耽搁太久就会过期。
+hCaptcha result expired. hCaptcha tokens have a TTL (approx. 2 minutes). If delayed too long before confirm, it will expire.
 
-**手动恢复**：重跑 confirm 阶段。
+**Manual Recovery**: Rerun the confirm stage.
 
-**根本解法**：调 daemon 的 `jitter_before_run_s` 不要太长，或者在 confirm 之前不要做其他耗时操作。
+**Root Cause Solution**: Adjust the daemon's `jitter_before_run_s` to be shorter, or avoid other time-consuming operations before confirm.
 
 ### `FreshCheckoutAuthError`
 
-ChatGPT 侧拒绝你的 auth 凭证。可能原因：
+ChatGPT side rejected your auth credentials. Possible causes:
 
-- `access_token` 过期
-- `session_token` 失效
-- 账号被 ban / 被禁用
-- 账号触发 `add-phone` 墙
+- `access_token` expired
+- `session_token` invalidated
+- Account banned / disabled
+- Account triggered `add-phone` wall
 
-**排错**：
+**Troubleshooting**:
 
 ```python
-# 直接调一次 /api/auth/session 看响应
+# Call /api/auth/session once to check response
 import requests
 r = requests.get(
     "https://chatgpt.com/api/auth/session",
@@ -73,30 +73,30 @@ r = requests.get(
 print(r.status_code, r.json())
 ```
 
-如果是 401 / token_invalidated → 重新注册或刷新 session_token。
-如果是 401 / account_deactivated → 这号死了，换号。
+If 401 / token_invalidated → Re-register or refresh session_token.
+If 401 / account_deactivated → Account is dead, use another.
 
 ### `DatadomeSliderError`
 
-PayPal 的 DataDome 滑块解算失败。
+PayPal's DataDome slider solving failed.
 
-**排错**：
+**Troubleshooting**:
 
 ```bash
-# 看最近一次失败的截图
+# View recent failed screenshot
 ls -lt /tmp/paypal_ddc_*.png | head -1
 
-# 看 solver 决策（如果 daemon 模式）
+# View solver decision (if in daemon mode)
 grep "DatadomeSliderError" output/logs/daemon-*.log | tail -5
 ```
 
-**daemon 行为**：daemon 会重跑当前轮，**不**消耗 IP burn 配额。
+**Daemon Behavior**: The daemon will rerun the current round **without** consuming the IP burn quota.
 
-**手动调试**：
+**Manual Debugging**:
 
 ```python
-# 在 card.py::_try_solve_ddc_slider 里临时加 page.pause() 暂停浏览器
-# 然后 headless=False 跑一次看 DOM 长啥样
+# Add page.pause() temporarily in card.py::_try_solve_ddc_slider to pause the browser
+# Then run once with headless=False to inspect the DOM
 ```
 
 ### `WebshareQuotaExhausted`

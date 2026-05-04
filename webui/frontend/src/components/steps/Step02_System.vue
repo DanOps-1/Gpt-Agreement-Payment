@@ -1,11 +1,11 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">步骤 02: 系统</div>
-    <h2 class="step-h">$&nbsp;系统依赖体检<span class="term-cursor"></span></h2>
-    <p class="step-sub">看你机器上 Camoufox / xvfb-run / Playwright 装没装。</p>
+    <div class="term-divider" data-tail="──────────">Step 02: System</div>
+    <h2 class="step-h">$&nbsp;System Dependencies Health Check<span class="term-cursor"></span></h2>
+    <p class="step-sub">Checking if Camoufox / xvfb-run / Playwright are installed on your machine.</p>
 
     <div class="step-actions">
-      <TermBtn :loading="loading" @click="run">重新检查</TermBtn>
+      <TermBtn :loading="loading" @click="run">Re-check</TermBtn>
     </div>
 
     <div v-if="result" class="result-block" :class="`result--${result.status}`" style="margin-top:16px">

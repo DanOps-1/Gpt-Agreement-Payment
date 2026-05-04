@@ -23,7 +23,7 @@ def _seed(tmp_path, monkeypatch):
     monkeypatch.setattr(s, "REG_EXAMPLE_PATH", reg_ex)
     monkeypatch.setattr(s, "PAY_CONFIG_PATH", tmp_path / "CTF-pay" / "config.paypal.json")
     monkeypatch.setattr(s, "REG_CONFIG_PATH", tmp_path / "CTF-reg" / "config.paypal-proxy.json")
-    # 注：conftest 已经把 WEBUI_DATA_DIR 设到 tmp_path，SQLite 会落到 tmp_path/webui.db。
+    # Note: conftest already sets WEBUI_DATA_DIR to tmp_path, SQLite lands at tmp_path/webui.db.
 
 
 def test_export_writes_two_files(client, tmp_path, monkeypatch):
@@ -33,8 +33,8 @@ def test_export_writes_two_files(client, tmp_path, monkeypatch):
     answers = {
         "paypal": {"email": "you@example.com"},
         "cloudflare": {"cf_token": "tok-abc", "zone_names": ["a.com", "b.com"]},
-        # Note: forward_to 已被 fallback_to 取代（在 cloudflare_kv 里）；这里
-        # 顺带保证 _write_secrets 不再要求 forward_to。
+        # Note: forward_to has been replaced by fallback_to (in cloudflare_kv); this
+        # also ensures _write_secrets no longer requires forward_to.
         "cloudflare_kv": {
             "account_id": "acct-123",
             "kv_namespace_id": "kv-456",
@@ -49,13 +49,13 @@ def test_export_writes_two_files(client, tmp_path, monkeypatch):
     reg = json.loads((tmp_path / "CTF-reg" / "config.paypal-proxy.json").read_text())
     assert pay["paypal"]["email"] == "you@example.com"
     assert pay["captcha"]["api_key"] == "k"
-    # mail.catch_all_domain(s) 来自 cloudflare zone_names；不再有 imap 字段
+    # mail.catch_all_domain(s) comes from cloudflare zone_names; imap fields removed
     assert reg["mail"]["catch_all_domain"] == "a.com"
     assert reg["mail"]["catch_all_domains"] == ["a.com", "b.com"]
     assert "imap_server" not in reg["mail"]
     assert reg["captcha"]["client_key"] == "k"
 
-    # Cloudflare 凭证应写入 SQLite runtime_meta[secrets]，不再落 secrets.json。
+    # Cloudflare credentials should be written to SQLite runtime_meta[secrets], not secrets.json.
     secrets = get_db().get_runtime_json("secrets", {})
     cf = secrets["cloudflare"]
     assert not (tmp_path / "secrets.json").exists()

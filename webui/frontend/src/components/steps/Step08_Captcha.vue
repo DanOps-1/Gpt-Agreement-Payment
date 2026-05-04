@@ -1,16 +1,16 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">步骤 08: 打码</div>
-    <h2 class="step-h">$&nbsp;打码平台 (可选)<span class="term-cursor"></span></h2>
-    <p class="step-sub">不填就跳过，浏览器 passive captcha 兜底。</p>
+    <div class="term-divider" data-tail="──────────">Step 08: CAPTCHA</div>
+    <h2 class="step-h">$&nbsp;CAPTCHA Platform (Optional)<span class="term-cursor"></span></h2>
+    <p class="step-sub">If left blank, it will be skipped and fallback to browser passive captcha.</p>
 
-    <TermToggle v-model="enabled">启用打码平台</TermToggle>
+    <TermToggle v-model="enabled">Enable CAPTCHA Platform</TermToggle>
 
     <div v-if="enabled" class="form-stack" style="margin-top:16px">
       <TermField v-model="form.api_url" label="API base URL · api_url" placeholder="https://api.example.com" />
       <TermField v-model="form.client_key" label="Client Key · client_key" type="password" />
       <div class="step-actions">
-        <TermBtn :loading="loading" @click="run">测试 createTask</TermBtn>
+        <TermBtn :loading="loading" @click="run">Test createTask</TermBtn>
       </div>
     </div>
 

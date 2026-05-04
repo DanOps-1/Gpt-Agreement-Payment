@@ -1,6 +1,6 @@
 """WhatsApp Web sidecar lifecycle + OTP state reader.
 
-The WebUI exposes one user-facing "WhatsApp 登录" entry. Behind it, this module
+The WebUI exposes one user-facing "WhatsApp Login" entry. Behind it, this module
 manages a single Node sidecar (`webui/whatsapp_relay/index.js`) that logs in to
 WhatsApp Web, watches incoming messages, extracts GoPay OTPs, and writes all
 application state/OTP data into SQLite (`runtime_meta`). The only remaining
@@ -257,7 +257,7 @@ def apply_sidecar_state(payload: dict) -> dict:
 def submit_manual_otp(value: str) -> dict:
     code = "".join(ch for ch in str(value or "") if ch.isdigit())
     if not code:
-        raise ValueError("OTP 为空")
+        raise ValueError("OTP is empty")
     item = {
         "otp": code,
         "ts": time.time(),
@@ -307,7 +307,7 @@ def start(mode: str = "qr", pairing_phone: str = "", engine: str = "") -> dict:
     if mode == "pairing":
         digits = "".join(ch for ch in (pairing_phone or "") if ch.isdigit())
         if len(digits) < 10:
-            raise ValueError("pairing 模式需要 pairing_phone（含国家码，10+ 位数字）")
+            raise ValueError("pairing mode requires pairing_phone (with country code, 10+ digits)")
         pairing_phone = digits
 
     with _lock:
@@ -327,10 +327,10 @@ def start(mode: str = "qr", pairing_phone: str = "", engine: str = "") -> dict:
         relay_dir = s.WA_RELAY_DIR
         index_js = relay_dir / "index.js"
         if not index_js.exists():
-            raise RuntimeError(f"relay sidecar 缺失: {index_js}")
+            raise RuntimeError(f"relay sidecar not found: {index_js}")
         node_modules = relay_dir / "node_modules"
         if not node_modules.exists():
-            raise RuntimeError(f"未安装 sidecar 依赖；先跑 `cd {relay_dir} && npm install`")
+            raise RuntimeError(f"sidecar dependencies not installed; run `cd {relay_dir} && npm install`")
 
         get_db().delete_runtime_key(_STATE_KEY)
 
@@ -386,7 +386,7 @@ def start(mode: str = "qr", pairing_phone: str = "", engine: str = "") -> dict:
                     detail = log_path.read_text(encoding="utf-8", errors="replace")[-1200:]
                 except Exception:
                     pass
-                raise RuntimeError(f"WhatsApp relay 启动后退出: rc={proc.returncode} {detail}")
+                raise RuntimeError(f"WhatsApp relay exited after start: rc={proc.returncode} {detail}")
             if _read_state():
                 break
             time.sleep(0.1)

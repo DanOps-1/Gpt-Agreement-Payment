@@ -1,195 +1,195 @@
-# 运行模式
+# Operating Modes
 
-[← 回到 README](../README.md)
+[← Back to README](../README.md)
 
-四种模式都用同一个 `pipeline.py` 入口，靠命令行参数切换。
+All four modes use the same `pipeline.py` entrypoint, switched by CLI flags.
 
 ---
 
-## 单次
+## Single Run
 
 ```bash
 xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal
 ```
 
-注册 → 支付 → OAuth → 写 SQLite 运行时库（`output/webui.db`）。整体五分钟左右。
+Registration → Payment → OAuth → Write SQLite runtime DB (`output/webui.db`). ~5 minutes total.
 
-调试时最常用的模式。每次跑一遍完整链路看哪里挂。
+Most common mode for debugging. Run full pipeline each time to see where it fails.
 
 ---
 
-## 批量并行
+## Batch Parallel
 
 ```bash
 xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal \
     --batch 10 --workers 3
 ```
 
-| 参数 | 含义 |
-|---|---|
-| `--batch N` | 跑 N 个完整 pipeline |
-| `--workers M` | 并行 M 个 worker |
+| Flag | Meaning |
+|------|---------|
+| `--batch N` | Run N full pipelines |
+| `--workers M` | M parallel workers |
 
-> ⚠️ **并行不是免费的**。同一时间窗口内多个号注册会触发批次关联，反欺诈层面看就是一个 cohort。建议 `--workers` 不超过 3，且每个 worker 用不同的代理 / 域 / 时间抖动。详见 [`anti-fraud-research.md`](anti-fraud-research.md)。
+> ⚠️ **Parallel is not free**. Multiple registrations in same time window trigger batch association (cohort detection). Limit `--workers` ≤ 3, use different proxy/domain/timing jitter per worker. See [`anti-fraud-research.md`](anti-fraud-research.md).
 
 ---
 
-## 自产自销（self-dealer）
+## Self-Dealer (Self-Produce Self-Sell)
 
-最省钱的玩法。一次 PayPal 扣款换来 1 owner + N member 的完整 Team workspace。每个 member 都是独立 ChatGPT 账号，可以单独换 OAuth `refresh_token`。
+Cheapest mode. One PayPal charge gets 1 owner + N members in full Team workspace. Each member is independent ChatGPT account, can swap OAuth `refresh_token` individually.
 
 ```bash
-# 1 owner + 4 member
+# 1 owner + 4 members
 xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal --self-dealer 4
 
-# 复用已付费 owner，跳过 Step 1 省一次扣款
+# Reuse paid owner, skip Step 1 to save one charge
 xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal \
     --self-dealer 4 --self-dealer-resume <owner_email>
 ```
 
-### 内部时序
+### Internal Timing
 
-| 阶段 | 次数 | 复用 | 产出 |
-|---|---|---|---|
-| 1. 注册 → 支付 → 推下游 | 1 (owner) | `pipeline()` / `card.py` | `team_id` + owner refresh_token |
-| 2. 注册 → 邀请 → 接受邀请 → 推下游 | N (member) | `register()` + invites API + `_exchange_refresh_token_with_session` | N 个 member refresh_token，全绑同一 `team_id` |
+| Phase | Count | Reuse | Output |
+|-------|-------|-------|--------|
+| 1. Register → Pay → Push downstream | 1 (owner) | `pipeline()` / `card.py` | `team_id` + owner refresh_token |
+| 2. Register → Invite → Accept → Push downstream | N (member) | `register()` + invites API + `_exchange_refresh_token_with_session` | N member refresh_tokens, all bound to same `team_id` |
 
-### Member 循环单次时序（约 3 分钟稳态）
+### Member Loop Single Timing (~3 min steady state)
 
-1. 挑代理 + 挑子域 + 写临时 `cardw` 配置（跟单 owner pipeline 一致）
-2. `register()` —— Camoufox 过 Turnstile + CF KV 取 OTP（≈ 1 分钟）
-3. owner 的 Bearer 调 `POST /backend-api/accounts/{team_id}/invites`（< 1 秒）
-4. member 的 Bearer 调 `POST /backend-api/accounts/{team_id}/invites/accept`（< 1 秒）
-5. `card._exchange_refresh_token_with_session` —— Camoufox 重登（email + password + consent）拿 refresh_token（约 30 秒）
-6. 按 SQLite runtime 追加记录 → 推下游
+1. Pick proxy + subdomain + temp `cardw` config (matches owner pipeline)
+2. `register()` — Camoufox passes Turnstile + CF KV fetch OTP (≈1 min)
+3. Owner Bearer calls `POST /backend-api/accounts/{team_id}/invites` (<1s)
+4. Member Bearer calls `POST /backend-api/accounts/{team_id}/invites/accept` (<1s)
+5. `card._exchange_refresh_token_with_session` — Camoufox re-login (email+pass+consent) gets refresh_token (~30s)
+6. Append to SQLite runtime → Push downstream
 
-### 关键 API（从 chatgpt.com 前端 JS 逆出来的）
+### Key APIs (Reverse-engineered from chatgpt.com frontend JS)
 
 ```
 POST https://chatgpt.com/backend-api/accounts/{team_id}/invites
-   ↓ owner Bearer，body: {emails: ["target@..."]}
+   ↓ owner Bearer, body: {emails: ["target@..."]}
 
 POST https://chatgpt.com/backend-api/accounts/{team_id}/invites/accept
-   ↓ invitee Bearer，前端 JS `4813494d-*.js` 里 /accounts/{account_id}/invites/accept
+   ↓ invitee Bearer, from frontend JS `4813494d-*.js` /accounts/{account_id}/invites/accept
 ```
 
-### 安全机制（复用 owner pipeline）
+### Safety Mechanisms (Reuse owner pipeline)
 
-- 每个 member 单独挑 `proxy_pool.pick()` + `domain_pool.pick()` + 临时 cardw 配置，不关联
-- 任何单个 member 任何一步失败（注册 / 邀请 / 接受 / 重登 / CPA）都被 try/except 捕获，继续下一个
-- `--self-dealer-resume` 读 SQLite 里既有 owner（已付费）的 `team_account_id` + `refresh_token`，避免重复扣款
+- Each member picks unique `proxy_pool.pick()` + `domain_pool.pick()` + temp cardw config, no association
+- Any single member step failure (register/invite/accept/relogin/CPA) caught by try/except, continue next
+- `--self-dealer-resume` reads existing owner (paid) `team_account_id` + `refresh_token` from SQLite, avoids re-charge
 
-### 每个 member 两次 Codex OAuth（第一次必失败）
+### Each Member Two Codex OAuth (First Always Fails)
 
-- **第一次**：`browser_register.py` 注册流程末尾的 signup 态 hydra session。**必失败**（`token_exchange_user_error`）。默认 `SKIP_SIGNUP_CODEX_RT=1` 跳过；想看旧路径设 `0`
-- **第二次**：Camoufox 重登（login 态 full user session）—— 成功拿 RT
+- **First**: `browser_register.py` end-of-signup hydra session. **Always fails** (`token_exchange_user_error`). Default `SKIP_SIGNUP_CODEX_RT=1` skips; set `0` to see old path
+- **Second**: Camoufox re-login (full login session) — Succeeds with RT
 
 ---
 
-## Daemon 模式 —— 持续维护补号池
+## Daemon Mode — Continuous Account Pool Maintenance
 
-让 pipeline 作为常驻后台服务，自动维护外部 [gpt-team](https://github.com/DanOps-1/gpt-team) **补号池**（`account_usage='recovery'`）的可用账号数始终 ≥ 目标值。
+Runs pipeline as persistent background service, auto-maintains external [gpt-team](https://github.com/DanOps-1/gpt-team) **recovery pool** (`account_usage='recovery'`) usable count ≥ target.
 
 ```bash
-# 后台跑（推荐，-u 关 buffer 让日志实时写）
+# Background (recommended, -u disables buffering for real-time logs)
 (nohup xvfb-run -a python3 -u pipeline.py --config CTF-pay/config.paypal.json --paypal --daemon \
     > output/logs/daemon-$(date +%Y%m%d-%H%M%S).log 2>&1 &)
 
-# 跟日志
+# Tail logs
 tail -f output/logs/daemon-*.log
 
-# 前台跑（调试用，Ctrl+C 优雅退出）
+# Foreground (debug, Ctrl+C graceful exit)
 xvfb-run -a python3 -u pipeline.py --config CTF-pay/config.paypal.json --paypal --daemon
 
-# 看状态
+# Check status
 cat SQLite runtime_meta[daemon_state] | jq .
 
-# 优雅停（跑完当前周期再退）
+# Graceful stop (finishes current cycle)
 pkill -TERM -f "pipeline.*--daemon"
 
-# 强杀（连 Camoufox + Xvfb 残留一起清）
+# Force kill (clears Camoufox + Xvfb leftovers)
 pkill -9 -f "pipeline.*--daemon"
 pkill -9 -f camoufox-bin
 pkill -9 -f browser_register
 for pid in $(pgrep Xvfb); do kill -9 $pid; done
 ```
 
-### 工作循环
+### Work Loop
 
 ```
 loop:
     sleep poll_interval_s
 
-    if rate_limit 卡了:
+    if rate_limit blocked:
         continue
 
-    usable = 查 gpt-team DB（!isBanned && !isDisabled && !noInvitePermission && !expired && seat 未满）
+    usable = query gpt-team DB (!isBanned && !isDisabled && !noInvitePermission && !expired && seat available)
 
     if usable < target_ok_accounts:
         try:
-            ensure_gost_alive()       # 看门狗
-            cleanup_temp_leftovers()  # /tmp 孤儿
-            if 该清 CF 了:
+            ensure_gost_alive()       # Watchdog
+            cleanup_temp_leftovers()  # /tmp orphans
+            if time to clear CF:
                 cleanup_dead_cf()
             run_pipeline()
-            清状态机标志（如果 invite=ok）
+            Clear state flags (if invite=ok)
         except:
-            按异常类型走对应自愈分支
+            Follow corresponding self-healing branch by exception type
 ```
 
-### 12 路自愈环
+### 12 Self-Healing Loops
 
-详见 [`daemon-mode.md`](daemon-mode.md)。
+See [`daemon-mode.md`](daemon-mode.md).
 
 ---
 
-## 仅注册 / 仅支付
+## Register-Only / Pay-Only
 
-调试用：把流程拆开跑：
+Debug: Split workflow:
 
 ```bash
-# 只注册
+# Register only
 python pipeline.py --register-only --cardw-config CTF-reg/config.paypal-proxy.json
 
-# 仅支付（用 SQLite 里最新账号）
+# Pay only (uses latest account from SQLite)
 xvfb-run -a python pipeline.py --pay-only --config CTF-pay/config.paypal.json --paypal
 ```
 
 ---
 
-## 直接调 card.py
+## Direct card.py Invocation
 
-跳过 pipeline 编排器，直接调 card.py：
+Bypass pipeline orchestrator, call card.py directly:
 
 ```bash
-# 标准卡支付（auto_register 模式）
+# Standard card payment (auto_register mode)
 python CTF-pay/card.py auto --config CTF-pay/config.auto.json
 
-# 从已有 checkout session 续跑
+# Resume from existing checkout session
 python CTF-pay/card.py cs_live_xxx --config CTF-pay/config.auto.json
 
-# 用第 N 张卡（0-based）
+# Use Nth card (0-based)
 python CTF-pay/card.py auto --card 1 --config CTF-pay/config.auto.json
 
-# 离线回放（不发外部请求）
+# Offline replay (no external requests)
 python CTF-pay/card.py auto --config CTF-pay/config.offline-replay.json --offline-replay
 
-# 本地 mock gateway
+# Local mock gateway
 python CTF-pay/card.py auto --config CTF-pay/config.local-mock.json --local-mock
 
-# 重复刷拒卡终态
+# Replay declined card terminal state
 python CTF-pay/retry_house_decline.py cs_live_xxx --attempts 5
 ```
 
 ---
 
-## 实测耗时优化开关
+## Tested Timing Optimization Switches
 
-基于近期 daemon + self-dealer 全量日志，两条 100% 失败的路径已加开关默认跳过：
+Based on recent daemon + self-dealer full logs, two 100% failure paths have opt-in switches (default skip):
 
-| 环境变量 | 默认 | 节省 | 说明 |
-|---|---|---|---|
-| `SKIP_SIGNUP_CODEX_RT` | `1` | ~30s/注册 | signup 态 hydra session 无法换 Codex RT（`token_exchange_user_error`），refresh_token 由后续 `_exchange_refresh_token_with_session`（pay / self-dealer 重登）拿 |
-| `SKIP_HERMES_FAST_PATH` | `1` | 5–10s/支付 | PayPal 对非浏览器 cookied session 返 `/checkoutweb/genericError?code=REVGQVVMVA`（"DEFAULT"），所有支付实际都走浏览器路径 |
+| Env Var | Default | Savings | Description |
+|---------|---------|---------|-------------|
+| `SKIP_SIGNUP_CODEX_RT` | `1` | ~30s/reg | signup hydra session cannot exchange Codex RT (`token_exchange_user_error`), refresh_token from later `_exchange_refresh_token_with_session` (pay/self-dealer relogin) |
+| `SKIP_HERMES_FAST_PATH` | `1` | 5–10s/pay | PayPal rejects non-browser cookied sessions `/checkoutweb/genericError?code=REVGQVVMVA` ("DEFAULT"), all payments use browser path |
 
-两个开关默认开启（跳过必失败路径），想对比或 PayPal 改协议时可设 `SKIP_*=0` 恢复旧行为。
+Both switches default on (skip guaranteed-fail paths). Set `SKIP_*=0` to restore old behavior for comparison or if PayPal changes protocol.

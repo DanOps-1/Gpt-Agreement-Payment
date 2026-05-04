@@ -3,26 +3,26 @@
     <header class="auth-banner">
       <pre class="banner-art">
 ┌─────────────────────────────────────────────────────────────┐
-│  GPT-AGREEMENT-PAYMENT // 身份认证                                       │
-│  输入凭据访问配置向导                                       │
+│  GPT-AGREEMENT-PAYMENT // AUTHENTICATION                        │
+│  ENTER CREDENTIALS TO ACCESS WIZARD                         │
 └─────────────────────────────────────────────────────────────┘</pre>
     </header>
 
     <main class="auth-main">
-      <h1 class="auth-headline">$&nbsp;登录<span class="term-cursor"></span></h1>
+      <h1 class="auth-headline">$&nbsp;LOGIN<span class="term-cursor"></span></h1>
 
       <form class="auth-form" @submit.prevent="submit">
         <label class="field-row">
-          <span class="field-tag">用户</span>
+          <span class="field-tag">USER</span>
           <input v-model="form.username" type="text" autofocus class="term-input" />
         </label>
         <label class="field-row">
-          <span class="field-tag">密码</span>
+          <span class="field-tag">PASS</span>
           <input v-model="form.password" type="password" class="term-input" />
         </label>
 
         <div class="auth-actions">
-          <button class="term-btn" :disabled="loading" type="submit">{{ loading ? '登录中…' : '登录' }}</button>
+          <button class="term-btn" :disabled="loading" type="submit">{{ loading ? 'Logging in...' : 'LOGIN' }}</button>
         </div>
       </form>
     </main>
@@ -46,7 +46,7 @@ async function submit() {
     await api.post("/login", form.value);
     router.push("/wizard");
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "登录失败");
+    message.error(e.response?.data?.detail || "Login failed");
   } finally { loading.value = false; }
 }
 </script>

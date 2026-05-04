@@ -47,7 +47,7 @@ export const useWizardStore = defineStore("wizard", {
     },
     isStepHidden(n: number): boolean {
       const mm = (this.answers.mode as any)?.mode ?? "single";
-      // free_register / free_backfill_rt 不走支付，6(PayPal/GoPay)/7(Card)/13(Stripe runtime) 都隐藏
+      // free_register / free_backfill_rt skip payment, hide 6(PayPal/GoPay)/7(Card)/13(Stripe runtime)
       if (mm === "free_register" || mm === "free_backfill_rt") {
         if (n === 6) return true;
         if (n === 7) return true;
@@ -56,14 +56,14 @@ export const useWizardStore = defineStore("wizard", {
       }
       const pm = (this.answers.payment as any)?.method ?? "both";
       if (pm === "gopay") {
-        // Step 6 复用为 GoPay 配置；7(card) / 13(stripe runtime) 都不走
+        // Step 6 reused for GoPay config; 7(card) / 13(stripe runtime) skipped
         if (n === 7) return true;
         if (n === 13) return true;
         return false;
       }
       if (n === 6 && pm === "card") return true;
       if (n === 7 && pm === "paypal") return true;
-      // step 13 Stripe runtime: PayPal 走 redirect 路径，三字段都不需要
+      // step 13 Stripe runtime: PayPal uses redirect path, no three fields needed
       if (n === 13 && pm === "paypal") return true;
       return false;
     },

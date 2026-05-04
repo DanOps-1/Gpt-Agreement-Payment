@@ -1,12 +1,12 @@
-"""单 active-run 的 pipeline 进程控制器。
+"""Single active-run pipeline process controller.
 
-封装 `xvfb-run -a python pipeline.py [args]` 子进程：spawn / 流式收 stdout
-到环形日志缓冲 / SIGTERM-优先 stop / 暴露 status + log 给路由层。
+Wraps `xvfb-run -a python pipeline.py [args]` subprocess: spawn / stream stdout
+to ring log buffer / SIGTERM-first stop / expose status + log to route layer.
 
-GoPay 模式下额外支持 OTP 中转：默认通过 WebUI 内部 HTTP endpoint
-把 WhatsApp / 手动补录 OTP 写入 SQLite，gopay.py 轮询该 endpoint。
-保留 `GOPAY_OTP_REQUEST path=<file>` 旧格式识别，只作为显式 legacy
-file provider 的兼容 fallback。
+GoPay mode additionally supports OTP relay: by default through the WebUI internal HTTP endpoint
+that writes WhatsApp / manually entered OTP to SQLite, gopay.py polls that endpoint.
+Keeps `GOPAY_OTP_REQUEST path=<file>` legacy format detection as explicit legacy
+compatible fallback for file providers.
 """
 import json
 import os
@@ -72,10 +72,10 @@ def _gopay_auto_otp_enabled() -> bool:
 def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: int,
               register_only: bool, pay_only: bool, gopay: bool = False,
               gopay_otp_file: str = "", count: int = 0) -> list[str]:
-    """根据参数拼出最终命令行。"""
+    """Build final command line from parameters."""
     cmd = ["xvfb-run", "-a", "python", "-u", "pipeline.py",
            "--config", str(s.PAY_CONFIG_PATH)]
-    # free_only 两个子模式不需要 paypal / gopay 支付段
+    # free_only two sub-modes don't need paypal/gopay payment section
     if mode in ("free_register", "free_backfill_rt"):
         if mode == "free_register":
             cmd.append("--free-register")
@@ -90,7 +90,7 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
             cmd.extend(["--gopay-otp-file", gopay_otp_file])
     elif paypal:
         cmd.append("--paypal")
-    # mode 决定循环结构（daemon ∞ / self_dealer / batch N / 单次）
+    # mode determines loop structure (daemon ∞ / self_dealer / batch N / single)
     if mode == "daemon":
         cmd.append("--daemon")
     elif mode == "self_dealer":
@@ -98,8 +98,8 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
     elif mode == "batch":
         cmd.extend(["--batch", str(batch), "--workers", str(workers)])
     # mode == "single" → no extra flags
-    # register_only / pay_only 是 modifier，跟 mode 正交（batch + register-only
-    # = 批量注册 N 个；single + register-only = 单次注册）
+    # register_only / pay_only are modifiers orthogonal to mode (batch + register-only
+    # = batch register N; single + register-only = single register only)
     if register_only:
         cmd.append("--register-only")
     elif pay_only:
@@ -132,7 +132,7 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
         if _proc is not None and _proc.poll() is None:
             raise RuntimeError("a pipeline is already running")
 
-        # OTP 默认走 WebUI SQLite endpoint；不再创建临时 FIFO 文件。
+        # OTP defaults to WebUI SQLite endpoint; no longer creates temp FIFO files.
         otp_p: Optional[Path] = None
 
         cmd = build_cmd(mode, paypal, batch, workers, self_dealer,

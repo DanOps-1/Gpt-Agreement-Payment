@@ -63,11 +63,11 @@ def _load_json(path: Path) -> tuple[dict, str]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return {}, f"文件不存在: {path}"
+        return {}, f"File not found: {path}"
     except Exception as e:
-        return {}, f"JSON 解析失败: {path}: {e}"
+        return {}, f"JSON parse error: {path}: {e}"
     if not isinstance(data, dict):
-        return {}, f"JSON 顶层不是对象: {path}"
+        return {}, f"JSON top-level is not object: {path}"
     return data, ""
 
 
@@ -171,17 +171,17 @@ def _check_config_files(checks: list[dict], req: dict) -> tuple[dict, dict, Path
             checks,
             "pay_config",
             "fail",
-            "支付/运行配置文件不可用",
+            "Payment/runtime config file unavailable",
             missing=[str(s.PAY_CONFIG_PATH)],
             details=pay_err,
-            action="先在配置向导导出配置，或修复 CTF-pay/config.paypal.json",
+            action="Export config in wizard, or fix CTF-pay/config.paypal.json",
         )
         return {}, {}, s.REG_CONFIG_PATH
     _check(
         checks,
         "pay_config",
         "ok",
-        "支付/运行配置文件可读取",
+        "Payment/runtime config file readable",
         details=str(s.PAY_CONFIG_PATH),
         blocking=False,
     )
@@ -195,17 +195,17 @@ def _check_config_files(checks: list[dict], req: dict) -> tuple[dict, dict, Path
                 checks,
                 "reg_config",
                 "fail",
-                "注册配置文件不可用",
+                "Registration config file unavailable",
                 missing=[str(reg_path)],
                 details=reg_err,
-                action="重新导出配置向导，确认 fresh_checkout.auth.auto_register.config_path 指向真实 CTF-reg 配置",
+                action="Re-export config wizard, ensure fresh_checkout.auth.auto_register.config_path points to real CTF-reg config",
             )
         else:
             _check(
                 checks,
                 "reg_config",
                 "ok",
-                "注册配置文件可读取",
+                "Registration config file readable",
                 details=str(reg_path),
                 blocking=False,
             )
@@ -220,8 +220,8 @@ def _check_cloudflare_kv(checks: list[dict], req: dict) -> None:
             checks,
             "cloudflare_kv_secrets",
             "ok",
-            "Cloudflare KV OTP 凭证已配置",
-            details="来源：环境变量或 SQLite runtime_meta[secrets].cloudflare",
+            "Cloudflare KV OTP credentials configured",
+            details="Source: env vars or SQLite runtime_meta[secrets].cloudflare",
             blocking=False,
         )
         return
@@ -231,19 +231,19 @@ def _check_cloudflare_kv(checks: list[dict], req: dict) -> None:
             checks,
             "cloudflare_kv_secrets",
             "fail",
-            "注册 / OAuth 邮箱 OTP 需要 Cloudflare KV 凭证",
+            "Registration/OAuth email OTP requires Cloudflare KV credentials",
             missing=missing,
-            action="去配置向导的 Cloudflare KV 步骤重新保存，或写入 SQLite runtime_meta[secrets].cloudflare",
+            action="Re-save in wizard Cloudflare KV step, or write to SQLite runtime_meta[secrets].cloudflare",
         )
     else:
         _check(
             checks,
             "cloudflare_kv_secrets",
             "warn",
-            "Cloudflare KV OTP 凭证缺失；pay-only 支付可继续，但后续补 RT/CPA 可能失败",
+            "Cloudflare KV OTP credentials missing; pay-only can continue, but subsequent RT/CPA may fail",
             missing=missing,
             blocking=False,
-            action="如果需要自动拿 refresh_token，请先补齐 Cloudflare KV 凭证",
+            action="If auto refresh_token is needed, please fill in Cloudflare KV credentials first",
         )
 
 
@@ -261,16 +261,16 @@ def _check_registration_config(checks: list[dict], req: dict, reg_cfg: dict) -> 
             checks,
             "mail_domains",
             "fail",
-            "注册需要 catch-all 邮箱域名",
-            missing=["mail.catch_all_domain 或 mail.catch_all_domains"],
-            action="在配置向导 Cloudflare 步骤填写 zone_names 后重新导出配置",
+            "Registration requires catch-all email domain",
+            missing=["mail.catch_all_domain or mail.catch_all_domains"],
+            action="Fill in zone_names in wizard Cloudflare step, then re-export config",
         )
     else:
         _check(
             checks,
             "mail_domains",
             "ok",
-            "注册邮箱域名已配置",
+            "Registration email domain configured",
             blocking=False,
         )
 
@@ -280,17 +280,17 @@ def _check_registration_config(checks: list[dict], req: dict, reg_cfg: dict) -> 
             checks,
             "captcha",
             "warn",
-            "注册 captcha client_key 未配置；遇到验证码时可能失败",
+            "Registration captcha client_key not configured; may fail on CAPTCHA challenge",
             missing=["captcha.client_key"],
             blocking=False,
-            action="如近期注册触发验证码，先在配置向导补打码平台配置",
+            action="If recent registration triggers CAPTCHA, fill in CAPTCHA service config in wizard first",
         )
 
 
 def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
     kind = _payment_kind(req)
     if kind == "none":
-        _check(checks, "payment_config", "ok", "当前模式不走支付", blocking=False)
+        _check(checks, "payment_config", "ok", "Current mode disables payment", blocking=False)
         return
 
     if kind == "gopay":
@@ -304,12 +304,12 @@ def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
                 checks,
                 "gopay_config",
                 "fail",
-                "GoPay 支付配置不完整",
+                "GoPay payment config incomplete",
                 missing=[f"gopay.{x}" for x in missing],
-                action="在配置向导 GoPay 步骤填写国家码、手机号和 6 位 PIN 后重新导出",
+                action="Fill in country code, phone number, and 6-digit PIN in wizard GoPay step, then re-export",
             )
         else:
-            _check(checks, "gopay_config", "ok", "GoPay 支付配置已配置", blocking=False)
+            _check(checks, "gopay_config", "ok", "GoPay payment config configured", blocking=False)
 
         wa = wa_relay.status()
         if wa.get("status") == "connected":
@@ -317,7 +317,7 @@ def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
                 checks,
                 "whatsapp_relay",
                 "ok",
-                "WhatsApp relay 已连接，可自动接收 GoPay OTP",
+                "WhatsApp relay connected, can auto-receive GoPay OTP",
                 details=f"engine={wa.get('engine')}",
                 blocking=False,
             )
@@ -326,10 +326,10 @@ def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
                 checks,
                 "whatsapp_relay",
                 "warn",
-                "WhatsApp relay 当前未连接；GoPay OTP 将等待自动 relay 或前端手动补录",
+                "WhatsApp relay not connected; GoPay OTP will wait for auto-relay or manual entry",
                 details=f"status={wa.get('status')}",
                 blocking=False,
-                action="如需自动接收 GoPay OTP，先打开 WhatsApp 登录入口扫码连接",
+                action="To auto-receive GoPay OTP, open WhatsApp login entry and scan QR code",
             )
         return
 
@@ -344,12 +344,12 @@ def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
                 checks,
                 "paypal_config",
                 "fail",
-                "PayPal 支付配置不完整",
+                "PayPal payment config incomplete",
                 missing=[f"paypal.{x}" for x in missing],
-                action="在配置向导 PayPal 步骤填写邮箱和密码后重新导出",
+                action="Fill in email and password in wizard PayPal step, then re-export",
             )
         else:
-            _check(checks, "paypal_config", "ok", "PayPal 支付配置已配置", blocking=False)
+            _check(checks, "paypal_config", "ok", "PayPal payment config configured", blocking=False)
         return
 
     cards = pay_cfg.get("cards") if isinstance(pay_cfg.get("cards"), list) else []
@@ -363,9 +363,9 @@ def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
             checks,
             "card_config",
             "fail",
-            "卡支付配置不完整",
+            "Card payment config incomplete",
             missing=["cards[0].number", "cards[0].cvc", "cards[0].exp_month", "cards[0].exp_year"],
-            action="在配置向导卡信息步骤填写卡信息后重新导出",
+            action="Fill in card info in wizard card step, then re-export",
         )
     else:
         first = str(usable[0].get("number") or "")
@@ -374,11 +374,11 @@ def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
                 checks,
                 "card_config",
                 "warn",
-                "检测到疑似 Stripe 测试卡号；真实支付前请确认已换成真实卡",
+                "Detected likely Stripe test card number; confirm real card before actual payment",
                 blocking=False,
             )
         else:
-            _check(checks, "card_config", "ok", "卡支付配置已配置", blocking=False)
+            _check(checks, "card_config", "ok", "Card payment config configured", blocking=False)
 
 
 def _check_pay_only_inventory(checks: list[dict], req: dict, pay_cfg: dict) -> None:
@@ -391,7 +391,7 @@ def _check_pay_only_inventory(checks: list[dict], req: dict, pay_cfg: dict) -> N
             checks,
             "pay_only_inventory",
             "ok",
-            f"可复用账号库存 {eligible} 个",
+            f"Reusable account inventory: {eligible}",
             blocking=False,
         )
         return
@@ -400,7 +400,7 @@ def _check_pay_only_inventory(checks: list[dict], req: dict, pay_cfg: dict) -> N
             checks,
             "pay_only_inventory",
             "warn",
-            "数据库暂无可复用账号，将回退使用 config 里的 auth",
+            "No reusable accounts in DB, will fall back to config auth",
             blocking=False,
         )
         return
@@ -408,9 +408,9 @@ def _check_pay_only_inventory(checks: list[dict], req: dict, pay_cfg: dict) -> N
         checks,
         "pay_only_inventory",
         "fail",
-        "pay-only 没有可复用账号，且 config 里没有可回退 auth",
-        missing=["registered_accounts 可复用账号", "fresh_checkout.auth.session_token/access_token/cookie_header"],
-        action="先跑 register-only/注册流程生成账号，或在配置里填入可用 session/access token",
+        "pay-only has no reusable accounts and no fallback auth in config",
+        missing=["registered_accounts reusable accounts", "fresh_checkout.auth.session_token/access_token/cookie_header"],
+        action="Run register-only/registration first, or fill usable session/access token in config",
     )
 
 
@@ -423,7 +423,7 @@ def _check_cpa(checks: list[dict], req: dict, pay_cfg: dict) -> None:
                 checks,
                 "cpa_config",
                 "warn",
-                "CPA 未启用；free 模式会注册/补 RT，但不会推 CPA",
+                "CPA not enabled; free mode will register/backfill RT but won't push to CPA",
                 blocking=False,
             )
         return
@@ -436,13 +436,13 @@ def _check_cpa(checks: list[dict], req: dict, pay_cfg: dict) -> None:
             checks,
             "cpa_config",
             "fail" if mode in {"free_register", "free_backfill_rt"} else "warn",
-            "CPA 配置不完整",
+            "CPA config incomplete",
             missing=missing,
             blocking=mode in {"free_register", "free_backfill_rt"},
-            action="在配置向导 CPA 步骤填写 base_url/admin_key 后重新导出",
+            action="Fill in base_url/admin_key in wizard CPA step, then re-export",
         )
     else:
-        _check(checks, "cpa_config", "ok", "CPA 配置已配置", blocking=False)
+        _check(checks, "cpa_config", "ok", "CPA config configured", blocking=False)
 
 
 def _check_team_system(checks: list[dict], req: dict, pay_cfg: dict) -> None:
@@ -461,12 +461,12 @@ def _check_team_system(checks: list[dict], req: dict, pay_cfg: dict) -> None:
             checks,
             "team_system",
             "fail",
-            "daemon 需要 team_system 配置",
+            "daemon requires team_system config",
             missing=missing,
-            action="在配置向导 Team System 步骤补齐后重新导出配置",
+            action="Fill in team system config in wizard, then re-export",
         )
     else:
-        _check(checks, "team_system", "ok", "team_system 配置已配置", blocking=False)
+        _check(checks, "team_system", "ok", "team_system config configured", blocking=False)
 
 
 def _check_free_backfill_inventory(checks: list[dict], req: dict) -> None:
@@ -481,20 +481,20 @@ def _check_free_backfill_inventory(checks: list[dict], req: dict) -> None:
             checks,
             "backfill_inventory",
             "fail",
-            "数据库里没有可补 RT 的老账号",
+            "No old accounts in DB to backfill RT",
             missing=["registered_accounts"],
-            action="先跑注册流程生成账号库存",
+            action="Run registration to build account inventory first",
         )
     elif candidates <= 0:
         _check(
             checks,
             "backfill_inventory",
             "warn",
-            "账号库存存在，但当前没有 RT 待补/可重试账号",
+            "Account inventory exists but no RT pending/retryable accounts",
             blocking=False,
         )
     else:
-        _check(checks, "backfill_inventory", "ok", f"RT 待补/可重试账号 {candidates} 个", blocking=False)
+        _check(checks, "backfill_inventory", "ok", f"RT pending/retryable accounts: {candidates}", blocking=False)
 
 
 def build_config_health(req: dict | None = None) -> dict:
@@ -534,11 +534,11 @@ def health_error_message(health: dict) -> str:
     blocking = health.get("blocking") or []
     if not blocking:
         return ""
-    head = blocking[0].get("message") or "配置健康检查未通过"
+    head = blocking[0].get("message") or "Config health check failed"
     missing: list[str] = []
     for check in blocking:
         missing.extend(check.get("missing") or [])
-    suffix = f"；缺: {', '.join(missing[:6])}" if missing else ""
+    suffix = f"; missing: {', '.join(missing[:6])}" if missing else ""
     if len(missing) > 6:
-        suffix += f" 等 {len(missing)} 项"
+        suffix += f" and {len(missing)} more items"
     return head + suffix

@@ -117,7 +117,7 @@ def _probe_me_with_bearer(access_token: str, timeout: float,
     if r.status_code == 401:
         return "invalid", "me: http 401 (token expired/revoked)"
     if r.status_code == 403:
-        # /backend-api/me 走 Bearer 一般不会被 CF 误拦，403 多是 banned/disabled
+        # /backend-api/me via Bearer is generally not blocked by CF, 403 is mostly banned/disabled
         return "invalid", "me: http 403"
     return "unknown", f"me: http {r.status_code}"
 

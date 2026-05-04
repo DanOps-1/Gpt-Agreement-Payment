@@ -1,8 +1,8 @@
-# 架构详解
+# Architecture Detail
 
-[← 回到 README](../README.md)
+[← Back to README](../README.md)
 
-## 顶层流程
+## Top-level Flow
 
 ```mermaid
 flowchart LR
@@ -13,33 +13,33 @@ flowchart LR
     E --> F[Stripe poll<br/>state=succeeded]
     F --> G[Camoufox 二次登录<br/>Codex OAuth + PKCE]
     G --> H[refresh_token<br/>output/webui.db &#40;SQLite&#41;]
-    H --> I[可选: 推 gpt-team /<br/>CPA / 其他下游]
+    H --> I[Optional: Push to gpt-team /<br/>CPA / Other downstream]
 ```
 
 ---
 
-## 文件组织
+## File Organization
 
 ```
 Gpt-Agreement-Payment/
-├── pipeline.py                     # 编排器：单次 / 批量 / daemon / self-dealer
+├── pipeline.py                     # Orchestrator: Single / Batch / Daemon / Self-dealer
 ├── CTF-pay/                        # Stripe + PayPal 协议重放
-│   ├── card.py                     # 主程序，约 8000 行
-│   ├── hcaptcha_auto_solver.py     # 视觉求解（VLM + CLIP + Playwright）
-│   ├── hcaptcha_bridge_helper.py   # 交互式调试工具
-│   ├── local_mock_gateway.py       # Stripe 状态机本地 mock
-│   ├── retry_house_decline.py      # 拒卡终态重试包装
-│   └── config.*.json               # 模板入仓，运行时配置 gitignored
-├── CTF-reg/                        # ChatGPT 注册子系统
-│   ├── browser_register.py         # Camoufox 真浏览器注册
-│   ├── auth_flow.py                # 纯 HTTP 注册（备用）
+│   ├── card.py                     # Main program, approx 8000 lines
+│   ├── hcaptcha_auto_solver.py     # Visual solver (VLM + CLIP + Playwright)
+│   ├── hcaptcha_bridge_helper.py   # Interactive debug tool
+│   ├── local_mock_gateway.py       # Stripe state machine local mock
+│   ├── retry_house_decline.py      # Card decline final state retry wrapper
+│   └── config.*.json               # Templates in-repo, runtime config gitignored
+├── CTF-reg/                        # ChatGPT Registration Subsystem
+│   ├── browser_register.py         # Camoufox true browser registration
+│   ├── auth_flow.py                # Pure HTTP registration (Backup)
 │   ├── sentinel.py                 # OpenAI Sentinel PoW token
-│   ├── mail_provider.py            # 生成 catch-all 邮箱 + 委托 cf_kv_otp_provider 取 OTP
-│   ├── cf_kv_otp_provider.py       # 从 Cloudflare KV 读 OTP（worker 写入）
-│   ├── http_client.py              # curl_cffi / requests 工厂
-│   └── config.py                   # dataclass 配置定义
-├── docs/                           # 详细文档
-└── output/                         # 运行时产物（gitignored）
+│   ├── mail_provider.py            # Generate catch-all email + delegate cf_kv_otp_provider to get OTP
+│   ├── cf_kv_otp_provider.py       # Read OTP from Cloudflare KV (Worker writes)
+│   ├── http_client.py              # curl_cffi / requests factory
+│   └── config.py                   # dataclass config definition
+├── docs/                           # Detailed documentation
+└── output/                         # Runtime artifacts（gitignored）
     ├── webui.db                  # SQLite runtime store
     ├── SQLite runtime_meta[daemon_state]
     └── logs/
@@ -47,106 +47,106 @@ Gpt-Agreement-Payment/
 
 ---
 
-## 子系统
+## Subsystems
 
-### `CTF-pay/` —— 支付协议重放主程序
+### `CTF-pay/` —— Payment protocol replay main program
 
-#### `card.py`（约 8000 行单文件）
+#### `card.py`（Approx 8000 lines单文件）
 
-故意做成单文件大程序，按功能分区而不是拆模块。原因：
+Intentionally made as a single large file, partitioned by function instead of modules. Reasons:
 
-- 协议链路是单条线，拆模块会增加跨文件跳转成本
-- 大量本地状态在阶段间传递，拆开后参数列表会很难看
-- 单文件易于做整体阅读和定位
+- Protocol link is a single line, splitting modules increases cross-file navigation costs
+- Large amount of local states passed between phases, splitting makes parameter lists messy
+- Single file is easy for overall reading and positioning
 
-主要分区：
+Main Partitions：
 
-| 分区 | 大致行号 | 内容 |
+| Partition | Approx line numbers | Content |
 |---|---|---|
-| 配置加载 | 200–600 | `load_config()`、JSON 校验、CLI 解析 |
-| HTTP 客户端 | 600–1100 | curl_cffi 包装、TLS 指纹、代理 |
-| Stripe 协议 | 1100–3000 | init / lookup / confirm / 3DS / poll |
-| ChatGPT auth | 3000–4500 | session 管理、access_token 刷新 |
-| Camoufox | 4500–6000 | PayPal 浏览器流程、二次登录 OAuth |
-| 异常 + 主入口 | 6000–8000 | 异常分类、daemon 钩子、命令入口 |
+| Config Loading | 200–600 | `load_config()`、JSON validation, CLI parsing |
+| HTTP Client | 600–1100 | curl_cffi wrapper, TLS fingerpints, proxy |
+| Stripe Protocol | 1100–3000 | init / lookup / confirm / 3DS / poll |
+| ChatGPT auth | 3000–4500 | session management, access_token refresh |
+| Camoufox | 4500–6000 | PayPal browser flow, second OAuth login |
+| Exceptions + Main Entry | 6000–8000 | Exception classification, daemon hooks, command entry |
 
-#### `hcaptcha_auto_solver.py`（约 4000 行独立文件）
+#### `hcaptcha_auto_solver.py`（Approx 4000 lines standalone file）
 
-**和 `card.py` 通过 subprocess 通信，不是 import。** 原因是 ML 依赖（torch / CLIP / opencv）装在独立 venv，跟主程序的 venv 隔离。
+**Communicates with `card.py` via subprocess, not import.** 原因是 ML 依赖（torch / CLIP / opencv）装在独立 venv，跟主程序的 venv 隔离。
 
-详见 [`hcaptcha-solver.md`](hcaptcha-solver.md)。
+See details in [`hcaptcha-solver.md`](hcaptcha-solver.md)。
 
 #### 其他
 
-- **`hcaptcha_bridge_helper.py`**：CLI 工具，连 hCaptcha bridge 后允许人肉 截图 / 点击 / 提交，调试用
-- **`local_mock_gateway.py`**：本地 HTTP mock 服务器，模拟 Stripe 状态机（challenge_pass_then_decline / challenge_failed / no_3ds_card_declined）
-- **`retry_house_decline.py`**：包装重试器，专门刷"直接终态拒卡"而非"进 challenge"
+- **`hcaptcha_bridge_helper.py`**：CLI tool, allows manual screenshot / click / submit after connecting to hCaptcha bridge, for debugging
+- **`local_mock_gateway.py`**：Local HTTP mock server, simulates Stripe state machine (challenge_pass_then_decline / challenge_failed / no_3ds_card_declined)
+- **`retry_house_decline.py`**：Wrapper retrier, targeting "direct final state card decline" instead of "entering challenge"
 
-### `CTF-reg/` —— ChatGPT 注册子系统
+### `CTF-reg/` —— ChatGPT Registration Subsystem
 
-被 `card.py::auto_register` 拉起，从零注册 ChatGPT 账号并拿到 access_token。
+Launched by `card.py::auto_register`, registers ChatGPT account from scratch and obtains access_token.
 
-| 文件 | 职责 |
+| 文件 | Responsibilities |
 |---|---|
-| `browser_register.py` | Camoufox 真浏览器注册主路径，过 Cloudflare Turnstile |
-| `auth_flow.py` | 纯 HTTP 注册路径，备用（覆盖率不全） |
-| `sentinel.py` | OpenAI Sentinel PoW token 生成（浏览器指纹模拟 + SHA-3） |
-| `mail_provider.py` | catch-all 邮箱生成 + 委托 KV 取 OTP |
-| `cf_kv_otp_provider.py` | 从 CF KV 读 worker 写入的 OTP（替代 IMAP） |
-| `http_client.py` | HTTP 客户端工厂，优先 curl_cffi 做 TLS 指纹 |
-| `config.py` | dataclass 配置定义 |
+| `browser_register.py` | Camoufox true browser registration主路径，过 Cloudflare Turnstile |
+| `auth_flow.py` | Pure HTTP registration path, backup (incomplete coverage) |
+| `sentinel.py` | OpenAI Sentinel PoW token generation (browser fingerprint simulation + SHA-3) |
+| `mail_provider.py` | catch-all email generation + delegating KV to get OTP |
+| `cf_kv_otp_provider.py` | Reading worker-written OTP from CF KV (replacing IMAP) |
+| `http_client.py` | HTTP Client工厂，优先 curl_cffi 做 TLS 指纹 |
+| `config.py` | dataclass config definition |
 
 ### `pipeline.py` —— 编排器
 
-把 `CTF-reg/` 和 `CTF-pay/` 串起来，对外暴露四种模式：
+Chaining `CTF-reg/` and `CTF-pay/` together, exposing four modes:
 
-| 模式 | 入口函数 |
+| Mode | Entry Function |
 |---|---|
-| 单次 | `pipeline()` |
-| 批量并行 | `batch()` |
-| 自产自销 | `self_dealer()` |
-| Daemon 常驻 | `daemon()` |
+| Single | `pipeline()` |
+| Batch Parallel | `batch()` |
+| Self-dealer | `self_dealer()` |
+| Daemon | `daemon()` |
 
-详见 [`operating-modes.md`](operating-modes.md)。
+See details in [`operating-modes.md`](operating-modes.md)。
 
 ---
 
-## 协议链路细节
+## Protocol Link Details
 
-### Stripe Checkout 完整链路
+### Stripe Checkout Complete Link
 
 ```
 init
  → elements/sessions
    → consumers/sessions/lookup
-     → 地址 / tax_region 更新
+     → Address / tax_region update
        → confirm
-         (inline_payment_method_data 或 shared_payment_method 模式)
+         (inline_payment_method_data 或 shared_payment_method Mode)
          → 3ds2/authenticate
            → poll
 ```
 
-容易踩的点：
+Common Pitfalls：
 
-- `setatt_` / `source` 有值不代表成功，只是拿到了 3DS authenticate 的 source
-- `state = challenge_required` 且 `ares.transStatus = C` 表示**需要浏览器侧继续完成 challenge**，不是废卡
-- 只有浏览器把 challenge 真做完，后面的 intent / setup_intent 状态才会推进
+- `setatt_` / `source` Presence of value doesn t mean success, just obtained 3DS authenticate source
+- `state = challenge_required` 且 `ares.transStatus = C` means **browser side needs to complete the challenge**，not a dead card
+- Only after the browser completes the challenge will the intent / setup_intent state advance
 
-### PayPal billing agreement 完整链路
+### PayPal billing agreement Complete Link
 
 ```
-B1: 进协议授权页（Stripe redirect）
- → B-DDC: 设备指纹采集（含 DataDome 滑块可能性）
-   → B2: 邮箱 + 密码登录
-     → B3: 协议授权同意
-       → B6: hermes 路径
-         → B7: funding 选择
-           → B8: redirect 回 Stripe
+B1: Enter protocol authorization page (Stripe redirect)
+ → B-DDC: Device fingerprint collection (includes DataDome slider possibility)
+   → B2: Email + password login
+     → B3: Protocol authorization agreement
+       → B6: hermes path
+         → B7: funding selection
+           → B8: redirect back to Stripe
 ```
 
-DataDome 滑块会在 B-DDC 或 B6 出现，daemon 模式有自动拖拽（看 [`daemon-mode.md`](daemon-mode.md)）。
+DataDome 滑块会在 B-DDC 或 B6 出现，daemon Mode有自动拖拽（看 [`daemon-mode.md`](daemon-mode.md)）。
 
-### Codex OAuth + PKCE 二次登录
+### Codex OAuth + PKCE Second Login
 
 支付成功后启动新 Camoufox 实例，打开 Codex authorize URL：
 
@@ -191,7 +191,7 @@ WebshareQuotaExhausted      # Webshare 替换代理配额耗尽
 运行时账号 / 支付 / OAuth 状态都存放在 SQLite 数据库 `output/webui.db` 中。主要表包括：
 
 - `registered_accounts`：注册成功账号的完整凭证（`password` / `access_token` / `session_token` / `device_id` / cookies 等）
-- `pipeline_results`：pipeline 单次 / 批量 / self-dealer 的结果摘要
+- `pipeline_results`：pipeline Single / 批量 / self-dealer 的结果摘要
 - `card_results`：`card.py` 的支付终态和补字段结果
 - `oauth_status`：free-only / RT 维护时的 OAuth 状态机
 
@@ -199,7 +199,7 @@ WebshareQuotaExhausted      # Webshare 替换代理配额耗尽
 
 ### `SQLite runtime_meta[daemon_state]`
 
-daemon 模式的状态快照（重启续跑用）：
+State snapshot for daemon mode (used for resuming after restart):
 
 ```json
 {
@@ -220,17 +220,17 @@ daemon 模式的状态快照（重启续跑用）：
 
 ---
 
-## 跟外部系统的边界
+## Boundaries with External Systems
 
-| 系统 | 作用 | 必需性 |
+| System | Role | Required |
 |---|---|---|
-| **OpenAI** | 注册 + 登录 ChatGPT，拿 OAuth refresh_token | ✅ 必需 |
-| **Stripe** | Checkout session 链路 | ✅ 必需 |
-| **PayPal** | 支付结算 | ✅（除非用纯卡支付） |
-| **Cloudflare** | catch-all 邮箱子域、注册时过 Turnstile | ✅ 必需 |
-| **打码平台**（兼容 createTask/getTaskResult 协议） | passive captcha + 兜底 | 可选（浏览器 passive captcha 优先，平台仅作兜底） |
-| **Webshare**（或自有代理） | 出口 IP | ✅ 必需 |
-| **VLM endpoint** | hCaptcha 求解 | 可选（家宽 / 伪家宽出口通常不触发；无 VLM 时降级到 CLIP） |
-| **gpt-team / CPA** | 推下游管理系统 | 可选 |
+| **OpenAI** | Register + Login ChatGPT, retrieve OAuth refresh_token | ✅ Required |
+| **Stripe** | Checkout session flow | ✅ Required |
+| **PayPal** | Payment settlement | ✅ (Unless using pure card payment) |
+| **Cloudflare** | Catch-all email subdomain, passing Turnstile during registration | ✅ Required |
+| **Captcha Solving Platform** (API compatible) | Passive captcha + fallback | Optional (Browser passive captcha takes priority, platform as fallback) |
+| **Webshare** (or self-owned proxy) | Exit IP | ✅ Required |
+| **VLM endpoint** | hCaptcha solving | Optional (Residential/fake residential IPs usually don't trigger; falls back to CLIP if VLM is absent) |
+| **gpt-team / CPA** | Downstream management system | Optional |
 
-边界都在 config 里可关 / 可换。
+All boundaries are toggleable/replaceable in the config.

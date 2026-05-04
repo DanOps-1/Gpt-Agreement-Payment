@@ -180,7 +180,7 @@ a:hover { color: var(--accent); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* ─── Step 内容入场 stagger ─────────────────────────────────────────── */
+/* ─── Step content entry stagger ─────────────────────────────────────────── */
 .step-fade-in > * {
   opacity: 0;
   animation: step-item-in 360ms ease-out forwards;
