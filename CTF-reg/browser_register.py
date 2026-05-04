@@ -120,6 +120,8 @@ def browser_register(cfg, mail_provider) -> dict:
         "cookie_header": "",
     }
 
+    otp_sent_at: Optional[float] = None
+
     try:
         with Camoufox(
             headless=not has_display,
@@ -230,6 +232,7 @@ def browser_register(cfg, mail_provider) -> dict:
                         'button:has-text("Next")']:
                 b = page.query_selector(sel)
                 if b and b.is_visible():
+                    otp_sent_at = time.time()
                     b.click()
                     logger.info(f"[browser-reg] 点击 email 继续: {sel}")
                     break
@@ -252,6 +255,7 @@ def browser_register(cfg, mail_provider) -> dict:
                             'button:has-text("Create")', 'button:has-text("Next")']:
                     b = page.query_selector(sel)
                     if b and b.is_visible():
+                        otp_sent_at = time.time()
                         b.click()
                         logger.info(f"[browser-reg] 点击 password 继续: {sel}")
                         break
@@ -283,7 +287,8 @@ def browser_register(cfg, mail_provider) -> dict:
             if page.query_selector('input[autocomplete="one-time-code"]') or \
                page.query_selector('input[inputmode="numeric"]'):
                 logger.info("[browser-reg] 等待 IMAP OTP ...")
-                otp_sent_at = time.time()
+                if otp_sent_at is None:
+                    otp_sent_at = time.time()
                 try:
                     otp_timeout = max(30, int(os.getenv("OTP_TIMEOUT", "180")))
                 except Exception:
