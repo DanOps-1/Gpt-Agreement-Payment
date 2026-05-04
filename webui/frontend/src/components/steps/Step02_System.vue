@@ -2,7 +2,7 @@
   <section class="step-fade-in">
     <div class="term-divider" data-tail="──────────">步骤 02: 系统</div>
     <h2 class="step-h">$&nbsp;系统依赖体检<span class="term-cursor"></span></h2>
-    <p class="step-sub">看你机器上 Camoufox / xvfb-run / Playwright 装没装。</p>
+    <p class="step-sub">看你机器上 Camoufox / Playwright 装没装；Linux 无桌面时再检查 xvfb-run。</p>
 
     <div class="step-actions">
       <TermBtn :loading="loading" @click="run">重新检查</TermBtn>

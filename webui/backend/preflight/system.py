@@ -1,6 +1,7 @@
 import shutil
 import sys
 from ._common import CheckResult, PreflightResult, aggregate
+from .. import runtime_env
 
 
 def check() -> PreflightResult:
@@ -15,13 +16,19 @@ def check() -> PreflightResult:
                                   message=f"Python {sys.version.split()[0]} < 3.10"))
 
     # Binaries
-    for binary in ("camoufox", "xvfb-run"):
-        path = shutil.which(binary)
-        checks.append(CheckResult(
-            name=binary,
-            status="ok" if path else "fail",
-            message=path or f"{binary} not found in PATH",
-        ))
+    camoufox_path = shutil.which("camoufox")
+    checks.append(CheckResult(
+        name="camoufox",
+        status="ok" if camoufox_path else "fail",
+        message=camoufox_path or "camoufox not found in PATH",
+    ))
+
+    xvfb_status, xvfb_message = runtime_env.xvfb_check()
+    checks.append(CheckResult(
+        name="xvfb-run",
+        status=xvfb_status,
+        message=xvfb_message,
+    ))
 
     # Playwright import
     try:

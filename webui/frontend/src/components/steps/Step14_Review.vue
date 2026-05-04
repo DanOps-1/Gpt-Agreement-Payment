@@ -25,7 +25,8 @@
           备份：{{ result.backups.join(", ") }}
         </div>
       </div>
-      <pre class="export-cmd">xvfb-run -a python pipeline.py --config {{ relPath(result.pay_path) }} --paypal</pre>
+      <pre class="export-cmd">python pipeline.py --config {{ relPath(result.pay_path) }} --paypal</pre>
+      <div class="export-note">Linux 无桌面环境时，可改成 <code>xvfb-run -a python ...</code>。</div>
       <TermBtn @click="goRun" style="margin-top:12px">立即在 Web 里运行 →</TermBtn>
     </div>
   </section>
@@ -117,6 +118,16 @@ function goRun() {
   margin-top: 8px;
   font-size: 12px;
   color: var(--ok);
+}
+.export-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--fg-tertiary);
+}
+.export-note code {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  padding: 1px 4px;
 }
 .export-path { padding: 2px 0; }
 .export-cmd {

@@ -4,12 +4,12 @@
 
 ## 系统要求
 
-- **OS**：Linux（Ubuntu 22.04+ / Debian 11+ / Kali / 任何 systemd 发行版）
+- **OS**：macOS，或 Linux（Ubuntu 22.04+ / Debian 11+ / Kali / 任何 systemd 发行版）
 - **Python**：3.11+
 - **内存**：至少 2 GB（hCaptcha solver + Camoufox 同时跑）
 - **磁盘**：核心约 500 MB，加上 ML venv 总共 5 GB
 - **网络**：能访问 OpenAI / Stripe / PayPal / Cloudflare API
-- **可选**：xvfb（跑无头时用）、gost（带 auth 的 socks5 用）
+- **可选**：xvfb（仅 Linux 无桌面环境时用）、gost（带 auth 的 socks5 用）
 
 ---
 
@@ -28,6 +28,8 @@ sudo curl -sSfL \
     https://github.com/go-gost/gost/releases/latest/download/gost-linux-amd64 \
     -o /usr/local/bin/gost && sudo chmod +x /usr/local/bin/gost
 ```
+
+macOS 不需要安装 xvfb；直接用系统图形环境跑 `python pipeline.py ...` 即可。
 
 ---
 
@@ -103,6 +105,10 @@ cp CTF-reg/config.example.json              CTF-reg/config.noproxy.json
 第一次跑会弹 Camoufox 让你登 PayPal。这一步**必须人肉过一次** OTP 2FA：
 
 ```bash
+# macOS / 有桌面的 Linux
+python pipeline.py --config CTF-pay/config.paypal.json --paypal
+
+# Linux 无桌面环境
 xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal
 ```
 

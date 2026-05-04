@@ -21,7 +21,8 @@ def test_run_preview_single(client):
     r = client.post("/api/run/preview", json={"mode": "single"})
     assert r.status_code == 200
     body = r.json()
-    assert "xvfb-run" in body["cmd_str"]
+    assert body["cmd"][0] in ("python", "xvfb-run")
+    assert "python" in body["cmd"]
     assert "pipeline.py" in body["cmd_str"]
     assert "--paypal" in body["cmd_str"]
 
@@ -127,6 +128,26 @@ def test_run_start_then_409(client, monkeypatch):
 
     # Cleanup module state
     runner_mod._proc = None
+
+
+def test_build_cmd_uses_xvfb_on_linux_when_available(monkeypatch):
+    import webui.backend.runner as runner_mod
+
+    monkeypatch.setattr(runner_mod.runtime_env.sys, "platform", "linux")
+    monkeypatch.setattr(runner_mod.runtime_env.shutil, "which", lambda name: "/usr/bin/xvfb-run" if name == "xvfb-run" else None)
+
+    cmd = runner_mod.build_cmd("single", True, 0, 3, 0, False, False)
+    assert cmd[:4] == ["xvfb-run", "-a", "python", "-u"]
+
+
+def test_build_cmd_skips_xvfb_on_macos(monkeypatch):
+    import webui.backend.runner as runner_mod
+
+    monkeypatch.setattr(runner_mod.runtime_env.sys, "platform", "darwin")
+    monkeypatch.setattr(runner_mod.runtime_env.shutil, "which", lambda name: None)
+
+    cmd = runner_mod.build_cmd("single", True, 0, 3, 0, False, False)
+    assert cmd[:2] == ["python", "-u"]
 
 
 def test_gopay_auto_otp_skips_manual_fifo(tmp_path, monkeypatch):
