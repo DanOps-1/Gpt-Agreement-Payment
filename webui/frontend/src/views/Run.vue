@@ -208,7 +208,7 @@
             <div class="otp-head">
               <span class="otp-prompt">$</span> GoPay WhatsApp OTP
             </div>
-            <p class="otp-desc">查 WhatsApp，把刚收到的 6 位 OTP 输进来。提交后 gopay.py 自动继续。</p>
+            <p class="otp-desc">正在轮询外部 OTP；也可以手动输入刚收到的 6 位验证码。提交后 gopay.py 自动继续。</p>
             <input
               class="otp-input"
               v-model="otpDialog.value"
@@ -218,6 +218,9 @@
               @keyup.enter="submitOtp"
               placeholder="000000"
             />
+            <div class="otp-poll-hint" :class="{ ok: otpDialog.autoFilled }">
+              {{ otpDialog.autoFilled ? "已自动填入外部 OTP，正在继续..." : "等待 webhook OTP，或直接手动输入。" }}
+            </div>
             <div class="otp-actions">
               <TermBtn :loading="otpDialog.submitting" @click="submitOtp">提交</TermBtn>
             </div>
@@ -284,6 +287,17 @@ interface RunStatus {
   exit_code: number | null;
   log_count: number;
   otp_pending?: boolean;
+  otp_pending_since?: number | null;
+}
+
+interface WaOtpStatus {
+  updated_at?: number;
+  latest?: {
+    otp?: string;
+    ts?: number;
+    received_at?: number;
+    source?: string;
+  };
 }
 
 interface InventoryAccount {
@@ -368,7 +382,14 @@ const form = ref({
   count: 0, // free_register 模式：注册多少个后停（0 = 无限）
 });
 
-const otpDialog = ref({ open: false, value: "", submitting: false });
+const otpDialog = ref({
+  open: false,
+  value: "",
+  submitting: false,
+  since: 0,
+  autoFilled: false,
+  polling: false,
+});
 
 function onGoPayToggle(v: boolean) {
   if (v) form.value.paypal = false;
@@ -416,6 +437,7 @@ let clockTimer: ReturnType<typeof setInterval> | undefined;
 let statusTimer: ReturnType<typeof setInterval> | undefined;
 let inventoryTimer: ReturnType<typeof setInterval> | undefined;
 let eventSource: EventSource | null = null;
+let otpPollTimer: ReturnType<typeof setInterval> | undefined;
 
 function tick() {
   const d = new Date();
@@ -706,8 +728,7 @@ async function refreshStatus() {
     const r = await api.get<RunStatus>("/run/status");
     status.value = r.data;
     if (!status.value.otp_pending && otpDialog.value.open) {
-      otpDialog.value.open = false;
-      otpDialog.value.value = "";
+      closeOtpDialog();
     }
   } catch {}
 }
@@ -778,21 +799,21 @@ function openStream() {
       }
     } catch {}
   });
-  eventSource.addEventListener("otp_pending", () => {
-    if (!otpDialog.value.open) {
-      otpDialog.value.open = true;
-      otpDialog.value.value = "";
-    }
+  eventSource.addEventListener("otp_pending", (e) => {
+    let since: number | undefined;
+    try {
+      since = Number(JSON.parse((e as MessageEvent).data)?.since || 0) || undefined;
+    } catch {}
+    openOtpDialog(since);
   });
   eventSource.addEventListener("otp_resolved", () => {
-    otpDialog.value.open = false;
-    otpDialog.value.value = "";
+    closeOtpDialog();
     message.success("外部 OTP 已接入，继续运行");
   });
   eventSource.addEventListener("done", async () => {
     eventSource?.close();
     eventSource = null;
-    otpDialog.value.open = false;
+    closeOtpDialog();
     await refreshStatus();
     await refreshInventory();
   });
@@ -808,20 +829,76 @@ async function logout() {
   router.push("/login");
 }
 
-async function submitOtp() {
+function openOtpDialog(since?: number | null) {
+  if (!otpDialog.value.open) {
+    otpDialog.value.value = "";
+    otpDialog.value.autoFilled = false;
+  }
+  otpDialog.value.open = true;
+  otpDialog.value.since = Number(
+    since || status.value.otp_pending_since || otpDialog.value.since || Date.now() / 1000
+  );
+  startOtpPolling();
+  pollExternalOtp();
+}
+
+function closeOtpDialog() {
+  otpDialog.value.open = false;
+  otpDialog.value.value = "";
+  otpDialog.value.autoFilled = false;
+  otpDialog.value.polling = false;
+  stopOtpPolling();
+}
+
+function startOtpPolling() {
+  otpDialog.value.polling = true;
+  if (otpPollTimer) return;
+  otpPollTimer = setInterval(pollExternalOtp, 1000);
+}
+
+function stopOtpPolling() {
+  if (otpPollTimer) {
+    clearInterval(otpPollTimer);
+    otpPollTimer = undefined;
+  }
+}
+
+async function pollExternalOtp() {
+  if (!otpDialog.value.open || otpDialog.value.submitting) return;
+  try {
+    const r = await api.get<WaOtpStatus>("/whatsapp/status");
+    const latest = r.data?.latest;
+    const otp = latest?.otp || "";
+    const arrivedAt = Number(r.data?.updated_at || latest?.received_at || 0);
+    if (!otp || arrivedAt < otpDialog.value.since) return;
+    if (otpDialog.value.value !== otp) {
+      otpDialog.value.value = otp;
+      otpDialog.value.autoFilled = true;
+      message.success("已从外部 OTP 自动填入");
+    }
+    await submitOtp({ auto: true });
+  } catch {}
+}
+
+async function submitOtp(options?: { auto?: boolean } | Event) {
+  const auto = Boolean((options as { auto?: boolean } | undefined)?.auto);
   const v = otpDialog.value.value.trim();
   if (!v) {
-    message.warning("请输入 OTP");
+    if (!auto) message.warning("请输入 OTP");
     return;
   }
   otpDialog.value.submitting = true;
   try {
     await api.post("/run/otp", { otp: v });
-    otpDialog.value.open = false;
-    otpDialog.value.value = "";
-    message.success("OTP 已提交");
+    closeOtpDialog();
+    message.success(auto ? "外部 OTP 已提交" : "OTP 已提交");
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "提交失败");
+    const detail = e.response?.data?.detail || "";
+    if (auto && String(detail).includes("no OTP currently requested")) {
+      closeOtpDialog();
+      return;
+    }
+    if (!auto) message.error(detail || "提交失败");
   } finally {
     otpDialog.value.submitting = false;
   }
@@ -873,6 +950,7 @@ onBeforeUnmount(() => {
   if (clockTimer) clearInterval(clockTimer);
   if (statusTimer) clearInterval(statusTimer);
   if (inventoryTimer) clearInterval(inventoryTimer);
+  if (otpPollTimer) clearInterval(otpPollTimer);
   if (eventSource) eventSource.close();
 });
 </script>
@@ -1240,6 +1318,13 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 .otp-input:focus { border-color: var(--accent); }
+.otp-poll-hint {
+  margin-top: 10px;
+  color: var(--fg-tertiary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.otp-poll-hint.ok { color: var(--ok); }
 .otp-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
 
 @media (max-width: 1024px) {

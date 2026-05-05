@@ -61,6 +61,24 @@ def test_run_requires_auth(client):
     assert r.status_code == 401
 
 
+def test_run_status_exposes_otp_pending_since():
+    import webui.backend.runner as runner_mod
+
+    old_pending = runner_mod._otp_pending
+    old_since = runner_mod._otp_pending_since
+    try:
+        runner_mod._otp_pending = True
+        runner_mod._otp_pending_since = 123.5
+
+        st = runner_mod.status()
+
+        assert st["otp_pending"] is True
+        assert st["otp_pending_since"] == 123.5
+    finally:
+        runner_mod._otp_pending = old_pending
+        runner_mod._otp_pending_since = old_since
+
+
 def test_run_start_then_409(client, monkeypatch):
     """Mock 一个不会立即退出的 subprocess，确保第二次 start 返 409。
 

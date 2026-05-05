@@ -93,7 +93,10 @@ async def stream(user: str = CurrentUser):
             # OTP heartbeat: re-send periodically while pending
             if st.get("otp_pending"):
                 last_otp_pending = True
-                yield {"event": "otp_pending", "data": json.dumps({"pending": True})}
+                yield {"event": "otp_pending", "data": json.dumps({
+                    "pending": True,
+                    "since": st.get("otp_pending_since"),
+                })}
             elif last_otp_pending:
                 last_otp_pending = False
                 yield {"event": "otp_resolved", "data": json.dumps({"pending": False})}
