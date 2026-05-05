@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import json
 import time
+import io
+import zipfile
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth import CurrentUser
@@ -25,6 +28,49 @@ class IdsRequest(BaseModel):
 class CheckRequest(IdsRequest):
     timeout_s: float = 10.0
     max_workers: int = 3
+
+
+def _safe_filename(value: str) -> str:
+    out = []
+    for ch in str(value or ""):
+        if ch.isalnum() or ch in ("@", ".", "_", "-"):
+            out.append(ch)
+        else:
+            out.append("_")
+    return "".join(out).strip("._") or "account"
+
+
+def _jwt_exp_iso(access_token: str) -> str:
+    import base64
+    if not access_token:
+        return ""
+    try:
+        p = access_token.split(".")[1]
+        p += "=" * (-len(p) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(p).decode())
+        if payload.get("exp"):
+            return datetime.fromtimestamp(int(payload["exp"]), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        pass
+    return ""
+
+
+def _cpa_auth_file_body(account: dict) -> dict:
+    email = str(account.get("email") or "").strip().lower()
+    at = str(account.get("access_token") or "").strip()
+    rt = str(account.get("refresh_token") or "").strip()
+    id_tok = str(account.get("id_token") or "").strip() or at
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "id_token": id_tok,
+        "access_token": at,
+        "refresh_token": rt,
+        "account_id": "",
+        "email": email,
+        "last_refresh": now_iso,
+        "expired": _jwt_exp_iso(at),
+        "type": "codex",
+    }
 
 
 def _load_cpa_cfg() -> dict:
@@ -162,6 +208,49 @@ def delete_accounts(req: IdsRequest, user: str = CurrentUser):
         raise HTTPException(status_code=400, detail="ids 不能为空")
     n = get_db().delete_registered_accounts(req.ids)
     return {"deleted": n, "requested": len(req.ids)}
+
+
+@router.post("/accounts/delete-downloaded")
+def delete_downloaded_accounts(user: str = CurrentUser):
+    db = get_db()
+    ids = db.downloaded_account_ids()
+    if not ids:
+        return {"deleted": 0, "requested": 0}
+    n = db.delete_registered_accounts(ids)
+    return {"deleted": n, "requested": len(ids)}
+
+
+@router.post("/accounts/export-cpa-zip")
+def export_cpa_zip(req: IdsRequest, user: str = CurrentUser):
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="ids 不能为空")
+    if len(req.ids) > 500:
+        raise HTTPException(status_code=400, detail="单次最多 500 个")
+    db = get_db()
+    buf = io.BytesIO()
+    exported_ids: list[int] = []
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for aid in req.ids:
+            acc = db.get_registered_account(int(aid))
+            if not acc:
+                continue
+            email = str(acc.get("email") or "").strip().lower()
+            if not email:
+                continue
+            body = _cpa_auth_file_body(acc)
+            name = f"{_safe_filename(email)}.json"
+            zf.writestr(name, json.dumps(body, ensure_ascii=False, indent=2))
+            exported_ids.append(int(aid))
+    if not exported_ids:
+        raise HTTPException(status_code=404, detail="没有可导出的账号")
+    db.mark_accounts_downloaded(exported_ids)
+    buf.seek(0)
+    filename = f"cpa-accounts-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/accounts/cpa-push")

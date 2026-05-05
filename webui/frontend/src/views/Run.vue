@@ -114,7 +114,10 @@
             <span class="inventory-label">最近刷新</span>
             <span class="inventory-value">{{ inventoryUpdatedText }}</span>
           </div>
-          <TermBtn variant="ghost" :loading="inventoryLoading" @click="refreshInventory">刷新库存</TermBtn>
+          <div class="inventory-head-actions">
+            <TermBtn variant="ghost" :loading="inventoryLoading" @click="refreshInventory">刷新库存</TermBtn>
+            <TermBtn variant="ghost" @click="openAccountManager">账号管理</TermBtn>
+          </div>
         </div>
         <div v-if="inventoryError" class="inventory-error">
           库存刷新失败：{{ inventoryError }}。如果刚更新过代码，重启后端 <code>python -m webui.server</code>。
@@ -205,6 +208,40 @@
           暂无账号库存；先跑一次注册/支付，等数据库同步完成后再点刷新。
         </div>
       </section>
+
+      <Teleport to="body">
+        <div v-if="accountManager.open" class="account-manager-overlay" @click.self="closeAccountManager">
+          <div class="account-manager-modal">
+            <div class="account-manager-head">
+              <div>
+                <span class="otp-prompt">$</span>
+                <strong>账号管理</strong>
+              </div>
+              <button class="account-manager-close" @click="closeAccountManager">×</button>
+            </div>
+            <div class="account-manager-actions">
+              <label class="inventory-toolbar-check">
+                <input type="checkbox" :checked="managerAllSelected" @change="toggleManagerSelectAll" />
+                <span>全选 ({{ managerSelectedIds.size }} / {{ inventory.accounts.length }})</span>
+              </label>
+              <div class="inventory-toolbar-actions">
+                <TermBtn :loading="accountManager.busy" :disabled="managerSelectedIds.size === 0" @click="downloadManagerSelected">下载勾选账号</TermBtn>
+                <TermBtn variant="danger" :loading="accountManager.busy" :disabled="downloadedIds.length === 0" @click="deleteDownloadedAccounts">删除已下载账号 ({{ downloadedIds.length }})</TermBtn>
+              </div>
+            </div>
+            <div class="account-manager-list">
+              <div v-for="acc in inventory.accounts" :key="acc.id || acc.email" class="account-manager-row" :class="{ downloaded: acc.downloaded }">
+                <input type="checkbox" :checked="managerSelectedIds.has(acc.id)" @change="toggleManagerSelect(acc.id)" />
+                <span class="account-manager-email">{{ acc.email }}</span>
+                <span class="badge" :class="planBadgeClass(acc.plan_tag)">{{ planLabel(acc.plan_tag) }}</span>
+                <span class="badge" :class="rtBadgeClass(acc.rt_state)">{{ rtStateLabel(acc) }}</span>
+                <span v-if="acc.downloaded" class="badge badge-ok">已下载</span>
+              </div>
+              <div v-if="!inventory.accounts.length" class="inventory-empty">暂无账号库存。</div>
+            </div>
+          </div>
+        </div>
+      </Teleport>
 
       <Teleport to="body">
         <div v-if="otpDialog.open" class="otp-overlay" @click.self="() => {}">
@@ -333,6 +370,8 @@ interface InventoryAccount {
   cpa_pushed: boolean;
   sub2api_status: string;
   sub2api_pushed: boolean;
+  downloaded: boolean;
+  downloaded_at: number;
 }
 
 interface InventoryResponse {
@@ -396,6 +435,10 @@ const otpDialog = ref({
   autoFilled: false,
   polling: false,
 });
+const accountManager = ref({
+  open: false,
+  busy: false,
+});
 
 function onGoPayToggle(v: boolean) {
   if (v) form.value.paypal = false;
@@ -432,6 +475,7 @@ const inventory = ref<InventoryResponse>({
   accounts: [],
 });
 const selectedIds = ref<Set<number>>(new Set());
+const managerSelectedIds = ref<Set<number>>(new Set());
 const checkingIds = ref<Set<number>>(new Set());
 const inventoryBusy = ref(false);
 const autoScroll = ref(true);
@@ -660,6 +704,84 @@ function deleteSelected() {
 }
 function deleteAllInvalid() {
   confirmAndDelete(invalidIds.value, "删除所有失效");
+}
+
+// ── 账号管理弹窗：下载 CPA JSON ZIP + 删除已下载 ─────────────────
+const downloadedIds = computed(() =>
+  inventory.value.accounts.filter(a => a.downloaded).map(a => a.id)
+);
+const managerAllSelected = computed(() => {
+  const ids = inventory.value.accounts.map(a => a.id).filter(Boolean);
+  return ids.length > 0 && ids.every(id => managerSelectedIds.value.has(id));
+});
+function openAccountManager() {
+  accountManager.value.open = true;
+  managerSelectedIds.value = new Set(
+    inventory.value.accounts.filter(a => !a.downloaded).map(a => a.id).filter(Boolean)
+  );
+}
+function closeAccountManager() {
+  accountManager.value.open = false;
+}
+function toggleManagerSelect(id: number) {
+  const next = new Set(managerSelectedIds.value);
+  if (next.has(id)) next.delete(id); else next.add(id);
+  managerSelectedIds.value = next;
+}
+function toggleManagerSelectAll() {
+  if (managerAllSelected.value) {
+    managerSelectedIds.value = new Set();
+  } else {
+    managerSelectedIds.value = new Set(inventory.value.accounts.map(a => a.id).filter(Boolean));
+  }
+}
+async function downloadManagerSelected() {
+  const ids = Array.from(managerSelectedIds.value);
+  if (!ids.length) { message.warning("请选择要下载的账号"); return; }
+  accountManager.value.busy = true;
+  try {
+    const r = await api.post("/inventory/accounts/export-cpa-zip", { ids }, { responseType: "blob" });
+    const cd = String(r.headers?.["content-disposition"] || "");
+    const m = /filename="?([^"]+)"?/i.exec(cd);
+    const name = m?.[1] || `cpa-accounts-${Date.now()}.zip`;
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    message.success(`已下载 ${ids.length} 个账号`);
+    managerSelectedIds.value = new Set();
+    await refreshInventory();
+  } catch (e: any) {
+    message.error(`下载失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    accountManager.value.busy = false;
+  }
+}
+function deleteDownloadedAccounts() {
+  if (!downloadedIds.value.length) { message.warning("没有已下载账号"); return; }
+  dialog.warning({
+    title: "确认删除已下载账号？",
+    content: `将删除 ${downloadedIds.value.length} 个已下载账号，审计记录保留。`,
+    positiveText: "确认删除",
+    negativeText: "取消",
+    onPositiveClick: async () => {
+      accountManager.value.busy = true;
+      try {
+        const r = await api.post("/inventory/accounts/delete-downloaded");
+        message.success(`已删除 ${r.data?.deleted ?? 0} 个已下载账号`);
+        managerSelectedIds.value = new Set();
+        await refreshInventory();
+      } catch (e: any) {
+        message.error(`删除失败：${e?.response?.data?.detail || e?.message || e}`);
+      } finally {
+        accountManager.value.busy = false;
+      }
+    },
+  });
 }
 
 // ── plan + 下游推送 ─────────────────────────────────
@@ -1127,6 +1249,12 @@ onBeforeUnmount(() => {
   gap: 12px;
   margin-bottom: 12px;
 }
+.inventory-head-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 .inventory-meta {
   display: flex;
   flex-direction: column;
@@ -1363,6 +1491,82 @@ onBeforeUnmount(() => {
 }
 .otp-poll-hint.ok { color: var(--ok); }
 .otp-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
+
+.account-manager-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 980;
+}
+.account-manager-modal {
+  width: min(760px, 92vw);
+  max-height: min(720px, 88vh);
+  background: var(--bg-base);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 12px 42px rgba(0,0,0,0.24);
+  display: flex;
+  flex-direction: column;
+}
+.account-manager-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+  font-size: 13px;
+}
+.account-manager-close {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-secondary);
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font: inherit;
+}
+.account-manager-close:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.account-manager-actions {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--bg-panel);
+}
+.account-manager-list {
+  overflow-y: auto;
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.account-manager-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 9px 10px;
+}
+.account-manager-row.downloaded {
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--border));
+}
+.account-manager-email {
+  font-weight: 700;
+  color: var(--fg-primary);
+  word-break: break-all;
+  min-width: 0;
+}
 
 @media (max-width: 1024px) {
   .inventory-stats { grid-template-columns: 1fr; }

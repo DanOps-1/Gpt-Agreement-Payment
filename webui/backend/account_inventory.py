@@ -275,6 +275,8 @@ def build_accounts_inventory() -> dict:
             "last_check_status": acc.get("last_check_status") or "",
             "last_check_message": acc.get("last_check_message") or "",
             "last_check_at": acc.get("last_check_at") or 0,
+            "downloaded_at": acc.get("downloaded_at") or 0,
+            "downloaded": bool(acc.get("downloaded_at")),
         })
 
     return {
