@@ -114,6 +114,8 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
         cmd.append("--daemon")
     elif mode == "self_dealer":
         cmd.extend(["--self-dealer", str(self_dealer)])
+    elif mode == "singlexn":
+        cmd.extend(["--singlexn", str(count)])
     elif mode == "batch":
         cmd.extend(["--batch", str(batch), "--workers", str(workers)])
     # mode == "single" 鈫?no extra flags

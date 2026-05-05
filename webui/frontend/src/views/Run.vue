@@ -32,6 +32,9 @@
             </div>
           </div>
 
+          <div v-if="form.mode === 'singlexn'" class="ctl-row sub">
+            <TermField v-model.number="form.singlexn" label="single N" type="number" />
+          </div>
           <div v-if="form.mode === 'batch'" class="ctl-row sub">
             <TermField v-model.number="form.batch" label="batch N" type="number" />
             <TermField v-model.number="form.workers" label="workers" type="number" />
@@ -333,6 +336,7 @@ const dialog = useDialog();
 
 const modes = [
   { value: "single", label: "single — 1×" },
+  { value: "singlexn", label: "singlexn — N×" },
   { value: "batch", label: "batch — N×" },
   { value: "self_dealer", label: "self-dealer" },
   { value: "daemon", label: "daemon ∞" },
@@ -445,6 +449,7 @@ const form = ref({
   gopay: false,
   pay_only: false,
   register_only: false,
+  singlexn: 5,
   batch: 5,
   workers: 3,
   self_dealer: 4,
@@ -518,6 +523,15 @@ let statusTimer: ReturnType<typeof setInterval> | undefined;
 let inventoryTimer: ReturnType<typeof setInterval> | undefined;
 let eventSource: EventSource | null = null;
 let otpPollTimer: ReturnType<typeof setInterval> | undefined;
+
+function runPayload() {
+  const payload: any = { ...form.value };
+  if (payload.mode === "singlexn") {
+    payload.count = Math.max(1, Number(payload.singlexn || 1));
+  }
+  delete payload.singlexn;
+  return payload;
+}
 
 function tick() {
   const d = new Date();
@@ -965,7 +979,7 @@ async function refreshInventory() {
 
 async function refreshPreview() {
   try {
-    const r = await api.post("/run/preview", form.value);
+    const r = await api.post("/run/preview", runPayload());
     cmdPreview.value = r.data.cmd_str;
   } catch {}
 }
@@ -984,7 +998,7 @@ async function checkConfigHealth() {
   if (configHealthLoading.value) return configHealth.value;
   configHealthLoading.value = true;
   try {
-    const r = await api.post<ConfigHealthResponse>("/config/health", form.value);
+    const r = await api.post<ConfigHealthResponse>("/config/health", runPayload());
     configHealth.value = r.data;
     return r.data;
   } catch (e: any) {
@@ -1004,7 +1018,7 @@ async function start() {
       message.error(first?.message || "配置健康检查未通过，已阻止启动");
       return;
     }
-    await api.post("/run/start", form.value);
+    await api.post("/run/start", runPayload());
     message.success("已启动");
     lines.value = [];
     await refreshStatus();
@@ -1170,7 +1184,7 @@ const isFreeMode = computed(() =>
 );
 
 watch(
-  () => [form.value.mode, form.value.paypal, form.value.gopay, form.value.pay_only, form.value.register_only, form.value.batch, form.value.workers, form.value.self_dealer, form.value.count],
+  () => [form.value.mode, form.value.paypal, form.value.gopay, form.value.pay_only, form.value.register_only, form.value.singlexn, form.value.batch, form.value.workers, form.value.self_dealer, form.value.count],
   () => {
     configHealth.value = null;
     refreshPreview();

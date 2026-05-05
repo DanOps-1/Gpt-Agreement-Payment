@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/run", tags=["run"])
 
 
 class StartRequest(BaseModel):
-    mode: str = Field(pattern="^(single|batch|self_dealer|daemon|free_register)$")
+    mode: str = Field(pattern="^(single|singlexn|batch|self_dealer|daemon|free_register)$")
     paypal: bool = True
     batch: int = 0
     workers: int = 3
@@ -33,6 +33,8 @@ def get_status(user: str = CurrentUser):
 
 @router.post("/start")
 def start(req: StartRequest, user: str = CurrentUser):
+    if req.mode == "singlexn" and req.count < 1:
+        raise HTTPException(status_code=400, detail="singlexn 模式下次数必须 >= 1")
     if req.mode == "batch" and req.batch < 1:
         raise HTTPException(status_code=400, detail="batch 模式下批次数必须 ≥ 1")
     if req.mode == "self_dealer" and req.self_dealer < 1:

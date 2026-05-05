@@ -1093,6 +1093,62 @@ def _run_one(args_tuple):
         return {"batch_index": idx, "status": "error", "error": str(e)[:200]}
 
 
+def singlexn(card_config_path, count, delay=30, **kwargs):
+    """Run the normal single flow N times, serially, without batch branching."""
+    is_register_only = bool(kwargs.pop("register_only", False))
+    is_pay_only = bool(kwargs.pop("pay_only", False))
+    use_paypal = bool(kwargs.get("use_paypal", False))
+    use_gopay = bool(kwargs.get("use_gopay", False))
+    gopay_otp_file = kwargs.get("gopay_otp_file", "")
+    cardw_config_path = kwargs.get("cardw_config_path")
+
+    print(f"\n[singlexn] === single x {count} 串行 ===")
+    results = []
+    ok_count = 0
+    for i in range(count):
+        print(f"\n{'#'*60}")
+        print(f"# singlexn {i + 1}/{count}")
+        print(f"{'#'*60}")
+        try:
+            if is_register_only:
+                card_cfg = _read_card_cfg(card_config_path)
+                cardw_path = _load_cardw_path_from_card_cfg(card_cfg, cardw_config_path)
+                if not cardw_path:
+                    raise RegistrationError("缺 cardw_config_path")
+                r = register(cardw_path)
+                r["batch_index"] = i
+                if r.get("status") == "ok":
+                    ok_count += 1
+            elif is_pay_only:
+                r = pay_only(
+                    card_config_path,
+                    use_paypal=use_paypal,
+                    use_gopay=use_gopay,
+                    gopay_otp_file=gopay_otp_file,
+                )
+                r["batch_index"] = i
+                if r.get("status") == "succeeded":
+                    ok_count += 1
+            else:
+                r = pipeline(card_config_path, **kwargs)
+                r["batch_index"] = i
+                if r.get("payment", {}).get("status") == "succeeded":
+                    ok_count += 1
+        except Exception as e:
+            r = {"batch_index": i, "status": "error", "error": str(e)[:200]}
+            print(f"[singlexn] ✗ 第 {i + 1}/{count} 次异常: {e}")
+        results.append(r)
+        print(f"[singlexn] 进度 {i + 1}/{count}  累计 ok={ok_count}")
+        try:
+            _cleanup_temp_leftovers(max_age_s=0, verbose=True)
+        except Exception:
+            pass
+        if i < count - 1 and delay > 0:
+            time.sleep(delay)
+    print(f"\n[singlexn] 完成: {ok_count}/{count} 成功")
+    return results
+
+
 def _run_one_pay_only(args_tuple):
     """PayPal 并发模式下：注册已完成，只串行支付用（预留占位，batch 里不再单独使用）"""
     return {"batch_index": args_tuple[0], "status": "error", "error": "deprecated path"}
@@ -3794,6 +3850,8 @@ def main():
                         help="仅支付（优先复用最近注册但未支付账号；没有则使用配置文件中的 session_token）")
     parser.add_argument("--batch", type=int, default=0,
                         help="批量运行 N 次")
+    parser.add_argument("--singlexn", type=int, default=0, metavar="N",
+                        help="连续串行执行 N 次 single 流程，不启用 batch 特殊分支")
     parser.add_argument("--delay", type=float, default=30,
                         help="批量模式下每次间隔秒数 (默认 30)")
     parser.add_argument("--workers", type=int, default=3,
@@ -3841,7 +3899,17 @@ def main():
             return
 
         # batch 是循环外壳，跟 register-only / pay-only 正交组合
-        if args.batch > 0:
+        if args.singlexn > 0:
+            singlexn(args.config, args.singlexn, delay=args.delay,
+                     use_paypal=args.paypal, cardw_config_path=args.cardw_config,
+                     register_only=args.register_only, pay_only=args.pay_only,
+                     use_gopay=args.gopay, gopay_otp_file=args.gopay_otp_file)
+
+        elif "--singlexn" in sys.argv:
+            print(f"[ERROR] --singlexn 参数必须 >= 1（当前 {args.singlexn}）", file=sys.stderr)
+            sys.exit(2)
+
+        elif args.batch > 0:
             batch(args.config, args.batch, delay=args.delay, workers=args.workers,
                   use_paypal=args.paypal, cardw_config_path=args.cardw_config,
                   register_only=args.register_only, pay_only=args.pay_only,
