@@ -213,6 +213,40 @@ def browser_register(cfg, mail_provider) -> dict:
         except Exception:
             return []
 
+    def _has_email_input(target_page=None):
+        pg = target_page or page
+        try:
+            item = pg.query_selector('input[type="email"], input[name="email"]')
+            return bool(item and item.is_visible())
+        except Exception:
+            return False
+
+    def _find_signup_href():
+        try:
+            return page.evaluate("""() => {
+                const items = Array.from(document.querySelectorAll('a,button'));
+                for (const el of items) {
+                    const text = ((el.innerText || el.textContent || '') + '').toLowerCase();
+                    const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+                    const href = el.href || el.getAttribute('href') || '';
+                    if ((testid.includes('signup') || text.includes('sign up')) && href) {
+                        return new URL(href, location.href).href;
+                    }
+                }
+                return '';
+            }""") or ""
+        except Exception:
+            return ""
+
+    def _has_otp_error():
+        try:
+            err = page.query_selector(
+                'text=/incorrect code|invalid code|wrong code|验证码不正确|验证码错误/i'
+            )
+            return bool(err and err.is_visible())
+        except Exception:
+            return False
+
     try:
         with Camoufox(
             headless=not has_display,
@@ -280,7 +314,15 @@ def browser_register(cfg, mail_provider) -> dict:
             pre_url = page.url
             for i in range(20):
                 time.sleep(1)
-                if "auth.openai.com" in page.url or page.query_selector('input[type="email"]'):
+                for candidate in ctx.pages:
+                    try:
+                        if candidate is not page and ("auth.openai.com" in candidate.url or _has_email_input(candidate)):
+                            page = candidate
+                            logger.info(f"[browser-reg] Sign up 打开新页面: {page.url[:120]}")
+                            break
+                    except Exception:
+                        pass
+                if "auth.openai.com" in page.url or _has_email_input():
                     break
                 # 如果 5s 后还没变化，重试点击 Sign up
                 if i == 5 and page.url == pre_url:
@@ -294,6 +336,28 @@ def browser_register(cfg, mail_provider) -> dict:
                             btn.evaluate("el => el.click()")
                         except Exception:
                             pass
+            if "auth.openai.com" not in page.url and not _has_email_input():
+                href = _find_signup_href()
+                if href:
+                    logger.info(f"[browser-reg] Sign up 未跳转，使用 href 兜底: {href[:120]}")
+                    try:
+                        page.goto(href, wait_until="domcontentloaded", timeout=30000)
+                    except Exception as e:
+                        logger.warning(f"[browser-reg] Sign up href goto 异常: {e}")
+                    for _ in range(15):
+                        if "auth.openai.com" in page.url or _has_email_input():
+                            break
+                        time.sleep(1)
+            if "auth.openai.com" not in page.url and not _has_email_input():
+                page.screenshot(path="/tmp/browser_reg_signup_no_auth.png")
+                urls = []
+                try:
+                    urls = [p.url[:120] for p in ctx.pages]
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"Sign up 未进入注册页，当前 URL={page.url[:120]} pages={urls}"
+                )
             logger.info(f"[browser-reg] 当前 URL: {page.url[:120]}")
             page.screenshot(path="/tmp/browser_reg_before_email.png")
 
@@ -432,28 +496,45 @@ def browser_register(cfg, mail_provider) -> dict:
 
                 # OpenAI 在 OTP 错误时会显示 "Incorrect code" 红字，反复点
                 # Continue 会触发 max_check_attempts 风控（永久卡死）。早退。
-                try:
-                    err = page.query_selector(
-                        'text=/incorrect code|invalid code|wrong code|验证码不正确|验证码错误/i'
+                if _has_otp_error():
+                    page.screenshot(path="/tmp/browser_reg_otp_rejected.png")
+                    raise RuntimeError(
+                        f"OpenAI 拒绝 OTP {otp_code}（OTP 抽取错误或验证码已过期）"
                     )
-                    if err and err.is_visible():
+
+                still_has_otp_inputs = False
+                for wait_i in range(45):
+                    if _has_otp_error():
                         page.screenshot(path="/tmp/browser_reg_otp_rejected.png")
                         raise RuntimeError(
-                            f"OpenAI 拒绝 OTP {otp_code}（OTP 抽取错误，可能是 hex 颜色/tracking id 假阳性）"
+                            f"OpenAI 拒绝 OTP {otp_code}（OTP 抽取错误或验证码已过期）"
                         )
-                except RuntimeError:
-                    raise
-                except Exception:
-                    pass
-
-                for _ in range(20):
-                    if "email-verification" not in page.url:
+                    cur = page.url
+                    if "email-verification" not in cur:
                         break
+                    otp_inputs_now = _visible_otp_inputs()
+                    otp_digits_now = _visible_otp_digit_inputs()
+                    still_has_otp_inputs = bool(otp_inputs_now or otp_digits_now)
+                    if not still_has_otp_inputs:
+                        logger.info("[browser-reg] OTP 输入框已消失，等待后续注册中转")
+                        break
+                    if wait_i in (8, 18, 30):
+                        logger.info(f"[browser-reg] OTP 提交后仍在验证页，重试 Continue wait={wait_i}s")
+                        for sel in ['button[type="submit"]', 'button:has-text("Continue")',
+                                    'button:has-text("Verify")', 'button:has-text("Next")']:
+                            try:
+                                b = page.query_selector(sel)
+                                if b and b.is_visible():
+                                    b.click()
+                                    logger.info(f"[browser-reg] OTP Continue 重试: {sel}")
+                                    break
+                            except Exception:
+                                pass
                     time.sleep(1)
-                if "email-verification" in page.url:
-                    page.screenshot(path="/tmp/browser_reg_email_verification_still_waiting.png")
+                if "email-verification" in page.url and still_has_otp_inputs:
+                    page.screenshot(path="/tmp/browser_reg_email_verification_still_has_otp.png")
                     raise RuntimeError(
-                        f"OTP 已提交但仍停留在 email-verification，当前 URL: {page.url[:120]}"
+                        f"OTP 已提交但验证页仍有输入框，当前 URL: {page.url[:120]}"
                     )
 
             # [6] /about-you：Full name + Age（单框）
