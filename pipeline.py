@@ -1032,11 +1032,16 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
        - pay_only=True:      每次只 pay_only（复用未付账号），workers 串行
        - 都不开:              每次走完整 pipeline（注册+付费）
     """
-    use_paypal = kwargs.get("use_paypal", False)
+    use_paypal = bool(kwargs.get("use_paypal", False))
     is_register_only = bool(kwargs.pop("register_only", False))
     is_pay_only = bool(kwargs.pop("pay_only", False))
     use_gopay = bool(kwargs.pop("use_gopay", False))
     gopay_otp_file = kwargs.pop("gopay_otp_file", "")
+    if use_gopay:
+        use_paypal = False
+    kwargs["use_paypal"] = use_paypal
+    kwargs["use_gopay"] = use_gopay
+    kwargs["gopay_otp_file"] = gopay_otp_file
 
     # 构造共享 pool + team_client（所有 worker 复用）
     card_cfg = _read_card_cfg(card_config_path)
@@ -1112,7 +1117,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
     kwargs.setdefault("card_cfg", card_cfg)
     kwargs.setdefault("proxy_pool", proxy_pool)
 
-    if workers > 1 and use_paypal:
+    if workers > 1 and use_paypal and not use_gopay:
         # PayPal 模式：并行注册 → 串行支付（共用 PayPal 账号不能并行 2FA）
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1150,7 +1155,9 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
                     session_token=acc.get("session_token"),
                     access_token=acc.get("access_token"),
                     device_id=acc.get("device_id", ""),
-                    use_paypal=True,
+                    use_paypal=use_paypal,
+                    use_gopay=use_gopay,
+                    gopay_otp_file=gopay_otp_file,
                 )
                 record = {
                     "registration": {"status": "ok", "email": acc["email"]},

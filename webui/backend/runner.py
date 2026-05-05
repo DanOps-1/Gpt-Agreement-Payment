@@ -11,6 +11,7 @@ file provider 的兼容 fallback。
 import json
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -29,6 +30,7 @@ _ended_at: Optional[float] = None
 _exit_code: Optional[int] = None
 _cmd: Optional[list[str]] = None
 _mode: Optional[str] = None
+_run_id = 0
 _log_lines: list[dict] = []  # {seq, ts, line}
 _seq_counter = 0
 _otp_file: Optional[Path] = None       # legacy file provider path, if used
@@ -124,6 +126,7 @@ def status() -> dict:
     is_running = _proc is not None and _proc.poll() is None
     return {
         "running": is_running,
+        "run_id": _run_id,
         "started_at": _started_at,
         "ended_at": _ended_at,
         "exit_code": _exit_code if not is_running else None,
@@ -139,7 +142,7 @@ def status() -> dict:
 def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
           self_dealer: int = 0, register_only: bool = False, pay_only: bool = False,
           gopay: bool = False, count: int = 0) -> dict:
-    global _proc, _started_at, _ended_at, _exit_code, _cmd, _mode
+    global _proc, _started_at, _ended_at, _exit_code, _cmd, _mode, _run_id
     global _log_lines, _seq_counter, _otp_file, _otp_to_db, _otp_pending, _otp_pending_since, _otp_file_is_temp
     with _lock:
         if _proc is not None and _proc.poll() is None:
@@ -152,7 +155,10 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
                         register_only, pay_only, gopay=gopay,
                         gopay_otp_file="", count=count)
 
-        # Reset
+        # Reset.  Bump run_id before spawning so any late drain thread from a
+        # previous process cannot write into this run's fresh log buffer.
+        _run_id += 1
+        run_id = _run_id
         _log_lines = []
         _seq_counter = 0
         _started_at = time.time()
@@ -170,14 +176,23 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
         if gopay:
             env["WEBUI_GOPAY_OTP_URL"] = wa_relay.otp_url()
         try:
+            popen_kwargs = {
+                "cwd": str(s.ROOT),
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "text": True,
+                "bufsize": 1,
+                "env": env,
+            }
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            else:
+                # Batch runs spawn child scripts/browsers.  Put the whole tree
+                # in its own session so stop() can terminate the process group.
+                popen_kwargs["start_new_session"] = True
             proc = subprocess.Popen(
                 cmd,
-                cwd=str(s.ROOT),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                env=env,
+                **popen_kwargs,
             )
         except FileNotFoundError as e:
             _ended_at = time.time()
@@ -185,7 +200,7 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
             raise RuntimeError(f"failed to spawn: {e}") from e
         _proc = proc
 
-        threading.Thread(target=_drain, args=(proc,), daemon=True).start()
+        threading.Thread(target=_drain, args=(proc, run_id), daemon=True).start()
     return status()
 
 
@@ -234,7 +249,7 @@ def _run_gopay_auto_unbind() -> None:
         _append_log(f"[webui] GoPay auto-unbind error: {e}")
 
 
-def _drain(proc: subprocess.Popen) -> None:
+def _drain(proc: subprocess.Popen, run_id: int) -> None:
     global _ended_at, _exit_code, _seq_counter, _log_lines, _otp_pending, _otp_pending_since, _otp_file, _otp_to_db, _otp_file_is_temp
     try:
         if proc.stdout is None:
@@ -248,6 +263,8 @@ def _drain(proc: subprocess.Popen) -> None:
             # so saved PATCH replay is not stable enough to run after payment.
             should_auto_unbind = _RUN_GOPAY_AUTO_UNBIND_ENABLED and _is_pay_success_line(line)
             with _lock:
+                if run_id != _run_id or _proc is not proc:
+                    continue
                 _seq_counter += 1
                 _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line})
                 if len(_log_lines) > 3000:
@@ -269,6 +286,8 @@ def _drain(proc: subprocess.Popen) -> None:
     finally:
         proc.wait()
         with _lock:
+            if run_id != _run_id or _proc is not proc:
+                return
             _ended_at = time.time()
             _exit_code = proc.returncode
             _otp_pending = False
@@ -283,18 +302,131 @@ def _drain(proc: subprocess.Popen) -> None:
                     pass
 
 
+def _collect_descendant_pids(pid: int, seen: Optional[set[int]] = None) -> list[int]:
+    if os.name == "nt":
+        return []
+    seen = seen or set()
+    try:
+        out = subprocess.run(
+            ["pgrep", "-P", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        ).stdout
+    except Exception:
+        return []
+    pids: list[int] = []
+    for line in out.splitlines():
+        try:
+            child = int(line.strip())
+        except ValueError:
+            continue
+        if child in seen:
+            continue
+        seen.add(child)
+        pids.extend(_collect_descendant_pids(child, seen))
+        pids.append(child)
+    return pids
+
+
+def _signal_descendants(pid: int, sig: int) -> None:
+    for child in _collect_descendant_pids(pid):
+        try:
+            os.kill(child, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
+def _terminate_process_tree(proc: subprocess.Popen, timeout: float = 5.0) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    else:
+        descendants = _collect_descendant_pids(proc.pid)
+        try:
+            pgid = os.getpgid(proc.pid)
+            if pgid == os.getpgrp():
+                raise RuntimeError("child is in backend process group")
+            os.killpg(pgid, signal.SIGTERM)
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        for child in descendants:
+            try:
+                os.kill(child, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+    try:
+        proc.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    else:
+        descendants = _collect_descendant_pids(proc.pid)
+        try:
+            pgid = os.getpgid(proc.pid)
+            if pgid == os.getpgrp():
+                raise RuntimeError("child is in backend process group")
+            os.killpg(pgid, signal.SIGKILL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        for child in descendants:
+            try:
+                os.kill(child, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+    try:
+        proc.wait(timeout=timeout)
+    except Exception:
+        pass
+
+
 def stop() -> dict:
-    global _proc
+    global _proc, _ended_at, _exit_code, _otp_pending, _otp_pending_since
     with _lock:
         proc = _proc
+        run_id = _run_id
         if proc is None or proc.poll() is not None:
             return status()
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+    _append_log("[webui] stop requested: terminating process group")
+    _terminate_process_tree(proc, timeout=5)
+    with _lock:
+        if run_id == _run_id and _proc is proc:
+            _ended_at = time.time()
+            _exit_code = proc.returncode if proc.poll() is not None else None
+            _otp_pending = False
+            _otp_pending_since = None
     return status()
 
 
