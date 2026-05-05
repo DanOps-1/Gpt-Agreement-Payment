@@ -33,6 +33,7 @@ _mode: Optional[str] = None
 _run_id = 0
 _log_lines: list[dict] = []  # {seq, ts, line}
 _seq_counter = 0
+_MAX_LOG_LINES = 1500
 _otp_file: Optional[Path] = None       # legacy file provider path, if used
 _otp_to_db: bool = False               # True when gopay.py waits on WebUI SQLite OTP endpoint
 _otp_pending: bool = False             # set when gopay.py asks/waits for OTP
@@ -46,8 +47,8 @@ def _append_log(line: str) -> None:
     with _lock:
         _seq_counter += 1
         _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line})
-        if len(_log_lines) > 3000:
-            _log_lines = _log_lines[-2000:]
+        if len(_log_lines) > _MAX_LOG_LINES:
+            _log_lines = _log_lines[-_MAX_LOG_LINES:]
 
 
 def _gopay_auto_otp_enabled() -> bool:
@@ -284,8 +285,8 @@ def _drain(proc: subprocess.Popen, run_id: int) -> None:
                     continue
                 _seq_counter += 1
                 _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line})
-                if len(_log_lines) > 3000:
-                    _log_lines = _log_lines[-2000:]
+                if len(_log_lines) > _MAX_LOG_LINES:
+                    _log_lines = _log_lines[-_MAX_LOG_LINES:]
                 # Detect GoPay OTP request/wait markers.  The second form is
                 # used by the configured WhatsApp relay provider; making it
                 # pending lets the existing WebUI OTP modal act as a fallback
@@ -482,8 +483,8 @@ def notify_external_otp(item: dict | None = None) -> dict:
                     "ts": time.time(),
                     "line": f"[webui] external OTP received from {item.get('source', 'external')}",
                 })
-                if len(_log_lines) > 3000:
-                    _log_lines = _log_lines[-2000:]
+                if len(_log_lines) > _MAX_LOG_LINES:
+                    _log_lines = _log_lines[-_MAX_LOG_LINES:]
     return status()
 
 

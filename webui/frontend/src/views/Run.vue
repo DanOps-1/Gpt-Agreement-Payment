@@ -480,6 +480,7 @@ const status = ref<RunStatus>({
 
 const cmdPreview = ref("xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal");
 const lines = ref<{ seq: number; ts: number; line: string }[]>([]);
+const MAX_LOG_LINES = 1500;
 const starting = ref(false);
 const stopping = ref(false);
 const configHealth = ref<ConfigHealthResponse | null>(null);
@@ -1037,7 +1038,9 @@ function openStream() {
     try {
       const entry = JSON.parse((e as MessageEvent).data);
       lines.value.push(entry);
-      if (lines.value.length > 5000) lines.value.splice(0, 1000);
+      if (lines.value.length > MAX_LOG_LINES) {
+        lines.value.splice(0, lines.value.length - MAX_LOG_LINES);
+      }
       if (autoScroll.value) {
         nextTick(() => {
           if (streamEl.value) streamEl.value.scrollTop = streamEl.value.scrollHeight;

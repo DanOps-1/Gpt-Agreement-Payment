@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -663,12 +664,21 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
 # ──────────────────────────────────────────────
 
 class PaymentError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = ""):
+        super().__init__(message)
+        self.code = code
 
 
 class DatadomeSliderError(PaymentError):
     """PayPal 页面被 DataDome 可见滑块拦截，需要换 IP 重试。"""
     pass
+
+
+class GoPayAccountUnavailableError(PaymentError):
+    """GoPay wallet/account is rejected by payment-switch and should not be reused."""
+
+    def __init__(self, message: str):
+        super().__init__(message, code="gopay_account_unavailable")
 
 
 def _codex_oauth_client_id_from_card_cfg(cfg: dict) -> str:
@@ -805,6 +815,8 @@ def pay(card_config_path, session_token=None, access_token=None,
 
     result_json = None
     datadome_slider = False
+    output_tail = []
+    gopay_account_unavailable = False
     try:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -814,11 +826,21 @@ def pay(card_config_path, session_token=None, access_token=None,
         for line in proc.stdout:
             line = line.rstrip("\n")
             print(f"  [pay] {line}")
+            output_tail.append(line)
+            if len(output_tail) > 80:
+                output_tail = output_tail[-80:]
             if line.startswith(result_marker):
                 payload = line.split("=", 1)[1]
                 result_json = json.loads(payload)
             if "CARD_DATADOME_SLIDER=1" in line:
                 datadome_slider = True
+            if (
+                use_gopay
+                and "payment/process 400" in line
+                and re.search(r'"code"\s*:\s*"201"', line)
+                and "GOPAY_WALLET" in line
+            ):
+                gopay_account_unavailable = True
             if time.time() > deadline:
                 proc.kill()
                 raise PaymentError("支付超时")
@@ -836,6 +858,14 @@ def pay(card_config_path, session_token=None, access_token=None,
         return {"status": status, "raw": result_json}
 
     if proc.returncode != 0:
+        if gopay_account_unavailable:
+            detail = next(
+                (x for x in reversed(output_tail) if "payment/process 400" in x),
+                "payment/process 400 code=201 GOPAY_WALLET",
+            )
+            raise GoPayAccountUnavailableError(
+                f"GoPay 账号不可用，payment/process code=201: {detail[:300]}"
+            )
         raise PaymentError(f"支付失败 (exit={proc.returncode})")
 
     return {"status": "unknown", "raw": None}
@@ -910,6 +940,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
             record["payment"] = {"status": "skipped"}
             _append_result(record)
             raise
+        reg_acc = _find_latest_registered_account_for_email(reg.get("email", ""))
 
         # Step 2: 支付
         print(f"\n{'='*60}")
@@ -932,6 +963,12 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
             }
         except PaymentError as e:
             record["payment"] = {"status": "error", "email": reg.get("email", ""), "error": str(e)[:200]}
+            if getattr(e, "code", "") == "gopay_account_unavailable":
+                record["account_removed"] = True
+                _delete_registered_account_for_payment_failure(
+                    reg_acc or {"email": reg.get("email", "")},
+                    reason=getattr(e, "code", "") or type(e).__name__,
+                )
             _append_result(record)
             raise
 
@@ -1394,6 +1431,12 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         return result
     except PaymentError as e:
         record["payment"] = {"status": "error", "email": email, "error": str(e)[:200]}
+        if getattr(e, "code", "") == "gopay_account_unavailable" and account:
+            record["account_removed"] = True
+            _delete_registered_account_for_payment_failure(
+                account,
+                reason=getattr(e, "code", "") or type(e).__name__,
+            )
         _append_result(record)
         raise
 
@@ -1478,6 +1521,29 @@ def _load_registered_accounts() -> list:
 def _find_latest_registered_account_for_email(email: str) -> dict:
     """Return the newest registered-account row for `email`, if any."""
     return get_db().find_latest_registered_account(email)
+
+
+def _delete_registered_account_for_payment_failure(account: dict, *, reason: str) -> int:
+    """Remove the registered account row that produced a terminal payment failure."""
+    if not isinstance(account, dict):
+        return 0
+    aid = account.get("id")
+    email = _norm_email(account.get("email"))
+    if not aid and email:
+        try:
+            latest = _find_latest_registered_account_for_email(email)
+            aid = latest.get("id")
+        except Exception:
+            aid = None
+    if not aid:
+        return 0
+    try:
+        deleted = get_db().delete_registered_accounts([int(aid)])
+        print(f"[accounts] removed unavailable account id={aid} email={email or '-'} reason={reason} deleted={deleted}")
+        return deleted
+    except Exception as e:
+        print(f"[accounts] failed to remove unavailable account id={aid} email={email or '-'}: {e}")
+        return 0
 
 
 def _password_from_email(email: str) -> str:

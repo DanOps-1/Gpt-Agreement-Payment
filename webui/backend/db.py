@@ -398,7 +398,7 @@ class Database:
         with self._conn() as c:
             row = c.execute(
                 """
-                SELECT email, ts, password, session_token, access_token, device_id,
+                SELECT id, email, ts, password, session_token, access_token, device_id,
                        csrf_token, id_token, refresh_token, cookie_header
                 FROM registered_accounts
                 WHERE email = ?
