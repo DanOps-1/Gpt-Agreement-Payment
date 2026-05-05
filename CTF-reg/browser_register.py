@@ -128,6 +128,91 @@ def browser_register(cfg, mail_provider) -> dict:
         "cookie_header": "",
     }
 
+    def _visible_otp_inputs():
+        selectors = [
+            'input[autocomplete="one-time-code"]',
+            'input[name="code"]',
+            'input[inputmode="numeric"]',
+            'input[type="tel"]',
+            'input[type="text"][maxlength="6"]',
+            'input[type="text"][maxlength="8"]',
+            'input[aria-label*="code" i]',
+            'input[placeholder*="code" i]',
+            'input[aria-label*="verification" i]',
+            'input[placeholder*="verification" i]',
+            'input[aria-label*="otp" i]',
+            'input[placeholder*="otp" i]',
+        ]
+        found = []
+        seen = set()
+        for sel in selectors:
+            try:
+                for item in page.query_selector_all(sel):
+                    key = id(item)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    try:
+                        if item.is_visible():
+                            found.append(item)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if found:
+            return found
+        try:
+            inputs = page.query_selector_all("input")
+        except Exception:
+            return []
+        for item in inputs:
+            try:
+                meta = item.evaluate("""el => {
+                    const r = el.getBoundingClientRect();
+                    const cs = getComputedStyle(el);
+                    return {
+                        visible: r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden',
+                        type: (el.type || '').toLowerCase(),
+                        name: el.name || '',
+                        autocomplete: el.autocomplete || '',
+                        inputMode: el.inputMode || '',
+                        maxLength: el.maxLength || 0,
+                        placeholder: el.placeholder || '',
+                        aria: el.getAttribute('aria-label') || '',
+                    };
+                }""") or {}
+                if not meta.get("visible"):
+                    continue
+                blob = " ".join(str(meta.get(k) or "") for k in (
+                    "type", "name", "autocomplete", "inputMode", "placeholder", "aria",
+                )).lower()
+                max_len = int(meta.get("maxLength") or 0)
+                if (
+                    "one-time-code" in blob
+                    or "code" in blob
+                    or "otp" in blob
+                    or "verification" in blob
+                    or "numeric" in blob
+                    or 4 <= max_len <= 8
+                ):
+                    found.append(item)
+            except Exception:
+                continue
+        return found
+
+    def _visible_otp_digit_inputs():
+        try:
+            return [
+                item for item in (
+                    page.query_selector_all('input[maxlength="1"][inputmode="numeric"]')
+                    or page.query_selector_all('input[maxlength="1"]')
+                    or []
+                )
+                if item.is_visible()
+            ]
+        except Exception:
+            return []
+
     try:
         with Camoufox(
             headless=not has_display,
@@ -275,12 +360,14 @@ def browser_register(cfg, mail_provider) -> dict:
                 time.sleep(1)
                 cur = page.url
                 # 到达 OTP 输入或继续步骤 → 通过
-                if page.query_selector('input[autocomplete="one-time-code"]') or \
-                   page.query_selector('input[name="code"]') or \
-                   page.query_selector('input[inputmode="numeric"]'):
+                if _visible_otp_inputs() or _visible_otp_digit_inputs():
                     logger.info(f"[browser-reg] 已到达 OTP 页面")
                     break
                 if "chatgpt.com" in cur and "auth.openai.com" not in cur:
+                    time.sleep(2)
+                    if "auth.openai.com" in page.url or _visible_otp_inputs() or _visible_otp_digit_inputs():
+                        logger.info(f"[browser-reg] chatgpt.com 短暂中转后进入 auth/OTP: {page.url[:120]}")
+                        continue
                     logger.info(f"[browser-reg] 已直接登录到 chatgpt.com")
                     break
                 if wait_i == 15:
@@ -288,8 +375,22 @@ def browser_register(cfg, mail_provider) -> dict:
                     logger.info(f"[browser-reg] 15s 等待中: {cur[:80]}")
 
             # [5] OTP 步骤
-            if page.query_selector('input[autocomplete="one-time-code"]') or \
-               page.query_selector('input[inputmode="numeric"]'):
+            for _ in range(20):
+                if "email-verification" not in page.url:
+                    break
+                if _visible_otp_inputs() or _visible_otp_digit_inputs():
+                    break
+                time.sleep(1)
+
+            otp_inputs = _visible_otp_inputs()
+            otp_digits = _visible_otp_digit_inputs()
+            if "email-verification" in page.url and not (otp_inputs or otp_digits):
+                page.screenshot(path="/tmp/browser_reg_email_verification_no_otp_input.png")
+                raise RuntimeError(
+                    f"停留在 email-verification，但未找到 OTP 输入框，当前 URL: {page.url[:120]}"
+                )
+
+            if otp_inputs or otp_digits:
                 logger.info("[browser-reg] 等待 IMAP OTP ...")
                 otp_sent_at = time.time()
                 try:
@@ -301,17 +402,14 @@ def browser_register(cfg, mail_provider) -> dict:
                 # 填 OTP
                 otp_filled = False
                 # 可能是单框 / 多框两种
-                single = page.query_selector('input[autocomplete="one-time-code"]') or \
-                         page.query_selector('input[name="code"]') or \
-                         page.query_selector('input[inputmode="numeric"]:not([maxlength="1"])')
+                single = otp_inputs[0] if otp_inputs else None
                 if single:
                     single.click()
                     time.sleep(0.3)
                     single.fill(otp_code)
                     otp_filled = True
                 else:
-                    digits = page.query_selector_all('input[maxlength="1"][inputmode="numeric"]') or \
-                             page.query_selector_all('input[maxlength="1"]')
+                    digits = otp_digits
                     if len(digits) >= 6:
                         for i, ch in enumerate(otp_code[:6]):
                             digits[i].click()
@@ -347,6 +445,16 @@ def browser_register(cfg, mail_provider) -> dict:
                     raise
                 except Exception:
                     pass
+
+                for _ in range(20):
+                    if "email-verification" not in page.url:
+                        break
+                    time.sleep(1)
+                if "email-verification" in page.url:
+                    page.screenshot(path="/tmp/browser_reg_email_verification_still_waiting.png")
+                    raise RuntimeError(
+                        f"OTP 已提交但仍停留在 email-verification，当前 URL: {page.url[:120]}"
+                    )
 
             # [6] /about-you：Full name + Age（单框）
             logger.info(f"[browser-reg] OTP 后 URL: {page.url[:120]}")
