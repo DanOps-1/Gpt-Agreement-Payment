@@ -13,7 +13,8 @@
     },
     "auto_unbind": {
       "base_url": "https://customer.gopayapi.com",
-      "raw_request": ""
+      "raw_request": "",
+      "unlink_raw_request": ""
     }
   },
   "fresh_checkout": {

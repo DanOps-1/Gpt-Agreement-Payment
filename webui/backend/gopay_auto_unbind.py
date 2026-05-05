@@ -14,7 +14,6 @@ DROP_REQUEST_HEADERS = {
     "connection",
     "content-length",
     "transfer-encoding",
-    "accept-encoding",
 }
 
 
@@ -232,11 +231,14 @@ def patch_unlink(
     timeout: float = 20.0,
     *,
     normalize: bool = True,
+    unlink_raw_request: str = "",
 ) -> dict[str, Any]:
-    parsed = parse_raw_http_request(raw_request, base_url)
+    request_template = unlink_raw_request if (unlink_raw_request or "").strip() else raw_request
+    parsed = parse_raw_http_request(request_template, base_url)
     target_url = _resolve_unlink_target(parsed["url"], base_url, unlink_url, normalize=normalize)
+    body = parsed["body"].encode("utf-8") if parsed["body"] else b""
     with httpx.Client(timeout=max(1.0, min(float(timeout or 20.0), 60.0)), follow_redirects=False) as client:
-        resp = client.request("PATCH", target_url, headers=parsed["headers"], content=b"")
+        resp = client.request("PATCH", target_url, headers=parsed["headers"], content=body)
     body_json = None
     try:
         body_json = resp.json()
@@ -253,6 +255,7 @@ def patch_unlink(
         "body": resp.text,
         "body_json": body_json,
         "success": business_success,
+        "used_unlink_raw_request": bool((unlink_raw_request or "").strip()),
     }
 
 
@@ -326,26 +329,27 @@ def _unlink_candidates(entry: dict[str, Any]) -> list[dict[str, Any]]:
     return candidates
 
 
-def _load_auto_unbind_config(config_path: Path) -> tuple[str, str, dict[str, Any] | None]:
+def _load_auto_unbind_config(config_path: Path) -> tuple[str, str, str, dict[str, Any] | None]:
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return "", "", {"ok": False, "skipped": True, "reason": "config_not_found"}
+        return "", "", "", {"ok": False, "skipped": True, "reason": "config_not_found"}
     except Exception as e:
-        return "", "", {"ok": False, "skipped": True, "reason": f"config_read_failed: {e}"}
+        return "", "", "", {"ok": False, "skipped": True, "reason": f"config_read_failed: {e}"}
     gp = cfg.get("gopay") if isinstance(cfg, dict) else {}
     auto = gp.get("auto_unbind") if isinstance(gp, dict) else {}
     if not isinstance(auto, dict):
-        return "", "", {"ok": False, "skipped": True, "reason": "auto_unbind_not_configured"}
+        return "", "", "", {"ok": False, "skipped": True, "reason": "auto_unbind_not_configured"}
     base_url = str(auto.get("base_url") or "")
     raw_request = str(auto.get("raw_request") or "")
+    unlink_raw_request = str(auto.get("unlink_raw_request") or "")
     if not raw_request.strip():
-        return base_url, raw_request, {"ok": False, "skipped": True, "reason": "raw_request_empty"}
-    return base_url, raw_request, None
+        return base_url, raw_request, unlink_raw_request, {"ok": False, "skipped": True, "reason": "raw_request_empty"}
+    return base_url, raw_request, unlink_raw_request, None
 
 
 def fetch_linkedapps_from_config(config_path: Path, timeout: float = 20.0) -> dict[str, Any]:
-    base_url, raw_request, error = _load_auto_unbind_config(config_path)
+    base_url, raw_request, unlink_raw_request, error = _load_auto_unbind_config(config_path)
     if error:
         return error
     linked = fetch_linkedapps(raw_request, base_url, timeout=timeout)
@@ -364,6 +368,7 @@ def fetch_linkedapps_from_config(config_path: Path, timeout: float = 20.0) -> di
         "accounts_count": account_count,
         "entries": entries,
         "unlink_urls": linked.get("unlink_urls") or [],
+        "unlink_raw_request_configured": bool(unlink_raw_request.strip()),
         "body": linked.get("body"),
         "body_json": linked.get("body_json"),
     }
@@ -376,11 +381,13 @@ def unlink_entry_from_config(
     service_unlink_url: str = "",
     link_id: str = "",
     timeout: float = 20.0,
+    unlink_raw_request: str = "",
     log=lambda _m: None,
 ) -> dict[str, Any]:
-    base_url, raw_request, error = _load_auto_unbind_config(config_path)
+    base_url, raw_request, configured_unlink_raw_request, error = _load_auto_unbind_config(config_path)
     if error:
         return error
+    unlink_raw_request = unlink_raw_request if (unlink_raw_request or "").strip() else configured_unlink_raw_request
     entry = {
         "unlink_url": unlink_url,
         "service_unlink_url": service_unlink_url,
@@ -415,6 +422,7 @@ def unlink_entry_from_config(
             str(candidate.get("url") or ""),
             timeout=timeout,
             normalize=bool(candidate.get("normalize")),
+            unlink_raw_request=unlink_raw_request,
         )
         last_patch = patched
         attempt_info = {
@@ -426,6 +434,7 @@ def unlink_entry_from_config(
             "content_type": patched.get("content_type"),
             "body": patched.get("body"),
             "body_json": patched.get("body_json"),
+            "used_unlink_raw_request": patched.get("used_unlink_raw_request"),
         }
         attempts.append(attempt_info)
         log(
@@ -471,7 +480,7 @@ def unlink_entry_from_config(
 
 
 def run_from_config(config_path: Path, log=lambda _m: None) -> dict[str, Any]:
-    base_url, raw_request, error = _load_auto_unbind_config(config_path)
+    base_url, raw_request, unlink_raw_request, error = _load_auto_unbind_config(config_path)
     if error:
         return error
 
@@ -541,12 +550,14 @@ def run_from_config(config_path: Path, log=lambda _m: None) -> dict[str, Any]:
             base_url,
             str(candidate.get("url") or ""),
             normalize=bool(candidate.get("normalize")),
+            unlink_raw_request=unlink_raw_request,
         )
         last_patch = patched
         log(
             "[webui] GoPay auto-unbind PATCH result "
             f"status={patched.get('status_code')} success={patched.get('success')} "
             f"ok={patched.get('ok')} content_type={patched.get('content_type')} "
+            f"unlink_raw={patched.get('used_unlink_raw_request')} "
             f"body={_text_preview(patched.get('body_json') or patched.get('body'))}"
         )
         if not patched.get("ok"):

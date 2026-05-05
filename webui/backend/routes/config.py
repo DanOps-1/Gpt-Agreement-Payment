@@ -30,6 +30,7 @@ class HealthRequest(BaseModel):
 class GoPayAutoUnbindRequest(BaseModel):
     base_url: str = ""
     raw_request: str = ""
+    unlink_raw_request: str = ""
 
 
 class GoPayAutoUnbindFetchRequest(BaseModel):
@@ -46,6 +47,7 @@ class GoPayManualUnbindRequest(BaseModel):
     unlink_url: str = ""
     service_unlink_url: str = ""
     link_id: str = ""
+    unlink_raw_request: str = ""
     timeout: float = 20.0
 
 
@@ -74,6 +76,8 @@ def save_gopay_auto_unbind(req: GoPayAutoUnbindRequest, user: str = CurrentUser)
         auto_unbind["base_url"] = req.base_url.strip()
     if req.raw_request.strip():
         auto_unbind["raw_request"] = req.raw_request
+    if req.unlink_raw_request.strip():
+        auto_unbind["unlink_raw_request"] = req.unlink_raw_request
     if auto_unbind:
         gopay["auto_unbind"] = auto_unbind
     else:
@@ -116,6 +120,7 @@ def manual_gopay_unbind(req: GoPayManualUnbindRequest, user: str = CurrentUser):
             unlink_url=req.unlink_url,
             service_unlink_url=req.service_unlink_url,
             link_id=req.link_id,
+            unlink_raw_request=req.unlink_raw_request,
             timeout=req.timeout,
         )
     except ValueError as e:

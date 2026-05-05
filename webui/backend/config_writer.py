@@ -57,12 +57,15 @@ def _project_pay(answers: dict) -> dict:
                 "interval": 1,
             }
             raw_unbind_request = str(gp.get("auto_unbind_raw_request") or "")
+            unlink_raw_request = str(gp.get("auto_unbind_unlink_raw_request") or "")
             auto_unbind_base_url = str(gp.get("auto_unbind_base_url") or "").strip()
             auto_unbind = {}
             if auto_unbind_base_url:
                 auto_unbind["base_url"] = auto_unbind_base_url
             if raw_unbind_request.strip():
                 auto_unbind["raw_request"] = raw_unbind_request
+            if unlink_raw_request.strip():
+                auto_unbind["unlink_raw_request"] = unlink_raw_request
             if auto_unbind:
                 out["gopay"]["auto_unbind"] = auto_unbind
     if "team_plan" in answers:

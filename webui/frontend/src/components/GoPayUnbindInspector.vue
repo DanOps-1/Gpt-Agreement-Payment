@@ -21,6 +21,18 @@
           <span v-if="meta" class="inspector-meta">{{ meta }}</span>
         </div>
 
+        <details class="patch-template">
+          <summary>PATCH 原始解绑请求模板</summary>
+          <p>
+            粘贴抓包中的 PATCH /v1/links/... 原始请求。手动解绑会使用这里的 headers，尤其是 x-e1/x-m1/authorization。
+          </p>
+          <textarea
+            v-model="patchRaw"
+            spellcheck="false"
+            placeholder="PATCH /v1/links/{link_id} HTTP/1.1&#10;authorization: Bearer ...&#10;x-e1: ...&#10;&#10;"
+          />
+        </details>
+
         <div v-if="error" class="status-box fail">
           {{ error }}
         </div>
@@ -93,6 +105,7 @@ const error = ref("");
 const result = ref<any>(null);
 const unlinkResult = ref<any>(null);
 const unlinkingKey = ref("");
+const patchRaw = ref("");
 
 const entries = computed<any[]>(() => Array.isArray(result.value?.entries) ? result.value.entries : []);
 const meta = computed(() => {
@@ -120,6 +133,7 @@ function pretty(value: any) {
 
 async function open() {
   openState.value = true;
+  loadPatchRawFromStore();
   await inspect();
 }
 
@@ -153,11 +167,27 @@ async function persistWizardAutoUnbind() {
   const gp = (store.answers.gopay || {}) as any;
   const raw = String(gp.auto_unbind_raw_request || gp.auto_unbind?.raw_request || "");
   const baseUrl = String(gp.auto_unbind_base_url || gp.auto_unbind?.base_url || "");
+  const unlinkRaw = patchRaw.value || String(gp.auto_unbind_unlink_raw_request || gp.auto_unbind?.unlink_raw_request || "");
   if (!raw.trim()) return;
+  store.setAnswer("gopay", {
+    ...gp,
+    auto_unbind_raw_request: raw,
+    auto_unbind_base_url: baseUrl,
+    auto_unbind_unlink_raw_request: unlinkRaw,
+  });
+  await store.saveToServer();
   await api.post("/config/gopay/auto-unbind", {
     raw_request: raw,
     base_url: baseUrl,
+    unlink_raw_request: unlinkRaw,
   });
+}
+
+function loadPatchRawFromStore() {
+  const gp = (store.answers.gopay || {}) as any;
+  if (!patchRaw.value) {
+    patchRaw.value = String(gp.auto_unbind_unlink_raw_request || gp.auto_unbind?.unlink_raw_request || "");
+  }
 }
 
 async function manualUnlink(entry: any) {
@@ -166,10 +196,12 @@ async function manualUnlink(entry: any) {
   unlinkResult.value = null;
   error.value = "";
   try {
+    await persistWizardAutoUnbind();
     const r = await api.post("/config/gopay/auto-unbind/manual", {
       unlink_url: entry.unlink_url || "",
       service_unlink_url: entry.service_unlink_url || "",
       link_id: entry.link_id || "",
+      unlink_raw_request: patchRaw.value,
       timeout: 20,
     });
     unlinkResult.value = r.data;
@@ -259,6 +291,40 @@ async function manualUnlink(entry: any) {
   align-items: center;
   gap: 12px;
   margin: 14px 0;
+}
+.patch-template {
+  margin: 0 0 14px;
+  border: 1px dashed var(--border);
+  background: var(--bg-panel);
+  padding: 10px 12px;
+}
+.patch-template summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+}
+.patch-template p {
+  margin: 8px 0 10px;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.patch-template textarea {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-base);
+  color: var(--fg-primary);
+  padding: 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+}
+.patch-template textarea:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 .term-like-btn {
   background: transparent;

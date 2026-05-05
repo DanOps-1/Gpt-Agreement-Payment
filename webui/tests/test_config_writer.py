@@ -97,6 +97,7 @@ def test_export_writes_gopay_auto_otp(client, tmp_path, monkeypatch):
             "otp_timeout": 240,
             "auto_unbind_base_url": "https://gwa.gopayapi.com",
             "auto_unbind_raw_request": "POST /v1/linking/unbind HTTP/2\r\nhost: gwa.gopayapi.com\r\n\r\n{}",
+            "auto_unbind_unlink_raw_request": "PATCH /v1/links/abc HTTP/1.1\r\nhost: gwa.gopayapi.com\r\nx-e1: patch-sign\r\n\r\n",
         },
     }
     r = client.post("/api/config/export", json={"answers": answers})
@@ -112,6 +113,7 @@ def test_export_writes_gopay_auto_otp(client, tmp_path, monkeypatch):
     assert pay["gopay"]["otp"]["interval"] == 1
     assert pay["gopay"]["auto_unbind"]["base_url"] == "https://gwa.gopayapi.com"
     assert pay["gopay"]["auto_unbind"]["raw_request"].startswith("POST /v1/linking/unbind")
+    assert pay["gopay"]["auto_unbind"]["unlink_raw_request"].startswith("PATCH /v1/links/abc")
 
 
 def test_save_gopay_auto_unbind_directly_updates_pay_config(client, tmp_path, monkeypatch):
@@ -123,9 +125,10 @@ def test_save_gopay_auto_unbind_directly_updates_pay_config(client, tmp_path, mo
     pay_path.write_text(json.dumps({"gopay": {"country_code": "62"}}), encoding="utf-8")
 
     raw = "POST /v1/linking/unbind HTTP/2\r\nhost: gwa.gopayapi.com\r\n\r\n{}"
+    unlink_raw = "PATCH /v1/links/abc HTTP/1.1\r\nhost: gwa.gopayapi.com\r\nx-e1: patch-sign\r\n\r\n"
     r = client.post(
         "/api/config/gopay/auto-unbind",
-        json={"base_url": "https://gwa.gopayapi.com", "raw_request": raw},
+        json={"base_url": "https://gwa.gopayapi.com", "raw_request": raw, "unlink_raw_request": unlink_raw},
     )
 
     assert r.status_code == 200
@@ -133,6 +136,7 @@ def test_save_gopay_auto_unbind_directly_updates_pay_config(client, tmp_path, mo
     assert pay["gopay"]["country_code"] == "62"
     assert pay["gopay"]["auto_unbind"]["base_url"] == "https://gwa.gopayapi.com"
     assert pay["gopay"]["auto_unbind"]["raw_request"] == raw
+    assert pay["gopay"]["auto_unbind"]["unlink_raw_request"] == unlink_raw
 
 
 @respx.mock
@@ -265,6 +269,63 @@ def test_manual_gopay_auto_unbind_endpoint_patches_and_verifies(client, tmp_path
     assert body["ok"] is True
     assert body["unlink_target_url"] == "https://customer.gopayapi.com/v1/links/20260505abc"
     assert body["verify_status_code"] == 200
+
+
+@respx.mock
+def test_manual_gopay_auto_unbind_uses_patch_raw_request_headers(client, tmp_path, monkeypatch):
+    _login(client)
+    _seed(tmp_path, monkeypatch)
+
+    raw = (
+        "GET /v1/linkedapps HTTP/1.1\r\n"
+        "Host: customer.gopayapi.com\r\n"
+        "authorization: Bearer get-token\r\n"
+        "x-e1: get-signature\r\n"
+        "\r\n"
+    )
+    unlink_raw = (
+        "PATCH /v1/links/old HTTP/1.1\r\n"
+        "Host: customer.gopayapi.com\r\n"
+        "accept-encoding: gzip\r\n"
+        "authorization: Bearer patch-token\r\n"
+        "x-e1: patch-signature\r\n"
+        "x-m1: patch-device\r\n"
+        "content-length: 0\r\n"
+        "\r\n"
+    )
+    pay_path = tmp_path / "CTF-pay" / "config.paypal.json"
+    pay_path.parent.mkdir(parents=True, exist_ok=True)
+    pay_path.write_text(json.dumps({
+        "gopay": {
+            "auto_unbind": {
+                "base_url": "https://customer.gopayapi.com",
+                "raw_request": raw,
+                "unlink_raw_request": unlink_raw,
+            },
+        },
+    }), encoding="utf-8")
+    patch_route = respx.patch("https://customer.gopayapi.com/v1/links/20260505abc").mock(
+        return_value=httpx.Response(200, json={"success": True})
+    )
+    respx.get("https://customer.gopayapi.com/v1/linkedapps").mock(
+        return_value=httpx.Response(200, json={"data": {"linked_services": []}, "success": True})
+    )
+
+    r = client.post(
+        "/api/config/gopay/auto-unbind/manual",
+        json={"service_unlink_url": "/v1/links/20260505abc", "link_id": "20260505abc", "timeout": 5},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["attempts"][0]["used_unlink_raw_request"] is True
+    sent = patch_route.calls[0].request
+    assert sent.headers["authorization"] == "Bearer patch-token"
+    assert sent.headers["x-e1"] == "patch-signature"
+    assert sent.headers["x-m1"] == "patch-device"
+    assert sent.headers["accept-encoding"] == "gzip"
+    assert sent.headers["content-length"] == "0"
 
 
 @respx.mock

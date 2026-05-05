@@ -109,7 +109,14 @@
             v-model="unbindDialog.value"
             autofocus
             spellcheck="false"
-            placeholder="粘贴原始请求..."
+            placeholder="粘贴 GET /v1/linkedapps 原始请求..."
+          />
+          <div class="label unlink-label">PATCH 原始解绑请求 · 可选</div>
+          <textarea
+            class="unbind-input unlink-patch-input"
+            v-model="unbindDialog.unlink_raw_request"
+            spellcheck="false"
+            placeholder="粘贴 PATCH /v1/links/{link_id} 原始请求；留空时会复用 GET 请求头"
           />
           <div v-if="unbindDialog.body || unbindDialog.fetchMeta" class="unbind-response">
             <div class="label">Response Body</div>
@@ -155,6 +162,7 @@ const form = ref({
   otp_timeout: init.otp_timeout ?? initOtp.timeout ?? 300,
   auto_unbind_raw_request: init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "",
   auto_unbind_base_url: init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "",
+  auto_unbind_unlink_raw_request: init.auto_unbind_unlink_raw_request ?? init.auto_unbind?.unlink_raw_request ?? "",
 });
 
 const status = ref<{
@@ -178,6 +186,7 @@ const unbindDialog = ref({
   open: false,
   value: "",
   base_url: "",
+  unlink_raw_request: "",
   fetching: false,
   body: "",
   fetchMeta: "",
@@ -262,6 +271,7 @@ function openUnbindDialog() {
   unbindDialog.value.open = true;
   unbindDialog.value.value = form.value.auto_unbind_raw_request || "";
   unbindDialog.value.base_url = form.value.auto_unbind_base_url || "";
+  unbindDialog.value.unlink_raw_request = form.value.auto_unbind_unlink_raw_request || "";
   unbindDialog.value.body = "";
   unbindDialog.value.fetchMeta = "";
   unbindDialog.value.hasData = false;
@@ -275,12 +285,14 @@ function closeUnbindDialog() {
 async function saveUnbindRequest() {
   form.value.auto_unbind_raw_request = unbindDialog.value.value;
   form.value.auto_unbind_base_url = unbindDialog.value.base_url.trim();
+  form.value.auto_unbind_unlink_raw_request = unbindDialog.value.unlink_raw_request;
   store.setAnswer("gopay", buildGopayAnswer());
   try {
     await store.saveToServer();
     await api.post("/config/gopay/auto-unbind", {
       raw_request: form.value.auto_unbind_raw_request,
       base_url: form.value.auto_unbind_base_url,
+      unlink_raw_request: form.value.auto_unbind_unlink_raw_request,
     });
     closeUnbindDialog();
     message.success("自动解绑原始请求已保存到 config");
@@ -482,6 +494,12 @@ code {
   line-height: 1.6;
   outline: none;
   white-space: pre;
+}
+.unlink-label {
+  margin-top: 12px;
+}
+.unlink-patch-input {
+  min-height: 180px;
 }
 .unbind-input:focus { border-color: var(--accent); }
 .unbind-response {
