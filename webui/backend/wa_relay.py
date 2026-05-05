@@ -258,9 +258,11 @@ def submit_manual_otp(value: str) -> dict:
     code = "".join(ch for ch in str(value or "") if ch.isdigit())
     if not code:
         raise ValueError("OTP 为空")
+    received_at = time.time()
     item = {
         "otp": code,
-        "ts": time.time(),
+        "ts": received_at,
+        "received_at": received_at,
         "from": "webui_manual",
         "source": "manual_webui",
         "engine": _engine or _read_preferred_engine(),
@@ -273,7 +275,7 @@ def submit_manual_otp(value: str) -> dict:
         "status": "connected" if is_running() else state.get("status", "manual"),
         "latest": item,
         "history": history[-50:],
-        "updated_at": time.time(),
+        "updated_at": received_at,
     })
     _write_state(state)
     return item
@@ -295,9 +297,11 @@ def submit_external_otp(
         item_ts = float(ts) if ts is not None else time.time()
     except Exception:
         item_ts = time.time()
+    received_at = time.time()
     item = {
         "otp": code,
         "ts": item_ts,
+        "received_at": received_at,
         "from": sender or "external_otp",
         "source": source or "external",
         "engine": _engine or _read_preferred_engine(),
@@ -310,7 +314,7 @@ def submit_external_otp(
         "status": "connected" if is_running() else state.get("status", "external"),
         "latest": item,
         "history": history[-50:],
-        "updated_at": time.time(),
+        "updated_at": received_at,
     })
     _write_state(state)
     return item
@@ -321,7 +325,7 @@ def latest_otp(since: float = 0.0) -> dict | None:
     if not isinstance(latest, dict) or not latest.get("otp"):
         return None
     try:
-        ts = float(latest.get("ts") or 0.0)
+        ts = float(latest.get("received_at") or latest.get("ts") or 0.0)
     except Exception:
         ts = 0.0
     if since and ts < since:

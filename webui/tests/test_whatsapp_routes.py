@@ -141,3 +141,27 @@ def test_external_otp_writes_latest_and_resolves_runner(client, monkeypatch):
     assert body["latest"]["source"] == "android-notification-forwarder"
     assert wa_relay.latest_otp()["otp"] == "123456"
     assert runner.status()["otp_pending"] is False
+
+
+def test_external_otp_status_uses_received_time_for_old_payload_ts(client):
+    _login(client)
+
+    from webui.backend import wa_relay
+
+    marker = client.post("/api/whatsapp/test-otp/start")
+    assert marker.status_code == 200
+    since = marker.json()["since"]
+
+    token = wa_relay.relay_token()
+    r = client.post(
+        "/api/whatsapp/external-otp",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"otp": "654321", "source": "android-notification-forwarder", "ts": 1234567890},
+    )
+    assert r.status_code == 200
+
+    st = client.get("/api/whatsapp/status").json()
+    assert st["latest"]["otp"] == "654321"
+    assert st["latest"]["received_at"] >= since
+    assert st["updated_at"] >= since
+    assert wa_relay.latest_otp(since=since)["otp"] == "654321"

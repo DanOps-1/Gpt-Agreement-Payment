@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import secrets
+import time
 
 from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field
@@ -79,6 +80,11 @@ def stop(user: str = CurrentUser):
 @router.post("/logout")
 def logout(user: str = CurrentUser):
     return wa_relay.logout()
+
+
+@router.post("/test-otp/start")
+def test_otp_start(user: str = CurrentUser):
+    return {"ok": True, "since": time.time(), "status": wa_relay.status()}
 
 
 @router.post("/sidecar/state")

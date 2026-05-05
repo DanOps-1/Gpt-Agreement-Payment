@@ -71,6 +71,9 @@
           <div v-if="otpDialog.success" class="otp-success">
             测试成功：webhook 已接收 OTP
           </div>
+          <div v-else-if="otpDialog.preparing" class="otp-waiting">
+            正在创建测试会话...
+          </div>
           <div v-else class="otp-waiting">
             等待 webhook 接收验证码...
           </div>
@@ -109,6 +112,7 @@ const status = ref<{
   latest?: {
     otp?: string;
     ts?: number;
+    received_at?: number;
     source?: string;
   };
 }>({});
@@ -117,8 +121,10 @@ const otpDialog = ref({
   value: "",
   success: false,
   since: 0,
+  preparing: false,
 });
 let timer: number | undefined;
+let otpTestTimer: number | undefined;
 
 const webhookUrl = computed(() => {
   const base = import.meta.env.BASE_URL || "/";
@@ -146,29 +152,49 @@ async function copy(value: string) {
   message.success("已复制");
 }
 
-function openOtpTest() {
+async function openOtpTest() {
   otpDialog.value = {
     open: true,
     value: "",
     success: false,
     since: Date.now() / 1000,
+    preparing: true,
   };
-  refreshStatus();
+  if (otpTestTimer) window.clearInterval(otpTestTimer);
+  try {
+    const r = await api.post("/whatsapp/test-otp/start");
+    otpDialog.value.since = Number(r.data?.since || otpDialog.value.since);
+    if (r.data?.status) status.value = r.data.status;
+  } catch {
+    message.warning("测试会话创建失败，已使用浏览器时间作为备用");
+  } finally {
+    otpDialog.value.preparing = false;
+  }
+  await refreshStatus();
+  otpTestTimer = window.setInterval(refreshStatus, 1000);
 }
 
 function closeOtpTest() {
   otpDialog.value.open = false;
+  if (otpTestTimer) {
+    window.clearInterval(otpTestTimer);
+    otpTestTimer = undefined;
+  }
 }
 
 function maybeResolveOtpTest() {
-  if (!otpDialog.value.open || otpDialog.value.success) return;
+  if (!otpDialog.value.open || otpDialog.value.success || otpDialog.value.preparing) return;
   const latest = status.value.latest;
   const otp = latest?.otp || "";
-  const arrivedAt = Number(status.value.updated_at || latest?.ts || 0);
+  const arrivedAt = Number(status.value.updated_at || latest?.received_at || 0);
   if (!otp || arrivedAt < otpDialog.value.since) return;
   otpDialog.value.value = otp;
   otpDialog.value.success = true;
   message.success("OTP webhook 测试成功");
+  if (otpTestTimer) {
+    window.clearInterval(otpTestTimer);
+    otpTestTimer = undefined;
+  }
 }
 
 watch(form, () => {
@@ -190,6 +216,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (timer) window.clearInterval(timer);
+  if (otpTestTimer) window.clearInterval(otpTestTimer);
 });
 </script>
 
