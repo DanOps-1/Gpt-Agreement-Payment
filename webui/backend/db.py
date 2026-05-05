@@ -333,6 +333,17 @@ class Database:
             ).fetchone()
         return dict(row) if row else {}
 
+    def update_registered_account_refresh_token(self, account_id: int, refresh_token: str) -> bool:
+        token = _text(refresh_token)
+        if not token:
+            return False
+        with self._conn() as c:
+            cur = c.execute(
+                "UPDATE registered_accounts SET refresh_token = ? WHERE id = ?",
+                (token, int(account_id)),
+            )
+        return cur.rowcount > 0
+
     def update_account_check(self, account_id: int, status: str, message: str = "") -> bool:
         """Record validity probe outcome (status: 'valid' | 'invalid' | 'unknown')."""
         with self._conn() as c:

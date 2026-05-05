@@ -131,21 +131,16 @@ def _requires_registration(req: dict) -> bool:
     mode = _text(req.get("mode")) or "single"
     if mode == "free_register":
         return True
-    if mode == "free_backfill_rt":
-        return False
     return not bool(req.get("pay_only"))
 
 
 def _requires_email_otp(req: dict) -> bool:
-    mode = _text(req.get("mode")) or "single"
-    # free_backfill_rt does not create a new mailbox, but OAuth login still
-    # needs the OpenAI email OTP provider for existing accounts.
-    return _requires_registration(req) or mode == "free_backfill_rt" or bool(req.get("register_only"))
+    return _requires_registration(req) or bool(req.get("register_only"))
 
 
 def _payment_kind(req: dict) -> str:
     mode = _text(req.get("mode")) or "single"
-    if mode in {"free_register", "free_backfill_rt"} or bool(req.get("register_only")):
+    if mode == "free_register" or bool(req.get("register_only")):
         return "none"
     if bool(req.get("gopay")):
         return "gopay"
@@ -418,7 +413,7 @@ def _check_cpa(checks: list[dict], req: dict, pay_cfg: dict) -> None:
     cpa = pay_cfg.get("cpa") if isinstance(pay_cfg.get("cpa"), dict) else {}
     mode = _text(req.get("mode")) or "single"
     if not cpa.get("enabled"):
-        if mode in {"free_register", "free_backfill_rt"}:
+        if mode == "free_register":
             _check(
                 checks,
                 "cpa_config",
@@ -435,10 +430,10 @@ def _check_cpa(checks: list[dict], req: dict, pay_cfg: dict) -> None:
         _check(
             checks,
             "cpa_config",
-            "fail" if mode in {"free_register", "free_backfill_rt"} else "warn",
+            "fail" if mode == "free_register" else "warn",
             "CPA 配置不完整",
             missing=missing,
-            blocking=mode in {"free_register", "free_backfill_rt"},
+            blocking=mode == "free_register",
             action="在配置向导 CPA 步骤填写 base_url/admin_key 后重新导出",
         )
     else:
@@ -511,7 +506,6 @@ def build_config_health(req: dict | None = None) -> dict:
         _check_pay_only_inventory(checks, req, pay_cfg)
         _check_cpa(checks, req, pay_cfg)
         _check_team_system(checks, req, pay_cfg)
-        _check_free_backfill_inventory(checks, req)
 
     blocking = [c for c in checks if c.get("blocking") and c.get("status") == "fail"]
     return {

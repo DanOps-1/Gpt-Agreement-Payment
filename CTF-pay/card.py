@@ -5237,8 +5237,11 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
             # [4] 处理 OTP / Turnstile / 各种中间页
             _log(f"      [RT] 密码后 URL: {page.url[:120]}")
             _safe_screenshot(page, "/tmp/rt_after_pwd.png")
-            # 最长等 4 分钟看能不能到 localhost callback
+            # 最长等 4 分钟看能不能到 localhost callback；但如果一直停在
+            # log-in 页且没有进入 OTP/consent 等中间页，20s 内提前失败。
             end = time.time() + 240
+            wait_started = time.time()
+            login_stuck_timeout = 20
             otp_sent_ts = time.time()
             otp_fetched = False
             last_url = ""
@@ -5256,10 +5259,21 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                     _log(f"      [RT] URL: {cur[:140]}")
                     last_url = cur
                     last_log_ts = now
-                # OTP 页
-                if ("/email-otp" in cur or "passwordless" in cur or
+                otp_marker = (
                     page.query_selector('input[autocomplete="one-time-code"]') or
-                    page.query_selector('input[inputmode="numeric"]')):
+                    page.query_selector('input[inputmode="numeric"]')
+                )
+                is_otp_page = (
+                    "/email-otp" in cur or
+                    "/email-verification" in cur or
+                    "passwordless" in cur or
+                    bool(otp_marker)
+                )
+                if "/log-in" in cur and not is_otp_page and (now - wait_started) >= login_stuck_timeout:
+                    _log("      [RT] 仍停留在 log-in 20s，提前判定未捕获到 callback URL")
+                    break
+                # OTP 页
+                if is_otp_page:
                     if not otp_fetched:
                         _log("      [RT] 检测到 OTP 页面，从 IMAP 取验证码 ...")
                         otp_code = _fetch_openai_login_otp(target_email=email, timeout=180)

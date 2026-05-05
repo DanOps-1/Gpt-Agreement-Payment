@@ -90,13 +90,10 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
     cmd = ["xvfb-run", "-a", "python", "-u", "pipeline.py",
            "--config", str(s.PAY_CONFIG_PATH)]
     # free_only 两个子模式不需要 paypal / gopay 支付段
-    if mode in ("free_register", "free_backfill_rt"):
-        if mode == "free_register":
-            cmd.append("--free-register")
-            if count > 0:
-                cmd.extend(["--count", str(count)])
-        else:
-            cmd.append("--free-backfill-rt")
+    if mode == "free_register":
+        cmd.append("--free-register")
+        if count > 0:
+            cmd.extend(["--count", str(count)])
         return cmd
     if gopay:
         cmd.append("--gopay")

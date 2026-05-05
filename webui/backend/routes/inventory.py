@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 import time
 import io
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -107,15 +110,28 @@ def _load_sub2api_cfg() -> dict:
     return sub2api
 
 
-def _do_cpa_push(account: dict, cpa_cfg: dict) -> dict:
-    """Run the CPA push for one account using pipeline._cpa_import_after_team.
-    Records outcome to pipeline_results so inventory reflects new state."""
-    import sys
-    from pathlib import Path
+def _load_pay_cfg() -> dict:
+    try:
+        cfg = json.loads(s.PAY_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取 PAY_CONFIG_PATH 失败: {e}")
+    if not isinstance(cfg, dict):
+        raise HTTPException(status_code=500, detail="PAY_CONFIG_PATH JSON 顶层不是对象")
+    return cfg
+
+
+def _pipeline_module():
     repo_root = Path(__file__).resolve().parents[3]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
     import pipeline  # type: ignore
+    return pipeline
+
+
+def _do_cpa_push(account: dict, cpa_cfg: dict) -> dict:
+    """Run the CPA push for one account using pipeline._cpa_import_after_team.
+    Records outcome to pipeline_results so inventory reflects new state."""
+    pipeline = _pipeline_module()
 
     email = account.get("email", "")
     rt = (account.get("refresh_token") or "").strip()
@@ -144,12 +160,7 @@ def _do_cpa_push(account: dict, cpa_cfg: dict) -> dict:
 
 def _do_sub2api_push(account: dict, sub2api_cfg: dict) -> dict:
     """Run the sub2api push for one account and persist its outcome."""
-    import sys
-    from pathlib import Path
-    repo_root = Path(__file__).resolve().parents[3]
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-    import pipeline  # type: ignore
+    pipeline = _pipeline_module()
 
     email = account.get("email", "")
     rt = (account.get("refresh_token") or "").strip()
@@ -172,6 +183,85 @@ def _do_sub2api_push(account: dict, sub2api_cfg: dict) -> dict:
     except Exception:
         pass
     return {"id": account.get("id"), "email": email, "status": status}
+
+
+def _do_backfill_rt(account: dict, pay_cfg: dict, pipeline) -> dict:
+    db = get_db()
+    aid = int(account.get("id") or 0)
+    email = str(account.get("email") or "").strip().lower()
+    if not aid or not email:
+        return {"id": aid, "email": email, "status": "missing"}
+    if str(account.get("refresh_token") or "").strip():
+        return {"id": aid, "email": email, "status": "skipped", "reason": "has_rt"}
+    if pipeline._should_skip_oauth_account(email):
+        oauth = pipeline._get_account_oauth_status(email) or {}
+        return {
+            "id": aid,
+            "email": email,
+            "status": "skipped",
+            "reason": str(oauth.get("status") or "oauth_skip"),
+        }
+
+    cpa_cfg = (pay_cfg.get("cpa") or {}) if isinstance(pay_cfg.get("cpa"), dict) else {}
+    sub2api_cfg = (pay_cfg.get("sub2api") or {}) if isinstance(pay_cfg.get("sub2api"), dict) else {}
+    mail_cfg = pay_cfg.get("mail") or {}
+    proxy_url = str(pay_cfg.get("proxy") or "")
+    client_id = str(cpa_cfg.get("oauth_client_id") or sub2api_cfg.get("oauth_client_id") or "").strip()
+    if client_id and not os.environ.get("OAUTH_CODEX_CLIENT_ID"):
+        os.environ["OAUTH_CODEX_CLIENT_ID"] = client_id
+
+    password = account.get("password") or pipeline._password_from_email(email)
+    sid = str(account.get("device_id") or "") or email.replace("@", "")[:16]
+    rt, fail = pipeline._exchange_rt_with_classification(email, password, mail_cfg, proxy_url)
+    if not rt:
+        status = "dead" if fail == "account_dead" else "transient_failed"
+        pipeline._set_account_oauth_status(email, status, fail)
+        return {"id": aid, "email": email, "status": status, "reason": fail}
+
+    db.update_registered_account_refresh_token(aid, rt)
+    db.add_card_result({
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "status": "succeeded",
+        "chatgpt_email": email,
+        "email": email,
+        "session_id": sid,
+        "channel": "manual_backfill_rt",
+        "refresh_token": rt,
+    })
+    pipeline._set_account_oauth_status(email, "succeeded")
+
+    cpa_status = ""
+    sub2api_status = ""
+    if cpa_cfg.get("enabled"):
+        try:
+            cpa_status = pipeline._cpa_import_after_team(email, sid, cpa_cfg, refresh_token=rt, is_free=True)
+        except Exception as e:
+            cpa_status = f"error: {type(e).__name__}: {str(e)[:120]}"
+    if sub2api_cfg.get("enabled"):
+        try:
+            sub2api_status = pipeline._sub2api_import_after_team(email, sid, sub2api_cfg, refresh_token=rt, is_free=True)
+        except Exception as e:
+            sub2api_status = f"error: {type(e).__name__}: {str(e)[:120]}"
+    try:
+        db.add_pipeline_result({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "mode": "manual_backfill_rt",
+            "status": "ok",
+            "registration": {"status": "reused", "email": email},
+            "payment": {"status": "skipped", "email": email},
+            "cpa_import": cpa_status,
+            "sub2api_import": sub2api_status,
+        })
+    except Exception:
+        pass
+    return {
+        "id": aid,
+        "email": email,
+        "status": "succeeded",
+        "rt_len": len(rt),
+        "cpa_status": cpa_status,
+        "sub2api_status": sub2api_status,
+    }
 
 
 @router.get("/accounts")
@@ -251,6 +341,38 @@ def export_cpa_zip(req: IdsRequest, user: str = CurrentUser):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/accounts/backfill-rt")
+def backfill_rt(req: IdsRequest, user: str = CurrentUser):
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="ids 不能为空")
+    if len(req.ids) > 100:
+        raise HTTPException(status_code=400, detail="单次最多 100 个")
+    pay_cfg = _load_pay_cfg()
+    pipeline = _pipeline_module()
+    try:
+        pipeline._ensure_gost_alive(pay_cfg)
+    except Exception:
+        pass
+
+    db = get_db()
+    results: list[dict] = []
+    for aid in req.ids:
+        acc = db.get_registered_account(int(aid))
+        if not acc:
+            results.append({"id": aid, "email": "", "status": "missing"})
+            continue
+        results.append(_do_backfill_rt(acc, pay_cfg, pipeline))
+        time.sleep(1)
+    summary = {
+        "total": len(results),
+        "succeeded": sum(1 for r in results if r.get("status") == "succeeded"),
+        "skipped": sum(1 for r in results if r.get("status") == "skipped"),
+        "dead": sum(1 for r in results if r.get("status") == "dead"),
+        "failed": sum(1 for r in results if r.get("status") in ("transient_failed", "missing", "missing_email")),
+    }
+    return {"results": results, "summary": summary}
 
 
 @router.post("/accounts/cpa-push")

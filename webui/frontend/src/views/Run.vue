@@ -222,10 +222,28 @@
             <div class="account-manager-actions">
               <label class="inventory-toolbar-check">
                 <input type="checkbox" :checked="managerAllSelected" @change="toggleManagerSelectAll" />
-                <span>全选本页 ({{ managerSelectedIds.size }} / {{ inventory.accounts.length }})</span>
+                <span>全选本页 ({{ managerSelectedFilteredCount }} / {{ managerFilteredAccounts.length }})</span>
               </label>
+              <div class="account-manager-filters">
+                <label class="manager-filter">
+                  <span>RT</span>
+                  <select v-model="accountManager.rtFilter" @change="accountManager.page = 1">
+                    <option value="all">全部</option>
+                    <option value="has_rt">有 RT</option>
+                    <option value="no_rt">无 RT</option>
+                  </select>
+                </label>
+                <label class="manager-filter">
+                  <span>类型</span>
+                  <select v-model="accountManager.planFilter" @change="accountManager.page = 1">
+                    <option value="all">全部</option>
+                    <option value="plus">PLUS</option>
+                  </select>
+                </label>
+              </div>
               <div class="inventory-toolbar-actions">
-                <TermBtn :loading="accountManager.busy" :disabled="managerSelectedIds.size === 0" @click="downloadManagerSelected">下载勾选账号</TermBtn>
+                <TermBtn :loading="accountManager.busy" :disabled="managerBackfillIds.length === 0" @click="backfillManagerSelectedRt">一键补RT ({{ managerBackfillIds.length }})</TermBtn>
+                <TermBtn :loading="accountManager.busy" :disabled="managerSelectedFilteredIds.length === 0" @click="downloadManagerSelected">下载勾选账号</TermBtn>
                 <TermBtn variant="danger" :loading="accountManager.busy" :disabled="downloadedIds.length === 0" @click="deleteDownloadedAccounts">删除已下载账号 ({{ downloadedIds.length }})</TermBtn>
               </div>
             </div>
@@ -237,9 +255,11 @@
                 <span class="badge" :class="rtBadgeClass(acc.rt_state)">{{ rtStateLabel(acc) }}</span>
                 <span v-if="acc.downloaded" class="badge badge-ok">已下载</span>
               </div>
-              <div v-if="!inventory.accounts.length" class="inventory-empty">暂无账号库存。</div>
+              <div v-if="!managerFilteredAccounts.length" class="inventory-empty">
+                {{ inventory.accounts.length ? "没有匹配筛选条件的账号。" : "暂无账号库存。" }}
+              </div>
             </div>
-            <div v-if="inventory.accounts.length" class="account-manager-pager">
+            <div v-if="managerFilteredAccounts.length" class="account-manager-pager">
               <button class="pager-btn" :disabled="accountManager.page <= 1" @click="accountManager.page -= 1">上一页</button>
               <span>第 {{ accountManager.page }} / {{ managerPageCount }} 页</span>
               <button class="pager-btn" :disabled="accountManager.page >= managerPageCount" @click="accountManager.page += 1">下一页</button>
@@ -317,7 +337,6 @@ const modes = [
   { value: "self_dealer", label: "self-dealer" },
   { value: "daemon", label: "daemon ∞" },
   { value: "free_register", label: "free_register — 免费号+rt+CPA" },
-  { value: "free_backfill_rt", label: "free_backfill_rt — 老号补rt" },
 ];
 
 import { useWizardStore } from "../stores/wizard";
@@ -446,6 +465,8 @@ const accountManager = ref({
   open: false,
   busy: false,
   page: 1,
+  rtFilter: "all" as "all" | "has_rt" | "no_rt",
+  planFilter: "all" as "all" | "plus",
 });
 
 function onGoPayToggle(v: boolean) {
@@ -719,21 +740,48 @@ const downloadedIds = computed(() =>
   inventory.value.accounts.filter(a => a.downloaded).map(a => a.id)
 );
 const managerPageSize = 10;
+const managerFilteredAccounts = computed(() =>
+  inventory.value.accounts.filter((a) => {
+    const rtOk =
+      accountManager.value.rtFilter === "all" ||
+      (accountManager.value.rtFilter === "has_rt" && a.has_refresh_token) ||
+      (accountManager.value.rtFilter === "no_rt" && !a.has_refresh_token);
+    const planOk =
+      accountManager.value.planFilter === "all" ||
+      (accountManager.value.planFilter === "plus" && a.plan_tag === "plus");
+    return rtOk && planOk;
+  })
+);
 const managerPageCount = computed(() =>
-  Math.max(1, Math.ceil(inventory.value.accounts.length / managerPageSize))
+  Math.max(1, Math.ceil(managerFilteredAccounts.value.length / managerPageSize))
 );
 const pagedManagerAccounts = computed(() => {
   const page = Math.min(Math.max(1, accountManager.value.page), managerPageCount.value);
   const start = (page - 1) * managerPageSize;
-  return inventory.value.accounts.slice(start, start + managerPageSize);
+  return managerFilteredAccounts.value.slice(start, start + managerPageSize);
 });
 const managerAllSelected = computed(() => {
   const ids = pagedManagerAccounts.value.map(a => a.id).filter(Boolean);
   return ids.length > 0 && ids.every(id => managerSelectedIds.value.has(id));
 });
+const managerSelectedFilteredIds = computed(() => {
+  const selected = new Set(managerSelectedIds.value);
+  return managerFilteredAccounts.value
+    .map(a => a.id)
+    .filter(id => selected.has(id));
+});
+const managerSelectedFilteredCount = computed(() => managerSelectedFilteredIds.value.length);
+const managerBackfillIds = computed(() => {
+  const selected = new Set(managerSelectedIds.value);
+  return managerFilteredAccounts.value
+    .filter(a => selected.has(a.id) && a.can_backfill_rt)
+    .map(a => a.id);
+});
 function openAccountManager() {
   accountManager.value.open = true;
   accountManager.value.page = 1;
+  accountManager.value.rtFilter = "all";
+  accountManager.value.planFilter = "all";
   managerSelectedIds.value = new Set(
     inventory.value.accounts.filter(a => !a.downloaded).map(a => a.id).filter(Boolean)
   );
@@ -758,7 +806,7 @@ function toggleManagerSelectAll() {
   }
 }
 async function downloadManagerSelected() {
-  const ids = Array.from(managerSelectedIds.value);
+  const ids = managerSelectedFilteredIds.value;
   if (!ids.length) { message.warning("请选择要下载的账号"); return; }
   accountManager.value.busy = true;
   try {
@@ -779,6 +827,21 @@ async function downloadManagerSelected() {
     await refreshInventory();
   } catch (e: any) {
     message.error(`下载失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    accountManager.value.busy = false;
+  }
+}
+async function backfillManagerSelectedRt() {
+  const ids = managerBackfillIds.value;
+  if (!ids.length) { message.warning("请选择 RT 待补或可重试账号"); return; }
+  accountManager.value.busy = true;
+  try {
+    const r = await api.post("/inventory/accounts/backfill-rt", { ids });
+    const s = r.data?.summary || {};
+    message.success(`补RT完成：ok=${s.succeeded || 0}  skipped=${s.skipped || 0}  dead=${s.dead || 0}  fail=${s.failed || 0}`);
+    await refreshInventory();
+  } catch (e: any) {
+    message.error(`补RT失败：${e?.response?.data?.detail || e?.message || e}`);
   } finally {
     accountManager.value.busy = false;
   }
@@ -1098,7 +1161,7 @@ async function submitOtp(options?: { auto?: boolean } | Event) {
 }
 
 const isFreeMode = computed(() =>
-  form.value.mode === "free_register" || form.value.mode === "free_backfill_rt"
+  form.value.mode === "free_register"
 );
 
 watch(
@@ -1575,6 +1638,27 @@ onBeforeUnmount(() => {
   gap: 12px;
   flex-wrap: wrap;
   background: var(--bg-panel);
+}
+.account-manager-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.manager-filter {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--fg-secondary);
+}
+.manager-filter select {
+  height: 28px;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  color: var(--fg-primary);
+  font: inherit;
+  padding: 0 8px;
 }
 .account-manager-list {
   height: 480px;

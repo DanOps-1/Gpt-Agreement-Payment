@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/run", tags=["run"])
 
 
 class StartRequest(BaseModel):
-    mode: str = Field(pattern="^(single|batch|self_dealer|daemon|free_register|free_backfill_rt)$")
+    mode: str = Field(pattern="^(single|batch|self_dealer|daemon|free_register)$")
     paypal: bool = True
     batch: int = 0
     workers: int = 3
