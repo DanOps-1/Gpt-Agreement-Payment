@@ -705,6 +705,10 @@ async function refreshStatus() {
   try {
     const r = await api.get<RunStatus>("/run/status");
     status.value = r.data;
+    if (!status.value.otp_pending && otpDialog.value.open) {
+      otpDialog.value.open = false;
+      otpDialog.value.value = "";
+    }
   } catch {}
 }
 
@@ -779,6 +783,11 @@ function openStream() {
       otpDialog.value.open = true;
       otpDialog.value.value = "";
     }
+  });
+  eventSource.addEventListener("otp_resolved", () => {
+    otpDialog.value.open = false;
+    otpDialog.value.value = "";
+    message.success("外部 OTP 已接入，继续运行");
   });
   eventSource.addEventListener("done", async () => {
     eventSource?.close();

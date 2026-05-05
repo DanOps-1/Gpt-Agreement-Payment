@@ -77,6 +77,7 @@ async def stream(user: str = CurrentUser):
 
     async def gen():
         nonlocal last_seq
+        last_otp_pending = False
         # Backlog: 先推最近 200 行
         for entry in runner.get_tail(200):
             last_seq = max(last_seq, entry["seq"])
@@ -91,7 +92,11 @@ async def stream(user: str = CurrentUser):
             st = runner.status()
             # OTP heartbeat: re-send periodically while pending
             if st.get("otp_pending"):
+                last_otp_pending = True
                 yield {"event": "otp_pending", "data": json.dumps({"pending": True})}
+            elif last_otp_pending:
+                last_otp_pending = False
+                yield {"event": "otp_resolved", "data": json.dumps({"pending": False})}
             if not st["running"]:
                 # 进程已退出，再扫一次确保没遗漏，然后发 done
                 tail = runner.get_lines_since(last_seq, limit=500)

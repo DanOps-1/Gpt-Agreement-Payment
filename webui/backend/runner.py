@@ -270,6 +270,24 @@ def submit_otp(value: str) -> dict:
     return status()
 
 
+def notify_external_otp(item: dict | None = None) -> dict:
+    """Mark a DB-backed OTP wait as resolved by the external webhook."""
+    global _otp_pending, _seq_counter, _log_lines
+    with _lock:
+        if _otp_pending and _otp_to_db:
+            _otp_pending = False
+            if item:
+                _seq_counter += 1
+                _log_lines.append({
+                    "seq": _seq_counter,
+                    "ts": time.time(),
+                    "line": f"[webui] external OTP received from {item.get('source', 'external')}",
+                })
+                if len(_log_lines) > 3000:
+                    _log_lines = _log_lines[-2000:]
+    return status()
+
+
 def get_lines_since(since_seq: int = 0, limit: int = 1000) -> list[dict]:
     with _lock:
         return [e for e in _log_lines if e["seq"] > since_seq][:limit]

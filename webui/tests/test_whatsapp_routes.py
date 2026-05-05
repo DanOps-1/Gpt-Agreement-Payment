@@ -111,3 +111,33 @@ def test_whatsapp_start_error_returns_400(client, monkeypatch):
     r = client.post("/api/whatsapp/start", json={"mode": "qr"})
     assert r.status_code == 400
     assert "boom" in r.json()["detail"]
+
+
+def test_external_otp_requires_bearer_token(client):
+    r = client.post(
+        "/api/whatsapp/external-otp",
+        json={"otp": "123456", "source": "android-notification-forwarder", "ts": 1234567890},
+    )
+    assert r.status_code == 403
+
+
+def test_external_otp_writes_latest_and_resolves_runner(client, monkeypatch):
+    from webui.backend import runner, wa_relay
+
+    token = wa_relay.relay_token()
+    runner._otp_pending = True
+    runner._otp_to_db = True
+
+    r = client.post(
+        "/api/whatsapp/external-otp",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"otp": "123456", "source": "android-notification-forwarder", "ts": 1234567890},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["latest"]["otp"] == "123456"
+    assert body["latest"]["source"] == "android-notification-forwarder"
+    assert wa_relay.latest_otp()["otp"] == "123456"
+    assert runner.status()["otp_pending"] is False

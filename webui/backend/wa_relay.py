@@ -279,6 +279,43 @@ def submit_manual_otp(value: str) -> dict:
     return item
 
 
+def submit_external_otp(
+    value: str,
+    *,
+    source: str = "external",
+    ts: float | None = None,
+    sender: str = "external_otp",
+) -> dict:
+    code = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if not code:
+        raise ValueError("OTP is empty")
+    if len(code) < 4 or len(code) > 12:
+        raise ValueError("OTP length must be 4-12 digits")
+    try:
+        item_ts = float(ts) if ts is not None else time.time()
+    except Exception:
+        item_ts = time.time()
+    item = {
+        "otp": code,
+        "ts": item_ts,
+        "from": sender or "external_otp",
+        "source": source or "external",
+        "engine": _engine or _read_preferred_engine(),
+        "text": "",
+    }
+    state = _read_state()
+    history = state.get("history") if isinstance(state.get("history"), list) else []
+    history.append(item)
+    state.update({
+        "status": "connected" if is_running() else state.get("status", "external"),
+        "latest": item,
+        "history": history[-50:],
+        "updated_at": time.time(),
+    })
+    _write_state(state)
+    return item
+
+
 def latest_otp(since: float = 0.0) -> dict | None:
     latest = (_read_state().get("latest") or {})
     if not isinstance(latest, dict) or not latest.get("otp"):
