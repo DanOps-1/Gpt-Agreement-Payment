@@ -181,6 +181,17 @@ def test_fetch_gopay_auto_unbind_body_parses_raw_request(client):
 def test_gopay_auto_unbind_run_fetches_latest_unlink_url_and_patches(tmp_path):
     from webui.backend import gopay_auto_unbind
 
+    linked_body = {
+        "data": {
+            "linked_services": [{
+                "linked_accounts": [{
+                    "unlink_url": "/v1/links?link_id=2026050562ed2b71-0b49-4df3-a89d-c76f0db1ec69",
+                }],
+            }],
+        },
+        "success": True,
+    }
+    empty_body = {"data": {"linked_services": []}, "success": True}
     raw = (
         "GET /v1/linkedapps HTTP/1.1\r\n"
         "Host: customer.gopayapi.com\r\n"
@@ -198,16 +209,7 @@ def test_gopay_auto_unbind_run_fetches_latest_unlink_url_and_patches(tmp_path):
         },
     }), encoding="utf-8")
     linked_route = respx.get("https://customer.gopayapi.com/v1/linkedapps").mock(
-        return_value=httpx.Response(200, json={
-            "data": {
-                "linked_services": [{
-                    "linked_accounts": [{
-                        "unlink_url": "/v1/links?link_id=2026050562ed2b71-0b49-4df3-a89d-c76f0db1ec69",
-                    }],
-                }],
-            },
-            "success": True,
-        })
+        side_effect=[httpx.Response(200, json=linked_body), httpx.Response(200, json=empty_body)]
     )
     patch_route = respx.patch(
         "https://customer.gopayapi.com/v1/links/2026050562ed2b71-0b49-4df3-a89d-c76f0db1ec69"
@@ -222,6 +224,69 @@ def test_gopay_auto_unbind_run_fetches_latest_unlink_url_and_patches(tmp_path):
     sent = patch_route.calls[0].request
     assert sent.headers["authorization"] == "Bearer secret-token"
     assert sent.headers["x-appversion"] == "2.8.0"
+    assert sent.headers["content-length"] == "0"
+
+
+@respx.mock
+def test_gopay_auto_unbind_falls_back_to_raw_query_url_when_path_does_not_unlink(tmp_path, monkeypatch):
+    from webui.backend import gopay_auto_unbind
+
+    monkeypatch.setattr(gopay_auto_unbind.time, "sleep", lambda _seconds: None)
+    link_id = "20260505e81ee85e-476d-4604-b893-16c0071e9d3f"
+    linked_body = {
+        "data": {
+            "linked_services": [{
+                "service_id": "CHECKOUT_MIDTRANS",
+                "service_name": "OpenAI LLC",
+                "linked_accounts": [{
+                    "link_id": link_id,
+                    "association_name": "OpenAI LLC",
+                    "is_active": True,
+                    "unlink_url": f"/v1/links?link_id={link_id}",
+                }],
+            }],
+        },
+        "success": True,
+    }
+    empty_body = {"data": {"linked_services": []}, "success": True}
+    raw = (
+        "GET /v1/linkedapps HTTP/1.1\r\n"
+        "Host: customer.gopayapi.com\r\n"
+        "authorization: Bearer secret-token\r\n"
+        "x-appversion: 2.8.0\r\n"
+        "\r\n"
+    )
+    pay_path = tmp_path / "config.paypal.json"
+    pay_path.write_text(json.dumps({
+        "gopay": {
+            "auto_unbind": {
+                "base_url": "https://customer.gopayapi.com",
+                "raw_request": raw,
+            },
+        },
+    }), encoding="utf-8")
+    linked_route = respx.get("https://customer.gopayapi.com/v1/linkedapps").mock(
+        side_effect=[
+            httpx.Response(200, json=linked_body),
+            httpx.Response(200, json=linked_body),
+            httpx.Response(200, json=linked_body),
+            httpx.Response(200, json=empty_body),
+        ]
+    )
+    path_route = respx.patch(f"https://customer.gopayapi.com/v1/links/{link_id}").mock(
+        return_value=httpx.Response(200, json={"success": True})
+    )
+    query_route = respx.patch(f"https://customer.gopayapi.com/v1/links?link_id={link_id}").mock(
+        return_value=httpx.Response(200, json={"success": True})
+    )
+
+    result = gopay_auto_unbind.run_from_config(pay_path)
+
+    assert result["ok"] is True
+    assert result["unlink_target_url"] == f"https://customer.gopayapi.com/v1/links?link_id={link_id}"
+    assert linked_route.call_count == 4
+    assert path_route.called
+    assert query_route.called
 
 
 def test_export_writes_hosted_checkout_link_mode(client, tmp_path, monkeypatch):

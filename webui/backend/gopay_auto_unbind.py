@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
@@ -74,6 +75,71 @@ def parse_raw_http_request(raw: str, base_url: str = "") -> dict[str, Any]:
     }
 
 
+def _text_preview(value: Any, max_chars: int = 3000) -> str:
+    if isinstance(value, (dict, list)):
+        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    elif value is None:
+        text = ""
+    else:
+        text = str(value)
+    if len(text) > max_chars:
+        return text[:max_chars] + "...<truncated>"
+    return text
+
+
+def _link_id_from_unlink_url(unlink_url: str) -> str:
+    raw = (unlink_url or "").strip()
+    if not raw:
+        return ""
+    parsed = urlsplit(raw)
+    query_link_id = (parse_qs(parsed.query).get("link_id") or [""])[0].strip()
+    if query_link_id:
+        return query_link_id
+    marker = "/v1/links/"
+    if marker in parsed.path:
+        return parsed.path.split(marker, 1)[1].strip("/")
+    return ""
+
+
+def extract_gopay_link_entries(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return []
+    services = data.get("linked_services")
+    if not isinstance(services, list):
+        return []
+    entries: list[dict[str, Any]] = []
+    for service in services:
+        if not isinstance(service, dict):
+            continue
+        service_unlink_url = str(service.get("unlink_service_url") or "").strip()
+        accounts = service.get("linked_accounts")
+        if not isinstance(accounts, list):
+            continue
+        for account in accounts:
+            if not isinstance(account, dict):
+                continue
+            account_unlink_url = str(account.get("unlink_url") or "").strip()
+            link_id = str(account.get("link_id") or "").strip()
+            if not link_id:
+                link_id = _link_id_from_unlink_url(account_unlink_url) or _link_id_from_unlink_url(service_unlink_url)
+            entries.append({
+                "service_id": service.get("service_id") or "",
+                "service_name": service.get("service_name") or "",
+                "service_unlink_url": service_unlink_url,
+                "allow_service_unlink": service.get("allow_service_unlink"),
+                "link_id": link_id,
+                "association_name": account.get("association_name") or "",
+                "activation_date": account.get("activation_date") or "",
+                "is_active": account.get("is_active"),
+                "unlink_url": account_unlink_url,
+                "allow_account_unlink": account.get("allow_account_unlink"),
+            })
+    return entries
+
+
 def extract_gopay_unlink_urls(payload: Any) -> list[str]:
     if not isinstance(payload, dict):
         return []
@@ -101,6 +167,19 @@ def extract_gopay_unlink_urls(payload: Any) -> list[str]:
 
 def has_linkedapps_data(payload: Any) -> bool:
     return isinstance(payload, dict) and isinstance(payload.get("data"), dict)
+
+
+def _count_linked_services(payload: Any) -> tuple[int, int]:
+    data = payload.get("data") if isinstance(payload, dict) else None
+    services = data.get("linked_services") if isinstance(data, dict) else None
+    if not isinstance(services, list):
+        return 0, 0
+    account_count = 0
+    for service in services:
+        accounts = service.get("linked_accounts") if isinstance(service, dict) else None
+        if isinstance(accounts, list):
+            account_count += len(accounts)
+    return len(services), account_count
 
 
 def fetch_linkedapps(raw_request: str, base_url: str = "", timeout: float = 20.0) -> dict[str, Any]:
@@ -135,29 +214,45 @@ def fetch_linkedapps(raw_request: str, base_url: str = "", timeout: float = 20.0
     }
 
 
-def patch_unlink(raw_request: str, base_url: str, unlink_url: str, timeout: float = 20.0) -> dict[str, Any]:
-    parsed = parse_raw_http_request(raw_request, base_url)
-    target_url = normalize_unlink_target(unlink_url)
+def _resolve_unlink_target(parsed_source_url: str, base_url: str, unlink_url: str, *, normalize: bool = True) -> str:
+    target_url = normalize_unlink_target(unlink_url) if normalize else (unlink_url or "").strip()
     if not target_url:
         raise ValueError("unlink_url is empty")
-    parsed_source = urlsplit(parsed["url"])
+    parsed_source = urlsplit(parsed_source_url)
     origin = f"{parsed_source.scheme}://{parsed_source.netloc}"
     if not target_url.startswith("http://") and not target_url.startswith("https://"):
         target_url = urljoin(normalize_base_url(base_url or origin), target_url.lstrip("/"))
+    return target_url
+
+
+def patch_unlink(
+    raw_request: str,
+    base_url: str,
+    unlink_url: str,
+    timeout: float = 20.0,
+    *,
+    normalize: bool = True,
+) -> dict[str, Any]:
+    parsed = parse_raw_http_request(raw_request, base_url)
+    target_url = _resolve_unlink_target(parsed["url"], base_url, unlink_url, normalize=normalize)
     with httpx.Client(timeout=max(1.0, min(float(timeout or 20.0), 60.0)), follow_redirects=False) as client:
-        resp = client.request("PATCH", target_url, headers=parsed["headers"])
+        resp = client.request("PATCH", target_url, headers=parsed["headers"], content=b"")
     body_json = None
     try:
         body_json = resp.json()
     except Exception:
         pass
+    business_success = None
+    if isinstance(body_json, dict) and "success" in body_json:
+        business_success = bool(body_json.get("success"))
     return {
-        "ok": 200 <= resp.status_code < 300,
+        "ok": 200 <= resp.status_code < 300 and business_success is not False,
         "url": str(resp.request.url),
         "status_code": resp.status_code,
         "content_type": resp.headers.get("content-type", ""),
         "body": resp.text,
         "body_json": body_json,
+        "success": business_success,
     }
 
 
@@ -180,6 +275,57 @@ def normalize_unlink_target(unlink_url: str) -> str:
     return raw
 
 
+def _is_same_link(entry: dict[str, Any], link_id: str) -> bool:
+    if not link_id:
+        return False
+    if str(entry.get("link_id") or "").strip() == link_id:
+        return True
+    return (
+        _link_id_from_unlink_url(str(entry.get("unlink_url") or "")) == link_id
+        or _link_id_from_unlink_url(str(entry.get("service_unlink_url") or "")) == link_id
+    )
+
+
+def _select_unlink_entry(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not entries:
+        return None
+
+    def score(entry: dict[str, Any]) -> tuple[int, str]:
+        service_id = str(entry.get("service_id") or "").lower()
+        service_name = str(entry.get("service_name") or "").lower()
+        association = str(entry.get("association_name") or "").lower()
+        text = " ".join([service_id, service_name, association])
+        preferred = int("openai" in text or "midtrans" in text or service_id == "checkout_midtrans")
+        active = int(entry.get("is_active") is not False)
+        allowed = int(entry.get("allow_account_unlink") is not False or entry.get("allow_service_unlink") is not False)
+        return (preferred * 100 + active * 10 + allowed, str(entry.get("activation_date") or ""))
+
+    return sorted(entries, key=score, reverse=True)[0]
+
+
+def _unlink_candidates(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen: set[tuple[str, bool]] = set()
+
+    def add(label: str, url: str, normalize: bool) -> None:
+        url = (url or "").strip()
+        key = (url, normalize)
+        if not url or key in seen:
+            return
+        seen.add(key)
+        candidates.append({"label": label, "url": url, "normalize": normalize})
+
+    service_url = str(entry.get("service_unlink_url") or "")
+    account_url = str(entry.get("unlink_url") or "")
+    link_id = str(entry.get("link_id") or "").strip()
+    add("service_unlink_url", service_url, True)
+    add("linked_account_unlink_url_normalized", account_url, True)
+    add("linked_account_unlink_url_raw", account_url, False)
+    if link_id:
+        add("link_id_path", f"/v1/links/{link_id}", False)
+    return candidates
+
+
 def run_from_config(config_path: Path, log=lambda _m: None) -> dict[str, Any]:
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
@@ -195,29 +341,131 @@ def run_from_config(config_path: Path, log=lambda _m: None) -> dict[str, Any]:
     raw_request = str(auto.get("raw_request") or "")
     if not raw_request.strip():
         return {"ok": False, "skipped": True, "reason": "raw_request_empty"}
+
+    log("[webui] GoPay auto-unbind start")
     linked = fetch_linkedapps(raw_request, base_url)
+    log(
+        "[webui] GoPay LinksApp GET "
+        f"method={linked.get('method')} url={linked.get('url')} "
+        f"status={linked.get('status_code')} content_type={linked.get('content_type')}"
+    )
+    log(f"[webui] GoPay LinksApp body={_text_preview(linked.get('body_json') or linked.get('body'))}")
     if not linked.get("has_data"):
         return {
             "ok": False,
             "skipped": False,
             "reason": "linkedapps_data_missing",
-            "status_code": linked.get("status_code"),
+            "linkedapps_status_code": linked.get("status_code"),
         }
-    unlink_url = linked.get("unlink_url") or ""
-    if not unlink_url:
+
+    entries = extract_gopay_link_entries(linked.get("body_json"))
+    service_count, account_count = _count_linked_services(linked.get("body_json"))
+    log(
+        "[webui] GoPay LinksApp parsed "
+        f"has_data={linked.get('has_data')} services={service_count} "
+        f"accounts={account_count} unlink_candidates={len(entries)}"
+    )
+    entry = _select_unlink_entry(entries)
+    if not entry:
         return {
             "ok": False,
             "skipped": False,
             "reason": "unlink_url_missing",
-            "status_code": linked.get("status_code"),
+            "linkedapps_status_code": linked.get("status_code"),
         }
-    log(f"[webui] GoPay auto-unbind unlink_url={unlink_url}")
-    patched = patch_unlink(raw_request, base_url, unlink_url)
+
+    link_id = str(entry.get("link_id") or "").strip()
+    unlink_url = str(entry.get("unlink_url") or "").strip()
+    log(
+        "[webui] GoPay auto-unbind selected "
+        f"service_id={entry.get('service_id')} service_name={entry.get('service_name')} "
+        f"association={entry.get('association_name')} link_id={link_id} "
+        f"unlink_url={unlink_url} service_unlink_url={entry.get('service_unlink_url')}"
+    )
+
+    source = parse_raw_http_request(raw_request, base_url)
+    candidates = _unlink_candidates(entry)
+    last_patch: dict[str, Any] | None = None
+    last_verify: dict[str, Any] | None = None
+    seen_target_urls: set[str] = set()
+    for idx, candidate in enumerate(candidates, start=1):
+        target_url = _resolve_unlink_target(
+            source["url"],
+            base_url,
+            str(candidate.get("url") or ""),
+            normalize=bool(candidate.get("normalize")),
+        )
+        if target_url in seen_target_urls:
+            continue
+        seen_target_urls.add(target_url)
+        log(
+            "[webui] GoPay auto-unbind PATCH "
+            f"attempt={idx}/{len(candidates)} label={candidate.get('label')} url={target_url}"
+        )
+        patched = patch_unlink(
+            raw_request,
+            base_url,
+            str(candidate.get("url") or ""),
+            normalize=bool(candidate.get("normalize")),
+        )
+        last_patch = patched
+        log(
+            "[webui] GoPay auto-unbind PATCH result "
+            f"status={patched.get('status_code')} success={patched.get('success')} "
+            f"ok={patched.get('ok')} content_type={patched.get('content_type')} "
+            f"body={_text_preview(patched.get('body_json') or patched.get('body'))}"
+        )
+        if not patched.get("ok"):
+            continue
+
+        for verify_attempt in range(1, 3):
+            if verify_attempt > 1:
+                time.sleep(2)
+            verify = fetch_linkedapps(raw_request, base_url)
+            last_verify = verify
+            verify_entries = extract_gopay_link_entries(verify.get("body_json"))
+            still_present = bool(link_id and any(_is_same_link(item, link_id) for item in verify_entries))
+            log(
+                "[webui] GoPay auto-unbind verify "
+                f"attempt={verify_attempt}/2 status={verify.get('status_code')} "
+                f"has_data={verify.get('has_data')} still_present={still_present}"
+            )
+            log(f"[webui] GoPay auto-unbind verify body={_text_preview(verify.get('body_json') or verify.get('body'))}")
+            if verify.get("has_data") and link_id and not still_present:
+                return {
+                    "ok": True,
+                    "skipped": False,
+                    "linkedapps_status_code": linked.get("status_code"),
+                    "unlink_url": unlink_url,
+                    "unlink_target_url": target_url,
+                    "unlink_status_code": patched.get("status_code"),
+                    "unlink_body": patched.get("body"),
+                    "verify_status_code": verify.get("status_code"),
+                }
+            if verify.get("has_data") and not link_id:
+                return {
+                    "ok": True,
+                    "skipped": False,
+                    "linkedapps_status_code": linked.get("status_code"),
+                    "unlink_url": unlink_url,
+                    "unlink_target_url": target_url,
+                    "unlink_status_code": patched.get("status_code"),
+                    "unlink_body": patched.get("body"),
+                    "verify_status_code": verify.get("status_code"),
+                }
+
+        log(
+            "[webui] GoPay auto-unbind target still present after PATCH; "
+            "trying next URL form if available"
+        )
+
     return {
-        "ok": bool(patched.get("ok")),
+        "ok": False,
         "skipped": False,
+        "reason": "unlink_still_present" if last_patch and last_patch.get("ok") else "unlink_request_failed",
         "linkedapps_status_code": linked.get("status_code"),
         "unlink_url": unlink_url,
-        "unlink_status_code": patched.get("status_code"),
-        "unlink_body": patched.get("body"),
+        "unlink_status_code": last_patch.get("status_code") if last_patch else None,
+        "unlink_body": last_patch.get("body") if last_patch else "",
+        "verify_status_code": last_verify.get("status_code") if last_verify else None,
     }
