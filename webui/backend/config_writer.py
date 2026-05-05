@@ -56,6 +56,15 @@ def _project_pay(answers: dict) -> dict:
                 "timeout": int(gp.get("otp_timeout") or 300),
                 "interval": 1,
             }
+            raw_unbind_request = str(gp.get("auto_unbind_raw_request") or "")
+            auto_unbind_base_url = str(gp.get("auto_unbind_base_url") or "").strip()
+            auto_unbind = {}
+            if auto_unbind_base_url:
+                auto_unbind["base_url"] = auto_unbind_base_url
+            if raw_unbind_request.strip():
+                auto_unbind["raw_request"] = raw_unbind_request
+            if auto_unbind:
+                out["gopay"]["auto_unbind"] = auto_unbind
     if "team_plan" in answers:
         tp = answers["team_plan"] or {}
         plan: dict = {}

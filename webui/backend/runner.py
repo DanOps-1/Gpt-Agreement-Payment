@@ -19,6 +19,7 @@ from typing import Optional
 
 from . import settings as s
 from . import wa_relay
+from . import gopay_auto_unbind
 
 
 _lock = threading.Lock()
@@ -35,6 +36,15 @@ _otp_to_db: bool = False               # True when gopay.py waits on WebUI SQLit
 _otp_pending: bool = False             # set when gopay.py asks/waits for OTP
 _otp_pending_since: Optional[float] = None
 _otp_file_is_temp: bool = False
+
+
+def _append_log(line: str) -> None:
+    global _seq_counter, _log_lines
+    with _lock:
+        _seq_counter += 1
+        _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line})
+        if len(_log_lines) > 3000:
+            _log_lines = _log_lines[-2000:]
 
 
 def _gopay_auto_otp_enabled() -> bool:
@@ -198,6 +208,31 @@ def _detect_otp_wait_target(line: str) -> tuple[str, Optional[Path]]:
     return "", None
 
 
+def _is_pay_success_line(line: str) -> bool:
+    return bool(re.search(r"\[pay\].*结果:\s*state=succeeded\b", line))
+
+
+def _run_gopay_auto_unbind() -> None:
+    try:
+        result = gopay_auto_unbind.run_from_config(s.PAY_CONFIG_PATH, log=_append_log)
+        if result.get("skipped"):
+            return
+        if result.get("ok"):
+            _append_log(
+                "[webui] GoPay auto-unbind succeeded "
+                f"status={result.get('unlink_status_code')} url={result.get('unlink_url')}"
+            )
+        else:
+            _append_log(
+                "[webui] GoPay auto-unbind failed "
+                f"reason={result.get('reason', 'unknown')} "
+                f"linkedapps_status={result.get('linkedapps_status_code')} "
+                f"unlink_status={result.get('unlink_status_code')}"
+            )
+    except Exception as e:
+        _append_log(f"[webui] GoPay auto-unbind error: {e}")
+
+
 def _drain(proc: subprocess.Popen) -> None:
     global _ended_at, _exit_code, _seq_counter, _log_lines, _otp_pending, _otp_pending_since, _otp_file, _otp_to_db, _otp_file_is_temp
     try:
@@ -207,6 +242,7 @@ def _drain(proc: subprocess.Popen) -> None:
             line = line.rstrip()
             if not line:
                 continue
+            should_auto_unbind = _is_pay_success_line(line)
             with _lock:
                 _seq_counter += 1
                 _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line})
@@ -224,6 +260,8 @@ def _drain(proc: subprocess.Popen) -> None:
                     if not _otp_pending:
                         _otp_pending_since = time.time()
                     _otp_pending = True
+            if should_auto_unbind:
+                threading.Thread(target=_run_gopay_auto_unbind, daemon=True).start()
     finally:
         proc.wait()
         with _lock:

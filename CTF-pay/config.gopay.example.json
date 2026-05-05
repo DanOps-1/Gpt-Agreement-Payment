@@ -10,6 +10,10 @@
       "interval": 1,
       "code_regex": "(?<!\\d)(\\d{6})(?!\\d)",
       "issued_after_slack_s": 15
+    },
+    "auto_unbind": {
+      "base_url": "https://customer.gopayapi.com",
+      "raw_request": ""
     }
   },
   "fresh_checkout": {

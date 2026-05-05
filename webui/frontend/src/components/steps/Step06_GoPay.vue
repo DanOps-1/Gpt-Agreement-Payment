@@ -46,10 +46,16 @@
       </div>
     </div>
 
-    <button class="wa-login-entry" type="button" @click="openOtpTest">
-      <span class="wa-login-prompt">$</span>
-      测试 OTP
-    </button>
+    <div class="gopay-actions">
+      <button class="wa-login-entry" type="button" @click="openOtpTest">
+        <span class="wa-login-prompt">$</span>
+        测试 OTP
+      </button>
+      <button class="wa-login-entry" type="button" @click="openUnbindDialog">
+        <span class="wa-login-prompt">$</span>
+        自动解绑认证
+      </button>
+    </div>
 
     <Teleport to="body">
       <div v-if="otpDialog.open" class="otp-overlay" @click.self="closeOtpTest">
@@ -83,6 +89,49 @@
         </div>
       </div>
     </Teleport>
+
+    <Teleport to="body">
+      <div v-if="unbindDialog.open" class="otp-overlay" @click.self="closeUnbindDialog">
+        <div class="unbind-modal">
+          <div class="otp-head">
+            <span class="otp-prompt">$</span> GoPay 自动解绑认证
+          </div>
+          <p class="otp-desc">
+            粘贴原始请求内容，保存后会写入配置，后续自动解绑流程会读取这段请求。
+          </p>
+          <TermField
+            v-model="unbindDialog.base_url"
+            label="Base URL · base_url"
+            placeholder="https://customer.gopayapi.com"
+          />
+          <textarea
+            class="unbind-input"
+            v-model="unbindDialog.value"
+            autofocus
+            spellcheck="false"
+            placeholder="粘贴原始请求..."
+          />
+          <div v-if="unbindDialog.body || unbindDialog.fetchMeta" class="unbind-response">
+            <div class="label">Response Body</div>
+            <div v-if="unbindDialog.fetchMeta" class="unbind-meta">{{ unbindDialog.fetchMeta }}</div>
+            <div v-if="unbindDialog.hasData" class="unlink-url-box ok">
+              <span class="label">LinkedApps Data</span>
+              <code>data 已获取，Run 支付成功后会重新获取 unlink_url 并自动解绑。</code>
+            </div>
+            <div v-if="unbindDialog.preview_unlink_url" class="unlink-url-box">
+              <span class="label">Preview Unlink URL</span>
+              <code>{{ unbindDialog.preview_unlink_url }}</code>
+            </div>
+            <pre>{{ unbindDialog.body }}</pre>
+          </div>
+          <div class="otp-actions">
+            <TermBtn variant="ghost" @click="closeUnbindDialog">取消</TermBtn>
+            <TermBtn variant="ghost" :loading="unbindDialog.fetching" @click="fetchUnbindBody">解析并获取 body</TermBtn>
+            <TermBtn @click="saveUnbindRequest">保存</TermBtn>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </section>
 </template>
 
@@ -104,6 +153,8 @@ const form = ref({
   phone_number: init.phone_number ?? "",
   pin: init.pin ?? "",
   otp_timeout: init.otp_timeout ?? initOtp.timeout ?? 300,
+  auto_unbind_raw_request: init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "",
+  auto_unbind_base_url: init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "",
 });
 
 const status = ref<{
@@ -122,6 +173,16 @@ const otpDialog = ref({
   success: false,
   since: 0,
   preparing: false,
+});
+const unbindDialog = ref({
+  open: false,
+  value: "",
+  base_url: "",
+  fetching: false,
+  body: "",
+  fetchMeta: "",
+  hasData: false,
+  preview_unlink_url: "",
 });
 let timer: number | undefined;
 let otpTestTimer: number | undefined;
@@ -197,15 +258,80 @@ function maybeResolveOtpTest() {
   }
 }
 
-watch(form, () => {
-  store.setAnswer("gopay", {
+function openUnbindDialog() {
+  unbindDialog.value.open = true;
+  unbindDialog.value.value = form.value.auto_unbind_raw_request || "";
+  unbindDialog.value.base_url = form.value.auto_unbind_base_url || "";
+  unbindDialog.value.body = "";
+  unbindDialog.value.fetchMeta = "";
+  unbindDialog.value.hasData = false;
+  unbindDialog.value.preview_unlink_url = "";
+}
+
+function closeUnbindDialog() {
+  unbindDialog.value.open = false;
+}
+
+async function saveUnbindRequest() {
+  form.value.auto_unbind_raw_request = unbindDialog.value.value;
+  form.value.auto_unbind_base_url = unbindDialog.value.base_url.trim();
+  store.setAnswer("gopay", buildGopayAnswer());
+  try {
+    await store.saveToServer();
+    await api.post("/config/gopay/auto-unbind", {
+      raw_request: form.value.auto_unbind_raw_request,
+      base_url: form.value.auto_unbind_base_url,
+    });
+    closeUnbindDialog();
+    message.success("自动解绑原始请求已保存到 config");
+  } catch (e: any) {
+    message.error(e.response?.data?.detail || "保存自动解绑请求失败");
+  }
+}
+
+async function fetchUnbindBody() {
+  if (!unbindDialog.value.value.trim()) {
+    message.warning("请先粘贴原始请求");
+    return;
+  }
+  unbindDialog.value.fetching = true;
+  unbindDialog.value.body = "";
+  unbindDialog.value.fetchMeta = "";
+  unbindDialog.value.hasData = false;
+  unbindDialog.value.preview_unlink_url = "";
+  try {
+    const r = await api.post("/config/gopay/auto-unbind/fetch-body", {
+      base_url: unbindDialog.value.base_url,
+      raw_request: unbindDialog.value.value,
+    });
+    const body = typeof r.data?.body === "string"
+      ? r.data.body
+      : JSON.stringify(r.data?.body_json ?? "", null, 2);
+    unbindDialog.value.body = body;
+    unbindDialog.value.fetchMeta = `${r.data?.status_code || ""} ${r.data?.content_type || ""}`.trim();
+    unbindDialog.value.hasData = Boolean(r.data?.has_data);
+    unbindDialog.value.preview_unlink_url = r.data?.unlink_url || "";
+    message.success(unbindDialog.value.hasData ? "已获取 linkedapps data" : "已获取响应 body，但未找到 data");
+  } catch (e: any) {
+    message.error(e.response?.data?.detail || "获取 body 失败");
+  } finally {
+    unbindDialog.value.fetching = false;
+  }
+}
+
+function buildGopayAnswer() {
+  return {
     ...form.value,
     otp: {
       source: "auto",
       timeout: form.value.otp_timeout,
       interval: 1,
     },
-  });
+  };
+}
+
+watch(form, () => {
+  store.setAnswer("gopay", buildGopayAnswer());
   store.saveToServer();
 }, { deep: true });
 
@@ -270,8 +396,13 @@ code {
   font-size: 12px;
   line-height: 1.6;
 }
-.wa-login-entry {
+.gopay-actions {
   margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.wa-login-entry {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -303,6 +434,14 @@ code {
   font-family: inherit;
   box-shadow: 0 10px 40px rgba(0,0,0,0.25);
 }
+.unbind-modal {
+  background: var(--bg-base);
+  border: 1px solid var(--accent);
+  padding: 24px 28px;
+  width: min(720px, 92vw);
+  font-family: inherit;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+}
 .otp-head {
   font-weight: 700;
   font-size: 14px;
@@ -329,6 +468,57 @@ code {
   cursor: default;
 }
 .otp-input:focus { border-color: var(--accent); }
+.unbind-input {
+  width: 100%;
+  min-height: 280px;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--fg-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  outline: none;
+  white-space: pre;
+}
+.unbind-input:focus { border-color: var(--accent); }
+.unbind-response {
+  margin-top: 12px;
+  border: 1px dashed var(--border);
+  background: var(--bg-panel);
+  padding: 12px;
+}
+.unbind-response pre {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg-primary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.unbind-meta {
+  margin-bottom: 8px;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+}
+.unlink-url-box {
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+}
+.unlink-url-box.ok {
+  border-color: var(--ok);
+}
+.unlink-url-box code {
+  display: block;
+  color: var(--accent);
+  word-break: break-all;
+}
 .otp-success,
 .otp-waiting {
   margin-top: 12px;
@@ -337,5 +527,5 @@ code {
 }
 .otp-success { color: var(--ok); }
 .otp-waiting { color: var(--fg-tertiary); }
-.otp-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
+.otp-actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 10px; }
 </style>

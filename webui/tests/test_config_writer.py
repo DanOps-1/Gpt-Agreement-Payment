@@ -2,6 +2,9 @@ import json
 import importlib.util
 from pathlib import Path
 
+import httpx
+import respx
+
 from webui.backend.db import get_db
 
 
@@ -92,6 +95,8 @@ def test_export_writes_gopay_auto_otp(client, tmp_path, monkeypatch):
             "phone_number": "81234567890",
             "pin": "123456",
             "otp_timeout": 240,
+            "auto_unbind_base_url": "https://gwa.gopayapi.com",
+            "auto_unbind_raw_request": "POST /v1/linking/unbind HTTP/2\r\nhost: gwa.gopayapi.com\r\n\r\n{}",
         },
     }
     r = client.post("/api/config/export", json={"answers": answers})
@@ -105,6 +110,118 @@ def test_export_writes_gopay_auto_otp(client, tmp_path, monkeypatch):
     assert "url" not in pay["gopay"]["otp"]
     assert pay["gopay"]["otp"]["timeout"] == 240
     assert pay["gopay"]["otp"]["interval"] == 1
+    assert pay["gopay"]["auto_unbind"]["base_url"] == "https://gwa.gopayapi.com"
+    assert pay["gopay"]["auto_unbind"]["raw_request"].startswith("POST /v1/linking/unbind")
+
+
+def test_save_gopay_auto_unbind_directly_updates_pay_config(client, tmp_path, monkeypatch):
+    _login(client)
+    _seed(tmp_path, monkeypatch)
+
+    pay_path = tmp_path / "CTF-pay" / "config.paypal.json"
+    pay_path.parent.mkdir(parents=True, exist_ok=True)
+    pay_path.write_text(json.dumps({"gopay": {"country_code": "62"}}), encoding="utf-8")
+
+    raw = "POST /v1/linking/unbind HTTP/2\r\nhost: gwa.gopayapi.com\r\n\r\n{}"
+    r = client.post(
+        "/api/config/gopay/auto-unbind",
+        json={"base_url": "https://gwa.gopayapi.com", "raw_request": raw},
+    )
+
+    assert r.status_code == 200
+    pay = json.loads(pay_path.read_text(encoding="utf-8"))
+    assert pay["gopay"]["country_code"] == "62"
+    assert pay["gopay"]["auto_unbind"]["base_url"] == "https://gwa.gopayapi.com"
+    assert pay["gopay"]["auto_unbind"]["raw_request"] == raw
+
+
+@respx.mock
+def test_fetch_gopay_auto_unbind_body_parses_raw_request(client):
+    _login(client)
+    response_body = {
+        "data": {
+            "linked_services": [{
+                "linked_accounts": [{
+                    "link_id": "2026050562ed2b71-0b49-4df3-a89d-c76f0db1ec69",
+                    "unlink_url": "/v1/links?link_id=2026050562ed2b71-0b49-4df3-a89d-c76f0db1ec69",
+                }],
+            }],
+        },
+        "success": True,
+    }
+    route = respx.get("https://customer.gopayapi.com/v1/linkedapps").mock(return_value=httpx.Response(200, json=response_body))
+    raw = (
+        "GET /v1/linkedapps HTTP/1.1\r\n"
+        "Host: customer.gopayapi.com\r\n"
+        "Connection: keep-alive\r\n"
+        "authorization: Bearer secret-token\r\n"
+        "x-appversion: 2.8.0\r\n"
+        "\r\n"
+    )
+
+    r = client.post(
+        "/api/config/gopay/auto-unbind/fetch-body",
+        json={"base_url": "https://customer.gopayapi.com", "raw_request": raw},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status_code"] == 200
+    assert body["has_data"] is True
+    assert body["body_json"]["data"]["linked_services"][0]["linked_accounts"][0]["link_id"].startswith("20260505")
+    assert body["unlink_url"] == "/v1/links?link_id=2026050562ed2b71-0b49-4df3-a89d-c76f0db1ec69"
+    assert body["unlink_urls"] == ["/v1/links?link_id=2026050562ed2b71-0b49-4df3-a89d-c76f0db1ec69"]
+    assert route.called
+    sent = route.calls[0].request
+    assert sent.headers["authorization"] == "Bearer secret-token"
+    assert sent.headers["x-appversion"] == "2.8.0"
+
+
+@respx.mock
+def test_gopay_auto_unbind_run_fetches_latest_unlink_url_and_patches(tmp_path):
+    from webui.backend import gopay_auto_unbind
+
+    raw = (
+        "GET /v1/linkedapps HTTP/1.1\r\n"
+        "Host: customer.gopayapi.com\r\n"
+        "authorization: Bearer secret-token\r\n"
+        "x-appversion: 2.8.0\r\n"
+        "\r\n"
+    )
+    pay_path = tmp_path / "config.paypal.json"
+    pay_path.write_text(json.dumps({
+        "gopay": {
+            "auto_unbind": {
+                "base_url": "https://customer.gopayapi.com",
+                "raw_request": raw,
+            },
+        },
+    }), encoding="utf-8")
+    linked_route = respx.get("https://customer.gopayapi.com/v1/linkedapps").mock(
+        return_value=httpx.Response(200, json={
+            "data": {
+                "linked_services": [{
+                    "linked_accounts": [{
+                        "unlink_url": "/v1/links?link_id=2026050562ed2b71-0b49-4df3-a89d-c76f0db1ec69",
+                    }],
+                }],
+            },
+            "success": True,
+        })
+    )
+    patch_route = respx.patch(
+        "https://customer.gopayapi.com/v1/links/2026050562ed2b71-0b49-4df3-a89d-c76f0db1ec69"
+    ).mock(return_value=httpx.Response(200, json={"success": True}))
+
+    result = gopay_auto_unbind.run_from_config(pay_path)
+
+    assert result["ok"] is True
+    assert result["unlink_status_code"] == 200
+    assert linked_route.called
+    assert patch_route.called
+    sent = patch_route.calls[0].request
+    assert sent.headers["authorization"] == "Bearer secret-token"
+    assert sent.headers["x-appversion"] == "2.8.0"
 
 
 def test_export_writes_hosted_checkout_link_mode(client, tmp_path, monkeypatch):
