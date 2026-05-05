@@ -326,23 +326,157 @@ def _unlink_candidates(entry: dict[str, Any]) -> list[dict[str, Any]]:
     return candidates
 
 
-def run_from_config(config_path: Path, log=lambda _m: None) -> dict[str, Any]:
+def _load_auto_unbind_config(config_path: Path) -> tuple[str, str, dict[str, Any] | None]:
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return {"ok": False, "skipped": True, "reason": "config_not_found"}
+        return "", "", {"ok": False, "skipped": True, "reason": "config_not_found"}
     except Exception as e:
-        return {"ok": False, "skipped": True, "reason": f"config_read_failed: {e}"}
+        return "", "", {"ok": False, "skipped": True, "reason": f"config_read_failed: {e}"}
     gp = cfg.get("gopay") if isinstance(cfg, dict) else {}
     auto = gp.get("auto_unbind") if isinstance(gp, dict) else {}
     if not isinstance(auto, dict):
-        return {"ok": False, "skipped": True, "reason": "auto_unbind_not_configured"}
+        return "", "", {"ok": False, "skipped": True, "reason": "auto_unbind_not_configured"}
     base_url = str(auto.get("base_url") or "")
     raw_request = str(auto.get("raw_request") or "")
     if not raw_request.strip():
-        return {"ok": False, "skipped": True, "reason": "raw_request_empty"}
+        return base_url, raw_request, {"ok": False, "skipped": True, "reason": "raw_request_empty"}
+    return base_url, raw_request, None
+
+
+def fetch_linkedapps_from_config(config_path: Path, timeout: float = 20.0) -> dict[str, Any]:
+    base_url, raw_request, error = _load_auto_unbind_config(config_path)
+    if error:
+        return error
+    linked = fetch_linkedapps(raw_request, base_url, timeout=timeout)
+    entries = extract_gopay_link_entries(linked.get("body_json"))
+    service_count, account_count = _count_linked_services(linked.get("body_json"))
+    return {
+        "ok": bool(linked.get("has_data")),
+        "skipped": False,
+        "reason": "" if linked.get("has_data") else "linkedapps_data_missing",
+        "method": linked.get("method"),
+        "url": linked.get("url"),
+        "status_code": linked.get("status_code"),
+        "content_type": linked.get("content_type"),
+        "has_data": linked.get("has_data"),
+        "services_count": service_count,
+        "accounts_count": account_count,
+        "entries": entries,
+        "unlink_urls": linked.get("unlink_urls") or [],
+        "body": linked.get("body"),
+        "body_json": linked.get("body_json"),
+    }
+
+
+def unlink_entry_from_config(
+    config_path: Path,
+    *,
+    unlink_url: str = "",
+    service_unlink_url: str = "",
+    link_id: str = "",
+    timeout: float = 20.0,
+    log=lambda _m: None,
+) -> dict[str, Any]:
+    base_url, raw_request, error = _load_auto_unbind_config(config_path)
+    if error:
+        return error
+    entry = {
+        "unlink_url": unlink_url,
+        "service_unlink_url": service_unlink_url,
+        "link_id": link_id or _link_id_from_unlink_url(unlink_url) or _link_id_from_unlink_url(service_unlink_url),
+        "service_id": "",
+        "service_name": "",
+        "association_name": "",
+    }
+    candidates = _unlink_candidates(entry)
+    if not candidates:
+        return {"ok": False, "skipped": False, "reason": "unlink_url_empty"}
+    source = parse_raw_http_request(raw_request, base_url)
+    seen_target_urls: set[str] = set()
+    last_patch: dict[str, Any] | None = None
+    last_verify: dict[str, Any] | None = None
+    link_id = str(entry.get("link_id") or "").strip()
+    attempts: list[dict[str, Any]] = []
+    for idx, candidate in enumerate(candidates, start=1):
+        target_url = _resolve_unlink_target(
+            source["url"],
+            base_url,
+            str(candidate.get("url") or ""),
+            normalize=bool(candidate.get("normalize")),
+        )
+        if target_url in seen_target_urls:
+            continue
+        seen_target_urls.add(target_url)
+        log(f"[webui] GoPay manual-unbind PATCH attempt={idx} label={candidate.get('label')} url={target_url}")
+        patched = patch_unlink(
+            raw_request,
+            base_url,
+            str(candidate.get("url") or ""),
+            timeout=timeout,
+            normalize=bool(candidate.get("normalize")),
+        )
+        last_patch = patched
+        attempt_info = {
+            "label": candidate.get("label"),
+            "url": target_url,
+            "status_code": patched.get("status_code"),
+            "success": patched.get("success"),
+            "ok": patched.get("ok"),
+            "content_type": patched.get("content_type"),
+            "body": patched.get("body"),
+            "body_json": patched.get("body_json"),
+        }
+        attempts.append(attempt_info)
+        log(
+            "[webui] GoPay manual-unbind PATCH result "
+            f"status={patched.get('status_code')} success={patched.get('success')} ok={patched.get('ok')}"
+        )
+        if not patched.get("ok"):
+            continue
+        verify = fetch_linkedapps(raw_request, base_url, timeout=timeout)
+        last_verify = verify
+        verify_entries = extract_gopay_link_entries(verify.get("body_json"))
+        still_present = bool(link_id and any(_is_same_link(item, link_id) for item in verify_entries))
+        log(
+            "[webui] GoPay manual-unbind verify "
+            f"status={verify.get('status_code')} has_data={verify.get('has_data')} still_present={still_present}"
+        )
+        if verify.get("has_data") and (not link_id or not still_present):
+            return {
+                "ok": True,
+                "skipped": False,
+                "unlink_target_url": target_url,
+                "unlink_status_code": patched.get("status_code"),
+                "unlink_body": patched.get("body"),
+                "unlink_body_json": patched.get("body_json"),
+                "verify_status_code": verify.get("status_code"),
+                "verify_still_present": still_present,
+                "verify_body": verify.get("body"),
+                "verify_body_json": verify.get("body_json"),
+                "attempts": attempts,
+            }
+    return {
+        "ok": False,
+        "skipped": False,
+        "reason": "unlink_still_present" if last_patch and last_patch.get("ok") else "unlink_request_failed",
+        "unlink_status_code": last_patch.get("status_code") if last_patch else None,
+        "unlink_body": last_patch.get("body") if last_patch else "",
+        "unlink_body_json": last_patch.get("body_json") if last_patch else None,
+        "verify_status_code": last_verify.get("status_code") if last_verify else None,
+        "verify_body": last_verify.get("body") if last_verify else "",
+        "verify_body_json": last_verify.get("body_json") if last_verify else None,
+        "attempts": attempts,
+    }
+
+
+def run_from_config(config_path: Path, log=lambda _m: None) -> dict[str, Any]:
+    base_url, raw_request, error = _load_auto_unbind_config(config_path)
+    if error:
+        return error
 
     log("[webui] GoPay auto-unbind start")
+    log("[webui] GoPay LinksApp GET request starting")
     linked = fetch_linkedapps(raw_request, base_url)
     log(
         "[webui] GoPay LinksApp GET "

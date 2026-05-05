@@ -178,6 +178,96 @@ def test_fetch_gopay_auto_unbind_body_parses_raw_request(client):
 
 
 @respx.mock
+def test_inspect_gopay_auto_unbind_from_saved_config(client, tmp_path, monkeypatch):
+    _login(client)
+    _seed(tmp_path, monkeypatch)
+
+    raw = (
+        "GET /v1/linkedapps HTTP/1.1\r\n"
+        "Host: customer.gopayapi.com\r\n"
+        "authorization: Bearer secret-token\r\n"
+        "\r\n"
+    )
+    pay_path = tmp_path / "CTF-pay" / "config.paypal.json"
+    pay_path.parent.mkdir(parents=True, exist_ok=True)
+    pay_path.write_text(json.dumps({
+        "gopay": {
+            "auto_unbind": {
+                "base_url": "https://customer.gopayapi.com",
+                "raw_request": raw,
+            },
+        },
+    }), encoding="utf-8")
+    respx.get("https://customer.gopayapi.com/v1/linkedapps").mock(
+        return_value=httpx.Response(200, json={
+            "data": {
+                "linked_services": [{
+                    "service_id": "CHECKOUT_MIDTRANS",
+                    "service_name": "OpenAI LLC",
+                    "linked_accounts": [{
+                        "link_id": "20260505abc",
+                        "association_name": "OpenAI LLC",
+                        "unlink_url": "/v1/links?link_id=20260505abc",
+                    }],
+                }],
+            },
+            "success": True,
+        })
+    )
+
+    r = client.post("/api/config/gopay/auto-unbind/linkedapps", json={"timeout": 5})
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["services_count"] == 1
+    assert body["accounts_count"] == 1
+    assert body["entries"][0]["link_id"] == "20260505abc"
+    assert body["entries"][0]["service_name"] == "OpenAI LLC"
+
+
+@respx.mock
+def test_manual_gopay_auto_unbind_endpoint_patches_and_verifies(client, tmp_path, monkeypatch):
+    _login(client)
+    _seed(tmp_path, monkeypatch)
+
+    raw = (
+        "GET /v1/linkedapps HTTP/1.1\r\n"
+        "Host: customer.gopayapi.com\r\n"
+        "authorization: Bearer secret-token\r\n"
+        "x-appversion: 2.8.0\r\n"
+        "\r\n"
+    )
+    pay_path = tmp_path / "CTF-pay" / "config.paypal.json"
+    pay_path.parent.mkdir(parents=True, exist_ok=True)
+    pay_path.write_text(json.dumps({
+        "gopay": {
+            "auto_unbind": {
+                "base_url": "https://customer.gopayapi.com",
+                "raw_request": raw,
+            },
+        },
+    }), encoding="utf-8")
+    respx.patch("https://customer.gopayapi.com/v1/links/20260505abc").mock(
+        return_value=httpx.Response(200, json={"success": True})
+    )
+    respx.get("https://customer.gopayapi.com/v1/linkedapps").mock(
+        return_value=httpx.Response(200, json={"data": {"linked_services": []}, "success": True})
+    )
+
+    r = client.post(
+        "/api/config/gopay/auto-unbind/manual",
+        json={"unlink_url": "/v1/links?link_id=20260505abc", "link_id": "20260505abc", "timeout": 5},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["unlink_target_url"] == "https://customer.gopayapi.com/v1/links/20260505abc"
+    assert body["verify_status_code"] == 200
+
+
+@respx.mock
 def test_gopay_auto_unbind_run_fetches_latest_unlink_url_and_patches(tmp_path):
     from webui.backend import gopay_auto_unbind
 

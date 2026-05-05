@@ -8,6 +8,7 @@
         <span class="brand-clock">{{ clock }}</span>
       </div>
       <div class="run-nav">
+        <GoPayUnbindInspector />
         <RouterLink to="/wizard" class="nav-link active">配置向导</RouterLink>
         <RouterLink to="/run" class="nav-link">运行</RouterLink>
         <button class="header-btn" @click="logout" title="esc / Ctrl+L">退出</button>
@@ -55,6 +56,7 @@ import { useRouter, RouterLink } from "vue-router";
 import { useWizardStore } from "../stores/wizard";
 import TopStepper from "../components/TopStepper.vue";
 import PreflightPanel from "../components/PreflightPanel.vue";
+import GoPayUnbindInspector from "../components/GoPayUnbindInspector.vue";
 import { api } from "../api/client";
 
 import Step01 from "../components/steps/Step01_Welcome.vue";

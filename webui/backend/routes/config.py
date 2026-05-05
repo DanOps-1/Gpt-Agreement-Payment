@@ -38,6 +38,17 @@ class GoPayAutoUnbindFetchRequest(BaseModel):
     timeout: float = 20.0
 
 
+class GoPayAutoUnbindInspectRequest(BaseModel):
+    timeout: float = 20.0
+
+
+class GoPayManualUnbindRequest(BaseModel):
+    unlink_url: str = ""
+    service_unlink_url: str = ""
+    link_id: str = ""
+    timeout: float = 20.0
+
+
 @router.post("/export")
 def export(req: ExportRequest, user: str = CurrentUser):
     return write_configs(req.answers)
@@ -81,6 +92,38 @@ def fetch_gopay_auto_unbind_body(req: GoPayAutoUnbindFetchRequest, user: str = C
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"request failed: {e}")
     result.pop("request_headers", None)
+    return result
+
+
+@router.post("/gopay/auto-unbind/linkedapps")
+def inspect_gopay_linkedapps(req: GoPayAutoUnbindInspectRequest, user: str = CurrentUser):
+    try:
+        result = gopay_auto_unbind.fetch_linkedapps_from_config(s.PAY_CONFIG_PATH, timeout=req.timeout)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"request failed: {e}")
+    if result.get("skipped"):
+        raise HTTPException(status_code=400, detail=result.get("reason", "auto_unbind_not_configured"))
+    return result
+
+
+@router.post("/gopay/auto-unbind/manual")
+def manual_gopay_unbind(req: GoPayManualUnbindRequest, user: str = CurrentUser):
+    try:
+        result = gopay_auto_unbind.unlink_entry_from_config(
+            s.PAY_CONFIG_PATH,
+            unlink_url=req.unlink_url,
+            service_unlink_url=req.service_unlink_url,
+            link_id=req.link_id,
+            timeout=req.timeout,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"request failed: {e}")
+    if result.get("skipped"):
+        raise HTTPException(status_code=400, detail=result.get("reason", "auto_unbind_not_configured"))
     return result
 
 
