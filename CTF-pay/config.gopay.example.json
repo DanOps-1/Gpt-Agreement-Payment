@@ -17,6 +17,18 @@
       "unlink_raw_request": ""
     }
   },
+  "sub2api": {
+    "enabled": false,
+    "base_url": "https://YOUR_SUB2API_HOST",
+    "admin_token": "YOUR_SUB2API_ADMIN_JWT",
+    "oauth_client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+    "group_ids": [],
+    "concurrency": 1,
+    "priority": 0,
+    "load_factor": 1,
+    "rate_multiplier": 1,
+    "timeout_s": 20
+  },
   "fresh_checkout": {
     "auth": {
       "cookie_header": "",

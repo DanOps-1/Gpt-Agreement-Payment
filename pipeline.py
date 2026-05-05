@@ -681,10 +681,12 @@ def _codex_oauth_client_id_from_card_cfg(cfg: dict) -> str:
     if not isinstance(cfg, dict):
         cfg = {}
     cpa_cfg = cfg.get("cpa") or {}
+    sub2api_cfg = cfg.get("sub2api") or {}
     fresh_cfg = cfg.get("fresh_checkout") or {}
     auth_cfg = fresh_cfg.get("auth") or {}
     for value in (
         (cpa_cfg or {}).get("oauth_client_id", ""),
+        (sub2api_cfg or {}).get("oauth_client_id", ""),
         cfg.get("oauth_client_id", ""),
         cfg.get("codex_oauth_client_id", ""),
         auth_cfg.get("oauth_client_id", ""),
@@ -955,6 +957,16 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
             except Exception as e:
                 print(f"[CPA] 导入异常: {e}")
                 record["cpa_import"] = "error"
+
+        sub2api_cfg = (card_cfg or {}).get("sub2api") or {}
+        if pay_status == "succeeded" and sub2api_cfg.get("enabled"):
+            try:
+                sid = (pay_result.get("raw") or {}).get("session_id", "") if isinstance(pay_result.get("raw"), dict) else ""
+                sub2api_status = _sub2api_import_after_team(reg.get("email", ""), sid, sub2api_cfg)
+                record["sub2api_import"] = sub2api_status
+            except Exception as e:
+                print(f"[sub2api] 导入异常: {e}")
+                record["sub2api_import"] = "error"
 
         _append_result(record)
         emoji = "✓" if pay_status == "succeeded" else "✗"
@@ -1361,6 +1373,15 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
             except Exception as e:
                 print(f"[CPA] 导入异常: {e}")
                 record["cpa_import"] = "error"
+        sub2api_cfg = (card_cfg or {}).get("sub2api") or {}
+        if status == "succeeded" and sub2api_cfg.get("enabled"):
+            try:
+                sid = raw.get("session_id", "") if isinstance(raw, dict) else ""
+                sub2api_status = _sub2api_import_after_team(pay_email, sid, sub2api_cfg)
+                record["sub2api_import"] = sub2api_status
+            except Exception as e:
+                print(f"[sub2api] 导入异常: {e}")
+                record["sub2api_import"] = "error"
         _append_result(record)
         return result
     except PaymentError as e:
@@ -2868,6 +2889,197 @@ def _cpa_import_after_team(
         return "fail_upload"
 
 
+def _sub2api_int(value, default=0) -> int:
+    try:
+        if value in (None, ""):
+            return default
+        return int(value)
+    except Exception:
+        return default
+
+
+def _sub2api_float(value, default=0.0) -> float:
+    try:
+        if value in (None, ""):
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def _sub2api_group_ids(value) -> list[int]:
+    if isinstance(value, list):
+        raw = value
+    else:
+        raw = str(value or "").replace(";", ",").split(",")
+    out: list[int] = []
+    for item in raw:
+        try:
+            n = int(str(item).strip())
+        except Exception:
+            continue
+        if n > 0:
+            out.append(n)
+    return out
+
+
+def _sub2api_jwt_exp(access_token: str) -> tuple[str, int]:
+    import base64
+    if not access_token:
+        return "", 0
+    try:
+        p = access_token.split(".")[1]
+        p += "=" * (-len(p) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(p).decode())
+        exp = int(payload.get("exp") or 0)
+        if not exp:
+            return "", 0
+        return datetime.fromtimestamp(exp, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), exp
+    except Exception:
+        return "", 0
+
+
+def _sub2api_import_after_team(
+    email: str,
+    sid: str,
+    sub2api_cfg: dict,
+    *,
+    refresh_token: str = "",
+    is_free: bool = False,
+) -> str:
+    """Push an OpenAI OAuth account to sub2api after registration/payment."""
+    import urllib.request, urllib.error
+    if not sub2api_cfg or not sub2api_cfg.get("enabled"):
+        return "skipped"
+
+    base_url = (sub2api_cfg.get("base_url") or "").rstrip("/")
+    admin_token = (
+        sub2api_cfg.get("admin_token")
+        or sub2api_cfg.get("admin_key")
+        or sub2api_cfg.get("token")
+        or ""
+    ).strip()
+    if not base_url or not admin_token or not email:
+        return "skipped"
+
+    rt = (refresh_token or "").strip() or _find_latest_refresh_token_for_email(email, sid)
+    reg_acc = _find_latest_registered_account_for_email(email) or {}
+    at = ""
+    id_tok = ""
+    account_id = ""
+
+    if rt:
+        try:
+            import urllib.parse
+            client_id = sub2api_cfg.get("oauth_client_id") or "app_EMoamEEZ73f0CkXaXp7hrann"
+            data = urllib.parse.urlencode({
+                "grant_type": "refresh_token",
+                "refresh_token": rt,
+                "client_id": client_id,
+                "scope": "openid email profile offline_access",
+            }).encode()
+            req = urllib.request.Request(
+                "https://auth.openai.com/oauth/token",
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded",
+                         "Accept": "application/json"},
+                method="POST",
+            )
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(req, timeout=20) as r:
+                tok = json.loads(r.read().decode())
+            at = tok.get("access_token", "") or ""
+            id_tok = tok.get("id_token", "") or at
+            rt = tok.get("refresh_token", rt) or rt
+            if at:
+                account_id = _oai_team_id_from_access_token(at)
+        except Exception as e:
+            print(f"[sub2api] {email} refresh_token exchange failed, will upload available token fields: {e}")
+
+    if not at:
+        at = (reg_acc.get("access_token") or "").strip()
+    if not id_tok:
+        id_tok = (reg_acc.get("id_token") or "").strip() or at
+    if not account_id and at:
+        account_id = _oai_team_id_from_access_token(at)
+    if not rt and not at:
+        print(f"[sub2api] {email} no refresh_token/access_token, skipped")
+        return "no_token"
+
+    expired_iso, expires_at = _sub2api_jwt_exp(at)
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    credentials = {
+        "id_token": id_tok,
+        "access_token": at,
+        "refresh_token": rt,
+        "account_id": account_id,
+        "email": email,
+        "last_refresh": now_iso,
+        "expired": expired_iso,
+        "expires_at": expires_at,
+        "type": "codex",
+        "plan": "free" if is_free else "paid",
+    }
+    name_prefix = (sub2api_cfg.get("name_prefix") or "codex").strip() or "codex"
+    payload = {
+        "name": f"{name_prefix}-{email}",
+        "platform": (sub2api_cfg.get("platform") or "openai").strip() or "openai",
+        "type": (sub2api_cfg.get("type") or "oauth").strip() or "oauth",
+        "credentials": credentials,
+        "concurrency": _sub2api_int(sub2api_cfg.get("concurrency"), 1),
+        "priority": _sub2api_int(sub2api_cfg.get("priority"), 0),
+        "load_factor": _sub2api_int(sub2api_cfg.get("load_factor"), 1),
+        "rate_multiplier": _sub2api_float(sub2api_cfg.get("rate_multiplier"), 1.0),
+    }
+    if expires_at:
+        payload["expires_at"] = expires_at
+    group_ids = _sub2api_group_ids(sub2api_cfg.get("group_ids"))
+    if group_ids:
+        payload["group_ids"] = group_ids
+    if "auto_pause_on_expired" in sub2api_cfg:
+        payload["auto_pause_on_expired"] = bool(sub2api_cfg.get("auto_pause_on_expired"))
+    proxy = str(sub2api_cfg.get("proxy") or "").strip()
+    if proxy:
+        payload["proxy"] = proxy
+    user_agent = str(sub2api_cfg.get("user_agent") or "").strip()
+    if user_agent:
+        payload["user_agent"] = user_agent
+    if sub2api_cfg.get("confirm_mixed_channel_risk"):
+        payload["confirm_mixed_channel_risk"] = True
+
+    try:
+        req = urllib.request.Request(
+            f"{base_url}/api/v1/admin/accounts",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Authorization": f"Bearer {admin_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Gpt-Agreement-Payment/sub2api",
+            },
+            method="POST",
+        )
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=_sub2api_int(sub2api_cfg.get("timeout_s"), 20)) as r:
+            body = r.read().decode(errors="replace")[:300]
+            status_code = getattr(r, "status", 200)
+        print(
+            f"[sub2api] OK {email} -> {base_url} "
+            f"status={status_code} account_id={account_id[:8] or '?'} resp={body}"
+        )
+        return "ok"
+    except urllib.error.HTTPError as e:
+        try:
+            eb = e.read().decode(errors="replace")[:500]
+        except Exception:
+            eb = ""
+        print(f"[sub2api] FAIL {email} upload http={e.code} body={eb}")
+        return "fail_upload"
+    except Exception as e:
+        print(f"[sub2api] FAIL {email} upload error: {e}")
+        return "fail_upload"
+
+
 def _team_probe_after_payment(pay_record, team_client, pool, domain):
     """支付成功后：读 RT → 导入 team → 写回 probe 结果 → 更新域状态。
     返回 probe 返回的 status 字符串（ok/no_permission/failed/error/none）。"""
@@ -2930,8 +3142,11 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
     card_cfg = _read_card_cfg(card_config_path)
     cardw_path = _load_cardw_path_from_card_cfg(card_cfg, cardw_config_path)
     cpa_cfg = (card_cfg or {}).get("cpa") or {}
+    sub2api_cfg = (card_cfg or {}).get("sub2api") or {}
     if not cpa_cfg.get("enabled"):
         print("[self-dealer] 警告：CPA 未启用，CPA 推送将跳过")
+    if not sub2api_cfg.get("enabled"):
+        print("[self-dealer] 警告：sub2api 未启用，sub2api 推送将跳过")
 
     if resume_owner_email:
         print("=" * 72)
@@ -3079,7 +3294,7 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
                 entry["status"] = "no_rt"
                 continue
 
-            # 追加一条支付成功记录，让 _cpa_import_after_team 能读到
+            # 追加一条支付成功记录，让下游推送能读到
             sid = f"self-dealer-m{i}-{mem_email.split('@')[0][:20]}"
             res_entry = {
                 "ts": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
@@ -3095,12 +3310,22 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
             except Exception as e:
                 print(f"[self-dealer] 写支付记录失败: {e}")
 
-            # CPA 推送
+            # 下游推送
+            cpa_status = "skipped"
             try:
-                status = _cpa_import_after_team(mem_email, sid, cpa_cfg)
+                if cpa_cfg.get("enabled"):
+                    cpa_status = _cpa_import_after_team(mem_email, sid, cpa_cfg)
             except Exception as e:
-                status = f"cpa_error: {str(e)[:100]}"
-            entry["status"] = status
+                cpa_status = f"cpa_error: {str(e)[:100]}"
+            sub2api_status = "skipped"
+            try:
+                if sub2api_cfg.get("enabled"):
+                    sub2api_status = _sub2api_import_after_team(mem_email, sid, sub2api_cfg, refresh_token=rt)
+            except Exception as e:
+                sub2api_status = f"sub2api_error: {str(e)[:100]}"
+            entry["cpa_status"] = cpa_status
+            entry["sub2api_status"] = sub2api_status
+            entry["status"] = cpa_status if cpa_cfg.get("enabled") else sub2api_status
         except Exception as e:
             import traceback
             print(f"[self-dealer] ✗ member {i} 未捕获异常: {e}")
@@ -3121,8 +3346,11 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
         marker = "✓" if e["status"] == "ok" else "✗"
         if e["status"] == "ok":
             ok_cnt += 1
-        print(f"    {marker} [{e['index']}] {e['email']:55s} → {e['status']}")
-    print(f"\n  成功推 CPA 的 member: {ok_cnt}/{members_count}  （owner 单独计）")
+        extra = ""
+        if e.get("sub2api_status") not in (None, "", "skipped"):
+            extra = f"  sub2api={e.get('sub2api_status')}"
+        print(f"    {marker} [{e['index']}] {e['email']:55s} → {e['status']}{extra}")
+    print(f"\n  成功推下游的 member: {ok_cnt}/{members_count}  （owner 单独计）")
     return {"owner": owner_email, "team_id": team_id, "members": members_report}
 
 
@@ -3138,6 +3366,7 @@ def free_register_loop(card_config_path, cardw_config_path=None, count: int = 0)
     card_cfg = _read_card_cfg(card_config_path)
     cardw_path = _load_cardw_path_from_card_cfg(card_cfg, cardw_config_path)
     cpa_cfg = (card_cfg or {}).get("cpa") or {}
+    sub2api_cfg = (card_cfg or {}).get("sub2api") or {}
     mail_cfg = card_cfg.get("mail") or {}
     proxy_url = card_cfg.get("proxy", "")
 
@@ -3147,7 +3376,7 @@ def free_register_loop(card_config_path, cardw_config_path=None, count: int = 0)
     # OAuth Codex client_id：card.py:_exchange_refresh_token_with_session 读
     # OAUTH_CODEX_CLIENT_ID env var；从 cpa.oauth_client_id 推过去（subprocess
     # 调用 card 模块时该 env 必须已设，否则 OpenAI 返 AuthApiFailure）。
-    _client_id = (cpa_cfg.get("oauth_client_id") or "").strip()
+    _client_id = (cpa_cfg.get("oauth_client_id") or sub2api_cfg.get("oauth_client_id") or "").strip()
     if _client_id and not os.environ.get("OAUTH_CODEX_CLIENT_ID"):
         os.environ["OAUTH_CODEX_CLIENT_ID"] = _client_id
         print(f"[free] 自动设 OAUTH_CODEX_CLIENT_ID = {_client_id}")
@@ -3158,6 +3387,7 @@ def free_register_loop(card_config_path, cardw_config_path=None, count: int = 0)
     print(
         f"[free-register] start count={count or '∞'} "
         f"cpa.enabled={cpa_cfg.get('enabled')} "
+        f"sub2api.enabled={sub2api_cfg.get('enabled')} "
         f"proxy={proxy_url or '<none>'}"
     )
 
@@ -3202,6 +3432,11 @@ def free_register_loop(card_config_path, cardw_config_path=None, count: int = 0)
                         email, sid, cpa_cfg, refresh_token=rt, is_free=True,
                     )
                     print(f"[free] [{iteration}] cpa({email}) → {cpa_st}")
+                if sub2api_cfg.get("enabled"):
+                    sub2api_st = _sub2api_import_after_team(
+                        email, sid, sub2api_cfg, refresh_token=rt, is_free=True,
+                    )
+                    print(f"[free] [{iteration}] sub2api({email}) → {sub2api_st}")
                 succeeded += 1
             else:
                 if fail == "account_dead":
@@ -3233,13 +3468,14 @@ def free_backfill_rt_loop(card_config_path, cardw_config_path=None):
 
     card_cfg = _read_card_cfg(card_config_path)
     cpa_cfg = (card_cfg or {}).get("cpa") or {}
+    sub2api_cfg = (card_cfg or {}).get("sub2api") or {}
     mail_cfg = card_cfg.get("mail") or {}
     proxy_url = card_cfg.get("proxy", "")
 
     _ensure_gost_alive(card_cfg)
 
     # OAuth Codex client_id（同 free_register_loop，避免 AuthApiFailure）
-    _client_id = (cpa_cfg.get("oauth_client_id") or "").strip()
+    _client_id = (cpa_cfg.get("oauth_client_id") or sub2api_cfg.get("oauth_client_id") or "").strip()
     if _client_id and not os.environ.get("OAUTH_CODEX_CLIENT_ID"):
         os.environ["OAUTH_CODEX_CLIENT_ID"] = _client_id
         print(f"[free] 自动设 OAUTH_CODEX_CLIENT_ID = {_client_id}")
@@ -3301,6 +3537,11 @@ def free_backfill_rt_loop(card_config_path, cardw_config_path=None):
                     email, sid, cpa_cfg, refresh_token=rt, is_free=True,
                 )
                 print(f"[free] [{i}/{len(todo)}] cpa({email}) → {cpa_st}")
+            if sub2api_cfg.get("enabled"):
+                sub2api_st = _sub2api_import_after_team(
+                    email, sid, sub2api_cfg, refresh_token=rt, is_free=True,
+                )
+                print(f"[free] [{i}/{len(todo)}] sub2api({email}) → {sub2api_st}")
             succeeded += 1
         else:
             if fail == "account_dead":

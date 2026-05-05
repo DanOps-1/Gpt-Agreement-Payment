@@ -36,6 +36,7 @@ _otp_to_db: bool = False               # True when gopay.py waits on WebUI SQLit
 _otp_pending: bool = False             # set when gopay.py asks/waits for OTP
 _otp_pending_since: Optional[float] = None
 _otp_file_is_temp: bool = False
+_RUN_GOPAY_AUTO_UNBIND_ENABLED = False
 
 
 def _append_log(line: str) -> None:
@@ -242,7 +243,10 @@ def _drain(proc: subprocess.Popen) -> None:
             line = line.rstrip()
             if not line:
                 continue
-            should_auto_unbind = _is_pay_success_line(line)
+            # Automatic GoPay unlink is disabled in Run. GoPay's x-e1 header
+            # appears to be a request-level signature bound to method/path/link_id,
+            # so saved PATCH replay is not stable enough to run after payment.
+            should_auto_unbind = _RUN_GOPAY_AUTO_UNBIND_ENABLED and _is_pay_success_line(line)
             with _lock:
                 _seq_counter += 1
                 _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line})
