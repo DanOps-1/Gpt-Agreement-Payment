@@ -26,6 +26,7 @@ import os
 import random
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -47,6 +48,65 @@ DOMAIN_STATE_KEY = "email_domain_state"
 DAEMON_STATE_KEY = "daemon_state"
 SECRETS_KEY = "secrets"
 RUNTIME_DB_FILE = OUTPUT_DIR / "webui.db"
+
+
+def _subprocess_tree_kwargs() -> dict:
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    return {"start_new_session": True}
+
+
+def _terminate_process_tree(proc: subprocess.Popen, timeout: float = 5.0) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=timeout)
+        except Exception:
+            pass
+        return
+
+    try:
+        pgid = os.getpgid(proc.pid)
+        if pgid == os.getpgrp():
+            raise RuntimeError("child is in current process group")
+        os.killpg(pgid, signal.SIGTERM)
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=timeout)
+        return
+    except Exception:
+        pass
+    try:
+        pgid = os.getpgid(proc.pid)
+        if pgid != os.getpgrp():
+            os.killpg(pgid, signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=timeout)
+    except Exception:
+        pass
 
 
 # ──────────────────────────────────────────────
@@ -622,6 +682,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, env=env, cwd=str(CARDW_DIR),
+        **_subprocess_tree_kwargs(),
     )
 
     result_json = None
@@ -636,7 +697,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
                 payload = line.split("=", 1)[1]
                 result_json = json.loads(payload)
             if time.time() > deadline:
-                proc.kill()
+                _terminate_process_tree(proc)
                 raise RegistrationError("注册超时")
     finally:
         proc.wait()
@@ -821,6 +882,7 @@ def pay(card_config_path, session_token=None, access_token=None,
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, env=env,
+            **_subprocess_tree_kwargs(),
         )
         deadline = time.time() + timeout
         for line in proc.stdout:
@@ -842,7 +904,7 @@ def pay(card_config_path, session_token=None, access_token=None,
             ):
                 gopay_account_unavailable = True
             if time.time() > deadline:
-                proc.kill()
+                _terminate_process_tree(proc)
                 raise PaymentError("支付超时")
         proc.wait()
     finally:
