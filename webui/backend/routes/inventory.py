@@ -19,6 +19,7 @@ from ..account_inventory import build_accounts_inventory
 from ..account_validator import validate_accounts
 from ..db import get_db
 from .. import settings as s
+from .. import runner
 
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
@@ -349,30 +350,11 @@ def backfill_rt(req: IdsRequest, user: str = CurrentUser):
         raise HTTPException(status_code=400, detail="ids 不能为空")
     if len(req.ids) > 100:
         raise HTTPException(status_code=400, detail="单次最多 100 个")
-    pay_cfg = _load_pay_cfg()
-    pipeline = _pipeline_module()
     try:
-        pipeline._ensure_gost_alive(pay_cfg)
-    except Exception:
-        pass
-
-    db = get_db()
-    results: list[dict] = []
-    for aid in req.ids:
-        acc = db.get_registered_account(int(aid))
-        if not acc:
-            results.append({"id": aid, "email": "", "status": "missing"})
-            continue
-        results.append(_do_backfill_rt(acc, pay_cfg, pipeline))
-        time.sleep(1)
-    summary = {
-        "total": len(results),
-        "succeeded": sum(1 for r in results if r.get("status") == "succeeded"),
-        "skipped": sum(1 for r in results if r.get("status") == "skipped"),
-        "dead": sum(1 for r in results if r.get("status") == "dead"),
-        "failed": sum(1 for r in results if r.get("status") in ("transient_failed", "missing", "missing_email")),
-    }
-    return {"results": results, "summary": summary}
+        status = runner.start_backfill_rt(req.ids)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"started": True, "requested": len(req.ids), "status": status}
 
 
 @router.post("/accounts/cpa-push")

@@ -3512,7 +3512,7 @@ def free_register_loop(card_config_path, cardw_config_path=None, count: int = 0)
     print(f"\n[free-register] 完成 succeeded={succeeded} failed={failed}")
 
 
-def free_backfill_rt_loop(card_config_path, cardw_config_path=None):
+def free_backfill_rt_loop(card_config_path, cardw_config_path=None, account_ids=None):
     """free_only mode：读数据库里的注册账号给老号补 rt + 推 CPA(free)。
 
     跳过：已有 refresh_token / oauth_status==succeeded / oauth_status==dead /
@@ -3535,6 +3535,17 @@ def free_backfill_rt_loop(card_config_path, cardw_config_path=None):
         print(f"[free] 自动设 OAUTH_CODEX_CLIENT_ID = {_client_id}")
 
     accounts = _load_registered_accounts()
+    selected_ids = []
+    if account_ids:
+        for x in account_ids:
+            try:
+                selected_ids.append(int(x))
+            except Exception:
+                pass
+    if selected_ids:
+        by_id = {int(a.get("id") or 0): a for a in accounts if a.get("id")}
+        accounts = [by_id[i] for i in selected_ids if i in by_id]
+        print(f"[free-backfill] selected ids={selected_ids} matched={len(accounts)}")
     if not accounts:
         print("[free-backfill] 数据库注册账号为空，无可处理账号")
         return
@@ -3585,6 +3596,21 @@ def free_backfill_rt_loop(card_config_path, cardw_config_path=None):
 
         if rt:
             print(f"[free] [{i}/{len(todo)}] backfill {email} → succeeded rt_len={len(rt)}")
+            try:
+                db = get_db()
+                if acc.get("id"):
+                    db.update_registered_account_refresh_token(int(acc.get("id")), rt)
+                db.add_card_result({
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "status": "succeeded",
+                    "chatgpt_email": email,
+                    "email": email,
+                    "session_id": sid,
+                    "channel": "free_backfill_rt",
+                    "refresh_token": rt,
+                })
+            except Exception as e:
+                print(f"[free] [{i}/{len(todo)}] save rt failed: {e}")
             _set_account_oauth_status(email, "succeeded")
             if cpa_cfg.get("enabled"):
                 cpa_st = _cpa_import_after_team(
@@ -3654,6 +3680,8 @@ def main():
                         help="free_only 模式：循环注册免费 ChatGPT 号 + OAuth 拿 rt + 推 CPA(free)")
     parser.add_argument("--free-backfill-rt", action="store_true",
                         help="free_only 模式：读数据库老号记录补 rt + 推 CPA(free)，跳过已 succeeded/dead")
+    parser.add_argument("--free-backfill-rt-ids", default="",
+                        help="Comma-separated registered account ids for --free-backfill-rt")
     parser.add_argument("--count", type=int, default=0, metavar="N",
                         help="--free-register 模式下注册 N 次后退出（0 = 无限）")
     args = parser.parse_args()
@@ -3671,7 +3699,9 @@ def main():
                                 count=args.count)
             return
         if args.free_backfill_rt:
-            free_backfill_rt_loop(args.config, cardw_config_path=args.cardw_config)
+            ids = [x.strip() for x in str(args.free_backfill_rt_ids or "").split(",") if x.strip()]
+            free_backfill_rt_loop(args.config, cardw_config_path=args.cardw_config,
+                                  account_ids=ids)
             return
         if args.daemon:
             daemon(args.config, cardw_config_path=args.cardw_config, use_paypal=args.paypal)

@@ -1,12 +1,12 @@
-"""单 active-run 的 pipeline 进程控制器。
+﻿"""鍗?active-run 鐨?pipeline 杩涚▼鎺у埗鍣ㄣ€?
 
-封装 `xvfb-run -a python pipeline.py [args]` 子进程：spawn / 流式收 stdout
-到环形日志缓冲 / SIGTERM-优先 stop / 暴露 status + log 给路由层。
+灏佽 `xvfb-run -a python pipeline.py [args]` 瀛愯繘绋嬶細spawn / 娴佸紡鏀?stdout
+鍒扮幆褰㈡棩蹇楃紦鍐?/ SIGTERM-浼樺厛 stop / 鏆撮湶 status + log 缁欒矾鐢卞眰銆?
 
-GoPay 模式下额外支持 OTP 中转：默认通过 WebUI 内部 HTTP endpoint
-把 WhatsApp / 手动补录 OTP 写入 SQLite，gopay.py 轮询该 endpoint。
-保留 `GOPAY_OTP_REQUEST path=<file>` 旧格式识别，只作为显式 legacy
-file provider 的兼容 fallback。
+GoPay 妯″紡涓嬮澶栨敮鎸?OTP 涓浆锛氶粯璁ら€氳繃 WebUI 鍐呴儴 HTTP endpoint
+鎶?WhatsApp / 鎵嬪姩琛ュ綍 OTP 鍐欏叆 SQLite锛実opay.py 杞璇?endpoint銆?
+淇濈暀 `GOPAY_OTP_REQUEST path=<file>` 鏃ф牸寮忚瘑鍒紝鍙綔涓烘樉寮?legacy
+file provider 鐨勫吋瀹?fallback銆?
 """
 import json
 import os
@@ -85,15 +85,22 @@ def _gopay_auto_otp_enabled() -> bool:
 
 def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: int,
               register_only: bool, pay_only: bool, gopay: bool = False,
-              gopay_otp_file: str = "", count: int = 0) -> list[str]:
+              gopay_otp_file: str = "", count: int = 0,
+              backfill_rt_ids: Optional[list[int]] = None) -> list[str]:
     """根据参数拼出最终命令行。"""
     cmd = ["xvfb-run", "-a", "python", "-u", "pipeline.py",
            "--config", str(s.PAY_CONFIG_PATH)]
-    # free_only 两个子模式不需要 paypal / gopay 支付段
+    # free_only 涓や釜瀛愭ā寮忎笉闇€瑕?paypal / gopay 鏀粯娈?
     if mode == "free_register":
         cmd.append("--free-register")
         if count > 0:
             cmd.extend(["--count", str(count)])
+        return cmd
+    if mode == "backfill_rt":
+        cmd.append("--free-backfill-rt")
+        ids = [str(int(x)) for x in (backfill_rt_ids or [])]
+        if ids:
+            cmd.extend(["--free-backfill-rt-ids", ",".join(ids)])
         return cmd
     if gopay:
         cmd.append("--gopay")
@@ -101,16 +108,16 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
             cmd.extend(["--gopay-otp-file", gopay_otp_file])
     elif paypal:
         cmd.append("--paypal")
-    # mode 决定循环结构（daemon ∞ / self_dealer / batch N / 单次）
+    # mode 鍐冲畾寰幆缁撴瀯锛坉aemon 鈭?/ self_dealer / batch N / 鍗曟锛?
     if mode == "daemon":
         cmd.append("--daemon")
     elif mode == "self_dealer":
         cmd.extend(["--self-dealer", str(self_dealer)])
     elif mode == "batch":
         cmd.extend(["--batch", str(batch), "--workers", str(workers)])
-    # mode == "single" → no extra flags
-    # register_only / pay_only 是 modifier，跟 mode 正交（batch + register-only
-    # = 批量注册 N 个；single + register-only = 单次注册）
+    # mode == "single" 鈫?no extra flags
+    # register_only / pay_only 鏄?modifier锛岃窡 mode 姝ｄ氦锛坆atch + register-only
+    # = 鎵归噺娉ㄥ唽 N 涓紱single + register-only = 鍗曟娉ㄥ唽锛?
     if register_only:
         cmd.append("--register-only")
     elif pay_only:
@@ -139,18 +146,22 @@ def status() -> dict:
 def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
           self_dealer: int = 0, register_only: bool = False, pay_only: bool = False,
           gopay: bool = False, count: int = 0) -> dict:
+    cmd = build_cmd(mode, paypal, batch, workers, self_dealer,
+                    register_only, pay_only, gopay=gopay,
+                    gopay_otp_file="", count=count)
+    return _start_cmd(cmd, mode, gopay=gopay)
+
+
+
+def _start_cmd(cmd: list[str], mode: str, *, gopay: bool = False) -> dict:
     global _proc, _started_at, _ended_at, _exit_code, _cmd, _mode, _run_id
     global _log_lines, _seq_counter, _otp_file, _otp_to_db, _otp_pending, _otp_pending_since, _otp_file_is_temp
     with _lock:
         if _proc is not None and _proc.poll() is None:
             raise RuntimeError("a pipeline is already running")
 
-        # OTP 默认走 WebUI SQLite endpoint；不再创建临时 FIFO 文件。
+        # OTP 姒涙顓荤挧?WebUI SQLite endpoint閿涙稐绗夐崘宥呭灡瀵よ桨澶嶉弮?FIFO 閺傚洣娆㈤妴?
         otp_p: Optional[Path] = None
-
-        cmd = build_cmd(mode, paypal, batch, workers, self_dealer,
-                        register_only, pay_only, gopay=gopay,
-                        gopay_otp_file="", count=count)
 
         # Reset.  Bump run_id before spawning so any late drain thread from a
         # previous process cannot write into this run's fresh log buffer.
@@ -199,6 +210,15 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
 
         threading.Thread(target=_drain, args=(proc, run_id), daemon=True).start()
     return status()
+
+
+def start_backfill_rt(ids: list[int]) -> dict:
+    clean = [int(x) for x in ids if str(x).strip().lstrip("-").isdigit()]
+    if not clean:
+        raise RuntimeError("no account ids selected")
+    cmd = build_cmd("backfill_rt", False, 0, 1, 0, False, False,
+                    backfill_rt_ids=clean)
+    return _start_cmd(cmd, "backfill_rt")
 
 
 def _detect_otp_wait_target(line: str) -> tuple[str, Optional[Path]]:

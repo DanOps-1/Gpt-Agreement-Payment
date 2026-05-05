@@ -836,12 +836,14 @@ async function backfillManagerSelectedRt() {
   if (!ids.length) { message.warning("请选择 RT 待补或可重试账号"); return; }
   accountManager.value.busy = true;
   try {
-    const r = await api.post("/inventory/accounts/backfill-rt", { ids });
-    const s = r.data?.summary || {};
-    message.success(`补RT完成：ok=${s.succeeded || 0}  skipped=${s.skipped || 0}  dead=${s.dead || 0}  fail=${s.failed || 0}`);
-    await refreshInventory();
+    await api.post("/inventory/accounts/backfill-rt", { ids });
+    message.success(`已启动补RT任务：${ids.length} 个账号`);
+    lines.value = [];
+    closeAccountManager();
+    await refreshStatus();
+    openStream();
   } catch (e: any) {
-    message.error(`补RT失败：${e?.response?.data?.detail || e?.message || e}`);
+    message.error(`补RT启动失败：${e?.response?.data?.detail || e?.message || e}`);
   } finally {
     accountManager.value.busy = false;
   }
