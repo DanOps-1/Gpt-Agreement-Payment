@@ -2908,6 +2908,40 @@ def _sub2api_float(value, default=0.0) -> float:
         return default
 
 
+_SUB2API_DEFAULT_MODEL_MAPPING = {
+    "gpt-4o-audio-preview": "gpt-4o-audio-preview",
+    "gpt-4o-realtime-preview": "gpt-4o-realtime-preview",
+    "gpt-5.2": "gpt-5.2",
+    "gpt-5.2-2025-12-11": "gpt-5.2-2025-12-11",
+    "gpt-5.2-chat-latest": "gpt-5.2-chat-latest",
+    "gpt-5.2-pro": "gpt-5.2-pro",
+    "gpt-5.2-pro-2025-12-11": "gpt-5.2-pro-2025-12-11",
+    "gpt-5.3-codex": "gpt-5.3-codex",
+    "gpt-5.3-codex-spark": "gpt-5.3-codex-spark",
+    "gpt-5.4": "gpt-5.4",
+    "gpt-5.4-2026-03-05": "gpt-5.4-2026-03-05",
+    "gpt-5.4-mini": "gpt-5.4-mini",
+    "gpt-5.5": "gpt-5.5",
+    "gpt-image-1": "gpt-image-1",
+    "gpt-image-1.5": "gpt-image-1.5",
+    "gpt-image-2": "gpt-image-2",
+}
+
+
+def _sub2api_model_mapping(sub2api_cfg: dict) -> dict[str, str]:
+    raw = (sub2api_cfg or {}).get("model_mapping")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = None
+    if isinstance(raw, dict) and raw:
+        out = {str(k): str(v) for k, v in raw.items() if str(k).strip() and str(v).strip()}
+        if out:
+            return out
+    return dict(_SUB2API_DEFAULT_MODEL_MAPPING)
+
+
 def _sub2api_group_ids(value) -> list[int]:
     if isinstance(value, list):
         raw = value
@@ -3031,6 +3065,7 @@ def _sub2api_import_after_team(
         "expires_at": expires_at,
         "type": "codex",
         "plan": "free" if is_free else "paid",
+        "model_mapping": _sub2api_model_mapping(sub2api_cfg),
     }
     name_prefix = (sub2api_cfg.get("name_prefix") or "codex").strip() or "codex"
     payload = {

@@ -49,6 +49,7 @@
       <TermField v-model="sub2api.priority" label="Priority · priority" type="number" />
       <TermField v-model="sub2api.load_factor" label="Load Factor · load_factor" type="number" />
       <TermField v-model="sub2api.rate_multiplier" label="Rate Multiplier · rate_multiplier" type="number" />
+      <TermField v-model="sub2api.model_mapping" label="Model Mapping · JSON" />
       <div class="step-actions">
         <TermBtn :loading="sub2apiLoading" @click="testSub2api">健康检查</TermBtn>
       </div>
@@ -100,6 +101,9 @@ const sub2api = ref({
   priority: sub2apiInit.priority ?? 0,
   load_factor: sub2apiInit.load_factor ?? 1,
   rate_multiplier: sub2apiInit.rate_multiplier ?? 1,
+  model_mapping: typeof sub2apiInit.model_mapping === "object"
+    ? JSON.stringify(sub2apiInit.model_mapping)
+    : (sub2apiInit.model_mapping ?? ""),
 });
 
 // 立即同步到 store 覆盖可能从 source 同步过来的 enabled=true，
