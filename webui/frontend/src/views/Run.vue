@@ -222,7 +222,7 @@
             <div class="account-manager-actions">
               <label class="inventory-toolbar-check">
                 <input type="checkbox" :checked="managerAllSelected" @change="toggleManagerSelectAll" />
-                <span>全选 ({{ managerSelectedIds.size }} / {{ inventory.accounts.length }})</span>
+                <span>全选本页 ({{ managerSelectedIds.size }} / {{ inventory.accounts.length }})</span>
               </label>
               <div class="inventory-toolbar-actions">
                 <TermBtn :loading="accountManager.busy" :disabled="managerSelectedIds.size === 0" @click="downloadManagerSelected">下载勾选账号</TermBtn>
@@ -230,7 +230,7 @@
               </div>
             </div>
             <div class="account-manager-list">
-              <div v-for="acc in inventory.accounts" :key="acc.id || acc.email" class="account-manager-row" :class="{ downloaded: acc.downloaded }">
+              <div v-for="acc in pagedManagerAccounts" :key="acc.id || acc.email" class="account-manager-row" :class="{ downloaded: acc.downloaded }">
                 <input type="checkbox" :checked="managerSelectedIds.has(acc.id)" @change="toggleManagerSelect(acc.id)" />
                 <span class="account-manager-email">{{ acc.email }}</span>
                 <span class="badge" :class="planBadgeClass(acc.plan_tag)">{{ planLabel(acc.plan_tag) }}</span>
@@ -238,6 +238,11 @@
                 <span v-if="acc.downloaded" class="badge badge-ok">已下载</span>
               </div>
               <div v-if="!inventory.accounts.length" class="inventory-empty">暂无账号库存。</div>
+            </div>
+            <div v-if="inventory.accounts.length" class="account-manager-pager">
+              <button class="pager-btn" :disabled="accountManager.page <= 1" @click="accountManager.page -= 1">上一页</button>
+              <span>第 {{ accountManager.page }} / {{ managerPageCount }} 页</span>
+              <button class="pager-btn" :disabled="accountManager.page >= managerPageCount" @click="accountManager.page += 1">下一页</button>
             </div>
           </div>
         </div>
@@ -438,6 +443,7 @@ const otpDialog = ref({
 const accountManager = ref({
   open: false,
   busy: false,
+  page: 1,
 });
 
 function onGoPayToggle(v: boolean) {
@@ -710,12 +716,22 @@ function deleteAllInvalid() {
 const downloadedIds = computed(() =>
   inventory.value.accounts.filter(a => a.downloaded).map(a => a.id)
 );
+const managerPageSize = 10;
+const managerPageCount = computed(() =>
+  Math.max(1, Math.ceil(inventory.value.accounts.length / managerPageSize))
+);
+const pagedManagerAccounts = computed(() => {
+  const page = Math.min(Math.max(1, accountManager.value.page), managerPageCount.value);
+  const start = (page - 1) * managerPageSize;
+  return inventory.value.accounts.slice(start, start + managerPageSize);
+});
 const managerAllSelected = computed(() => {
-  const ids = inventory.value.accounts.map(a => a.id).filter(Boolean);
+  const ids = pagedManagerAccounts.value.map(a => a.id).filter(Boolean);
   return ids.length > 0 && ids.every(id => managerSelectedIds.value.has(id));
 });
 function openAccountManager() {
   accountManager.value.open = true;
+  accountManager.value.page = 1;
   managerSelectedIds.value = new Set(
     inventory.value.accounts.filter(a => !a.downloaded).map(a => a.id).filter(Boolean)
   );
@@ -730,9 +746,13 @@ function toggleManagerSelect(id: number) {
 }
 function toggleManagerSelectAll() {
   if (managerAllSelected.value) {
-    managerSelectedIds.value = new Set();
+    const next = new Set(managerSelectedIds.value);
+    pagedManagerAccounts.value.forEach(a => next.delete(a.id));
+    managerSelectedIds.value = next;
   } else {
-    managerSelectedIds.value = new Set(inventory.value.accounts.map(a => a.id).filter(Boolean));
+    const next = new Set(managerSelectedIds.value);
+    pagedManagerAccounts.value.forEach(a => next.add(a.id));
+    managerSelectedIds.value = next;
   }
 }
 async function downloadManagerSelected() {
@@ -1543,6 +1563,7 @@ onBeforeUnmount(() => {
   background: var(--bg-panel);
 }
 .account-manager-list {
+  height: 480px;
   overflow-y: auto;
   padding: 10px 12px 12px;
   display: flex;
@@ -1566,6 +1587,34 @@ onBeforeUnmount(() => {
   color: var(--fg-primary);
   word-break: break-all;
   min-width: 0;
+}
+.account-manager-pager {
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 10px 12px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  color: var(--fg-secondary);
+  font-size: 12px;
+}
+.pager-btn {
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--fg-secondary);
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.pager-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pager-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 @media (max-width: 1024px) {
