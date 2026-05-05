@@ -436,6 +436,8 @@ const otpDialog = ref({
   open: false,
   value: "",
   submitting: false,
+  submitted: false,
+  successNotified: false,
   since: 0,
   autoFilled: false,
   polling: false,
@@ -987,7 +989,7 @@ function openStream() {
   });
   eventSource.addEventListener("otp_resolved", () => {
     closeOtpDialog();
-    message.success("外部 OTP 已接入，继续运行");
+    notifyOtpSuccess("外部 OTP 已接入，继续运行");
   });
   eventSource.addEventListener("done", async () => {
     eventSource?.close();
@@ -1012,6 +1014,8 @@ function openOtpDialog(since?: number | null) {
   if (!otpDialog.value.open) {
     otpDialog.value.value = "";
     otpDialog.value.autoFilled = false;
+    otpDialog.value.submitted = false;
+    otpDialog.value.successNotified = false;
   }
   otpDialog.value.open = true;
   otpDialog.value.since = Number(
@@ -1029,6 +1033,12 @@ function closeOtpDialog() {
   stopOtpPolling();
 }
 
+function notifyOtpSuccess(text: string) {
+  if (otpDialog.value.successNotified) return;
+  otpDialog.value.successNotified = true;
+  message.success(text);
+}
+
 function startOtpPolling() {
   otpDialog.value.polling = true;
   if (otpPollTimer) return;
@@ -1043,7 +1053,7 @@ function stopOtpPolling() {
 }
 
 async function pollExternalOtp() {
-  if (!otpDialog.value.open || otpDialog.value.submitting) return;
+  if (!otpDialog.value.open || otpDialog.value.submitting || otpDialog.value.submitted) return;
   try {
     const r = await api.get<WaOtpStatus>("/whatsapp/status");
     const latest = r.data?.latest;
@@ -1053,7 +1063,7 @@ async function pollExternalOtp() {
     if (otpDialog.value.value !== otp) {
       otpDialog.value.value = otp;
       otpDialog.value.autoFilled = true;
-      message.success("已从外部 OTP 自动填入");
+      if (!otpDialog.value.successNotified) message.success("已从外部 OTP 自动填入");
     }
     await submitOtp({ auto: true });
   } catch {}
@@ -1061,17 +1071,21 @@ async function pollExternalOtp() {
 
 async function submitOtp(options?: { auto?: boolean } | Event) {
   const auto = Boolean((options as { auto?: boolean } | undefined)?.auto);
+  if (otpDialog.value.submitting || otpDialog.value.submitted) return;
   const v = otpDialog.value.value.trim();
   if (!v) {
     if (!auto) message.warning("请输入 OTP");
     return;
   }
+  otpDialog.value.submitted = true;
+  stopOtpPolling();
   otpDialog.value.submitting = true;
   try {
     await api.post("/run/otp", { otp: v });
+    notifyOtpSuccess(auto ? "外部 OTP 已提交" : "OTP 已提交");
     closeOtpDialog();
-    message.success(auto ? "外部 OTP 已提交" : "OTP 已提交");
   } catch (e: any) {
+    otpDialog.value.submitted = false;
     const detail = e.response?.data?.detail || "";
     if (auto && String(detail).includes("no OTP currently requested")) {
       closeOtpDialog();
