@@ -65,6 +65,7 @@ def _payment_events() -> list[dict]:
             "status": str(pay.get("status") or row.get("status") or ""),
             "error": str(pay.get("error") or row.get("error") or ""),
             "cpa_import": str(row.get("cpa_import") or ""),
+            "sub2api_import": str(row.get("sub2api_import") or ""),
         })
 
     for row in get_db().iter_card_results():
@@ -95,6 +96,16 @@ def _cpa_push_status_by_email(events: list[dict]) -> dict[str, str]:
     out: dict[str, str] = {}
     for ev in events:
         st = ev.get("cpa_import")
+        if not st:
+            continue
+        out[ev["email"]] = st
+    return out
+
+
+def _sub2api_push_status_by_email(events: list[dict]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for ev in events:
+        st = ev.get("sub2api_import")
         if not st:
             continue
         out[ev["email"]] = st
@@ -171,6 +182,7 @@ def build_accounts_inventory() -> dict:
             consumed_emails.add(ev["email"])
     team_emails = _team_emails(payment_events)
     cpa_status_by_email = _cpa_push_status_by_email(payment_events)
+    sub2api_status_by_email = _sub2api_push_status_by_email(payment_events)
     oauth_map = get_db().load_oauth_status_map()
     rt_emails = _refresh_token_emails()
 
@@ -232,12 +244,16 @@ def build_accounts_inventory() -> dict:
         plan_tag = _derive_plan_tag(email, paid=consumed, is_team=email in team_emails)
         cpa_status = cpa_status_by_email.get(email, "")
         cpa_pushed = cpa_status == "ok"
+        sub2api_status = sub2api_status_by_email.get(email, "")
+        sub2api_pushed = sub2api_status == "ok"
         items.append({
             "id": acc.get("id"),
             "email": email,
             "plan_tag": plan_tag,
             "cpa_status": cpa_status,
             "cpa_pushed": cpa_pushed,
+            "sub2api_status": sub2api_status,
+            "sub2api_pushed": sub2api_pushed,
             "registered_at": acc.get("ts") or "",
             "attempts": attempts.get(email, 1),
             "has_session_token": has_session,

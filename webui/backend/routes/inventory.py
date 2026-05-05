@@ -1,4 +1,4 @@
-"""Local account inventory: list, validate, delete, push to CPA."""
+"""Local account inventory: list, validate, delete, push to downstream channels."""
 from __future__ import annotations
 
 import json
@@ -41,6 +41,26 @@ def _load_cpa_cfg() -> dict:
     return cpa
 
 
+def _load_sub2api_cfg() -> dict:
+    try:
+        cfg = json.loads(s.PAY_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读 PAY_CONFIG_PATH 失败: {e}")
+    sub2api = (cfg.get("sub2api") or {})
+    if not sub2api.get("enabled"):
+        raise HTTPException(status_code=400,
+                            detail="sub2api 未启用：请先在 wizard Step11 填 sub2api 配置并启用")
+    if not sub2api.get("base_url"):
+        raise HTTPException(status_code=400, detail="sub2api 配置缺 base_url")
+    if not (
+        sub2api.get("admin_token")
+        or sub2api.get("admin_jwt")
+        or (sub2api.get("admin_email") and sub2api.get("admin_password"))
+    ):
+        raise HTTPException(status_code=400, detail="sub2api 配置缺 Admin JWT 或 admin_email/admin_password")
+    return sub2api
+
+
 def _do_cpa_push(account: dict, cpa_cfg: dict) -> dict:
     """Run the CPA push for one account using pipeline._cpa_import_after_team.
     Records outcome to pipeline_results so inventory reflects new state."""
@@ -70,6 +90,38 @@ def _do_cpa_push(account: dict, cpa_cfg: dict) -> dict:
             "registration": {"status": "reused", "email": email},
             "payment": {"status": "skipped", "email": email},
             "cpa_import": status,
+        })
+    except Exception:
+        pass
+    return {"id": account.get("id"), "email": email, "status": status}
+
+
+def _do_sub2api_push(account: dict, sub2api_cfg: dict) -> dict:
+    """Run the sub2api push for one account and persist its outcome."""
+    import sys
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parents[3]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    import pipeline  # type: ignore
+
+    email = account.get("email", "")
+    rt = (account.get("refresh_token") or "").strip()
+    try:
+        status = pipeline._sub2api_import_after_team(
+            email, "", sub2api_cfg, refresh_token=rt, is_free=False,
+        )
+    except Exception as e:
+        status = f"error: {type(e).__name__}: {str(e)[:120]}"
+
+    try:
+        get_db().add_pipeline_result({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "mode": "sub2api_push_manual",
+            "status": "ok" if status == "ok" else "fail",
+            "registration": {"status": "reused", "email": email},
+            "payment": {"status": "skipped", "email": email},
+            "sub2api_import": status,
         })
     except Exception:
         pass
@@ -135,5 +187,31 @@ def cpa_push(req: IdsRequest, user: str = CurrentUser):
         "ok": sum(1 for r in results if r.get("status") == "ok"),
         "no_rt": sum(1 for r in results if r.get("status") == "no_rt"),
         "fail": sum(1 for r in results if r.get("status") not in ("ok", "no_rt", "skipped", "missing")),
+    }
+    return {"results": results, "summary": summary}
+
+
+@router.post("/accounts/sub2api-push")
+def sub2api_push(req: IdsRequest, user: str = CurrentUser):
+    """Push selected accounts to sub2api. Uses each row's stored refresh_token
+    or falls back to the registered access_token if no RT exists."""
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="ids 不能为空")
+    if len(req.ids) > 100:
+        raise HTTPException(status_code=400, detail="单次最多 100 个")
+    sub2api_cfg = _load_sub2api_cfg()
+    db = get_db()
+    results: list[dict] = []
+    for aid in req.ids:
+        acc = db.get_registered_account(int(aid))
+        if not acc:
+            results.append({"id": aid, "email": "", "status": "missing"})
+            continue
+        results.append(_do_sub2api_push(acc, sub2api_cfg))
+    summary = {
+        "total": len(results),
+        "ok": sum(1 for r in results if r.get("status") == "ok"),
+        "no_token": sum(1 for r in results if r.get("status") in ("no_token", "no_rt")),
+        "fail": sum(1 for r in results if r.get("status") not in ("ok", "no_token", "no_rt", "skipped", "missing")),
     }
     return {"results": results, "summary": summary}

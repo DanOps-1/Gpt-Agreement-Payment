@@ -161,6 +161,8 @@
             <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="unknownOrUncheckedIds.length === 0" @click="verifyAllUnknown">验证全部未检 ({{ unknownOrUncheckedIds.length }})</TermBtn>
             <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="pushSelectedToCpa">推送选中→CPA</TermBtn>
             <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="unpushedIds.length === 0" @click="pushAllUnpushed">推送全部未推送 ({{ unpushedIds.length }})</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="pushSelectedToSub2api">推送选中→sub2api</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="sub2apiUnpushedIds.length === 0" @click="pushAllSub2apiUnpushed">推送全部未推 sub2api ({{ sub2apiUnpushedIds.length }})</TermBtn>
             <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="deleteSelected">删除选中</TermBtn>
             <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="invalidIds.length === 0" @click="deleteAllInvalid">删除所有失效 ({{ invalidIds.length }})</TermBtn>
           </div>
@@ -179,7 +181,9 @@
               <span class="badge" :class="payBadgeClass(acc.pay_state)">{{ payStateLabel(acc) }}</span>
               <span class="badge" :class="rtBadgeClass(acc.rt_state)">{{ rtStateLabel(acc) }}</span>
               <span class="badge" :class="cpaBadgeClass(acc)" :title="acc.cpa_status">{{ cpaLabel(acc) }}</span>
+              <span class="badge" :class="sub2apiBadgeClass(acc)" :title="acc.sub2api_status">{{ sub2apiLabel(acc) }}</span>
               <button v-if="!acc.cpa_pushed" class="inventory-row-action" :disabled="inventoryBusy" @click="pushOneToCpa(acc.id)">推送→CPA</button>
+              <button v-if="!acc.sub2api_pushed" class="inventory-row-action" :disabled="inventoryBusy" @click="pushOneToSub2api(acc.id)">推送→sub2api</button>
             </div>
             <div class="inventory-row-sub">
               <span>注册 {{ formatInventoryTs(acc.registered_at) }}</span>
@@ -327,6 +331,8 @@ interface InventoryAccount {
   plan_tag: "free" | "plus" | "team" | string;
   cpa_status: string;
   cpa_pushed: boolean;
+  sub2api_status: string;
+  sub2api_pushed: boolean;
 }
 
 interface InventoryResponse {
@@ -656,7 +662,7 @@ function deleteAllInvalid() {
   confirmAndDelete(invalidIds.value, "删除所有失效");
 }
 
-// ── plan + CPA 推送 ─────────────────────────────────
+// ── plan + 下游推送 ─────────────────────────────────
 function planLabel(p: string) {
   if (p === "team") return "team";
   if (p === "plus") return "plus";
@@ -677,8 +683,21 @@ function cpaBadgeClass(acc: InventoryAccount) {
   if (acc.cpa_status && acc.cpa_status !== "ok") return "badge-err";
   return "badge-ghost";
 }
+function sub2apiLabel(acc: InventoryAccount) {
+  if (acc.sub2api_pushed) return "✓ 已推 sub2api";
+  if (acc.sub2api_status && acc.sub2api_status !== "ok") return `✗ ${acc.sub2api_status}`;
+  return "○ 未推 sub2api";
+}
+function sub2apiBadgeClass(acc: InventoryAccount) {
+  if (acc.sub2api_pushed) return "badge-ok";
+  if (acc.sub2api_status && acc.sub2api_status !== "ok") return "badge-err";
+  return "badge-ghost";
+}
 const unpushedIds = computed(() =>
   inventory.value.accounts.filter(a => !a.cpa_pushed).map(a => a.id)
+);
+const sub2apiUnpushedIds = computed(() =>
+  inventory.value.accounts.filter(a => !a.sub2api_pushed).map(a => a.id)
 );
 
 async function pushCpa(ids: number[], label: string) {
@@ -698,6 +717,24 @@ async function pushCpa(ids: number[], label: string) {
 function pushOneToCpa(id: number) { pushCpa([id], "推送 CPA"); }
 function pushSelectedToCpa() { pushCpa(Array.from(selectedIds.value), "批量推送选中"); }
 function pushAllUnpushed() { pushCpa(unpushedIds.value, "推送所有未推送"); }
+
+async function pushSub2api(ids: number[], label: string) {
+  if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
+  inventoryBusy.value = true;
+  try {
+    const r = await api.post("/inventory/accounts/sub2api-push", { ids });
+    const s = r.data?.summary || {};
+    message.success(`${label}完成：ok=${s.ok || 0}  no_token=${s.no_token || 0}  fail=${s.fail || 0}`);
+    await refreshInventory();
+  } catch (e: any) {
+    message.error(`${label}失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    inventoryBusy.value = false;
+  }
+}
+function pushOneToSub2api(id: number) { pushSub2api([id], "推送 sub2api"); }
+function pushSelectedToSub2api() { pushSub2api(Array.from(selectedIds.value), "批量推送 sub2api"); }
+function pushAllSub2apiUnpushed() { pushSub2api(sub2apiUnpushedIds.value, "推送所有未推 sub2api"); }
 
 async function refreshInventory() {
   if (inventoryLoading.value) return;
