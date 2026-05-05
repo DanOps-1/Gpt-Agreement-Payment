@@ -40,7 +40,9 @@
     <TermToggle v-model="sub2api.enabled">启用 sub2api</TermToggle>
     <div v-if="sub2api.enabled" class="form-stack" style="margin-top:12px">
       <TermField v-model="sub2api.base_url" label="Base URL · base_url" />
-      <TermField v-model="sub2api.admin_token" label="Admin Token · admin_token" type="password" />
+      <TermField v-model="sub2api.admin_token" label="Admin JWT · admin_token" type="password" />
+      <TermField v-model="sub2api.admin_email" label="Admin Email · admin_email" />
+      <TermField v-model="sub2api.admin_password" label="Admin Password · admin_password" type="password" />
       <TermField v-model="sub2api.oauth_client_id" label="OAuth Client ID · oauth_client_id" />
       <TermField v-model="sub2api.group_ids" label="Group IDs · group_ids" placeholder="1,2,3" />
       <TermField v-model="sub2api.concurrency" label="Concurrency · concurrency" type="number" />
@@ -89,7 +91,9 @@ const cpa = ref({
 const sub2api = ref({
   enabled: false,
   base_url: sub2apiInit.base_url ?? "",
-  admin_token: sub2apiInit.admin_token ?? sub2apiInit.admin_key ?? "",
+  admin_token: sub2apiInit.admin_token ?? sub2apiInit.admin_jwt ?? sub2apiInit.admin_key ?? "",
+  admin_email: sub2apiInit.admin_email ?? sub2apiInit.username ?? "",
+  admin_password: sub2apiInit.admin_password ?? sub2apiInit.password ?? "",
   oauth_client_id: sub2apiInit.oauth_client_id ?? "",
   group_ids: Array.isArray(sub2apiInit.group_ids) ? sub2apiInit.group_ids.join(",") : (sub2apiInit.group_ids ?? ""),
   concurrency: sub2apiInit.concurrency ?? 1,
@@ -138,6 +142,8 @@ async function testSub2api() {
     sub2apiResult.value = await store.runPreflight("sub2api", {
       base_url: sub2api.value.base_url,
       admin_token: sub2api.value.admin_token,
+      admin_email: sub2api.value.admin_email,
+      admin_password: sub2api.value.admin_password,
     });
   } finally { sub2apiLoading.value = false; }
 }

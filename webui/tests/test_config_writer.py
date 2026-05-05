@@ -501,6 +501,8 @@ def test_export_preserves_sub2api_config(client, tmp_path, monkeypatch):
             "enabled": True,
             "base_url": "https://sub2api.example.com",
             "admin_token": "sub2api-admin-jwt",
+            "admin_email": "admin@example.com",
+            "admin_password": "secret",
             "oauth_client_id": "app_sub2api_client",
             "group_ids": "1,2",
             "concurrency": 2,
@@ -516,6 +518,8 @@ def test_export_preserves_sub2api_config(client, tmp_path, monkeypatch):
     assert pay["sub2api"]["enabled"] is True
     assert pay["sub2api"]["base_url"] == "https://sub2api.example.com"
     assert pay["sub2api"]["admin_token"] == "sub2api-admin-jwt"
+    assert pay["sub2api"]["admin_email"] == "admin@example.com"
+    assert pay["sub2api"]["admin_password"] == "secret"
     assert pay["sub2api"]["oauth_client_id"] == "app_sub2api_client"
     assert pay["sub2api"]["group_ids"] == "1,2"
     assert pay["sub2api"]["concurrency"] == 2

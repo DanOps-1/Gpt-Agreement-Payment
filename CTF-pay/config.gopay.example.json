@@ -21,6 +21,8 @@
     "enabled": false,
     "base_url": "https://YOUR_SUB2API_HOST",
     "admin_token": "YOUR_SUB2API_ADMIN_JWT",
+    "admin_email": "",
+    "admin_password": "",
     "oauth_client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
     "group_ids": [],
     "concurrency": 1,

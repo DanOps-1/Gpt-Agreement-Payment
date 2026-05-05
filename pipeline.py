@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from webui.backend.db import get_db
+from webui.backend.sub2api_client import looks_like_api_key, resolve_admin_jwt
 
 ROOT = Path(__file__).resolve().parent
 CARDW_DIR = ROOT / "CTF-reg"
@@ -2954,11 +2955,22 @@ def _sub2api_import_after_team(
 
     base_url = (sub2api_cfg.get("base_url") or "").rstrip("/")
     admin_token = (
+        sub2api_cfg.get("admin_jwt")
+        or
         sub2api_cfg.get("admin_token")
         or sub2api_cfg.get("admin_key")
         or sub2api_cfg.get("token")
         or ""
     ).strip()
+    if looks_like_api_key(admin_token):
+        print("[sub2api] admin- token is an API key, not an Admin JWT; trying admin_email/admin_password login")
+        admin_token = ""
+    if not admin_token:
+        try:
+            admin_token = resolve_admin_jwt(base_url, sub2api_cfg, timeout=float(sub2api_cfg.get("timeout_s", 20) or 20))
+        except Exception as e:
+            print(f"[sub2api] admin login failed: {e}")
+            admin_token = ""
     if not base_url or not admin_token or not email:
         return "skipped"
 

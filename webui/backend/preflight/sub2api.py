@@ -1,12 +1,16 @@
 import httpx
 from pydantic import BaseModel
 from ._common import CheckResult, PreflightResult, aggregate
+from ..sub2api_client import looks_like_api_key, resolve_admin_jwt
 
 
 class Sub2APIInput(BaseModel):
     base_url: str
     admin_token: str = ""
     admin_key: str = ""
+    admin_jwt: str = ""
+    admin_email: str = ""
+    admin_password: str = ""
 
 
 def _count_accounts(data) -> str:
@@ -34,10 +38,20 @@ def _count_accounts(data) -> str:
 def check(body: dict) -> PreflightResult:
     cfg = Sub2APIInput.model_validate(body)
     base = cfg.base_url.rstrip("/")
-    token = (cfg.admin_token or cfg.admin_key or "").strip()
+    raw = cfg.model_dump()
+    token = (cfg.admin_jwt or cfg.admin_token or cfg.admin_key or "").strip()
+    if looks_like_api_key(token) and not (cfg.admin_email and cfg.admin_password):
+        return aggregate([CheckResult(name="admin_accounts", status="fail",
+                                      message="admin- token is an API key, not an Admin JWT",
+                                      details="请填写 sub2api 后台登录后的 Admin JWT，或填写 admin_email/admin_password 让系统自动登录获取 JWT。")])
+    try:
+        token = resolve_admin_jwt(base, raw, timeout=15.0)
+    except httpx.HTTPError as e:
+        return aggregate([CheckResult(name="admin_login", status="fail",
+                                      message=f"login failed: {e}")])
     if not base or not token:
         return aggregate([CheckResult(name="admin_accounts", status="fail",
-                                      message="base_url/admin_token required")])
+                                      message="base_url/admin_token or admin_email/admin_password required")])
     headers = {"Authorization": f"Bearer {token}"}
     try:
         with httpx.Client(timeout=15.0) as c:
