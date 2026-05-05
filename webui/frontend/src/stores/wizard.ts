@@ -56,8 +56,8 @@ export const useWizardStore = defineStore("wizard", {
       }
       const pm = (this.answers.payment as any)?.method ?? "both";
       if (pm === "gopay") {
-        // GoPay 走 step 7；step 6(PayPal) / step 13(stripe runtime) 不走
-        if (n === 6) return true;
+        // GoPay uses step 6 as the primary payment slot; card/Stripe steps do not apply.
+        if (n === 7) return true;
         if (n === 13) return true;
         return false;
       }

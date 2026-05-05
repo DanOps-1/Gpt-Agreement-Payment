@@ -46,16 +46,45 @@
       </div>
     </div>
 
-    <RouterLink class="wa-login-entry" to="/whatsapp">
+    <button class="wa-login-entry" type="button" @click="openOtpTest">
       <span class="wa-login-prompt">$</span>
-      查看外部 OTP / 旧 WhatsApp 扫码入口
-    </RouterLink>
+      测试 OTP
+    </button>
+
+    <Teleport to="body">
+      <div v-if="otpDialog.open" class="otp-overlay" @click.self="closeOtpTest">
+        <div class="otp-modal">
+          <div class="otp-head">
+            <span class="otp-prompt">$</span> GoPay WhatsApp OTP
+          </div>
+          <p class="otp-desc">
+            保持这个窗口打开，然后用上面的 webhook 推送 OTP。收到后会自动填入验证码，并标记测试成功。
+          </p>
+          <input
+            class="otp-input"
+            v-model="otpDialog.value"
+            maxlength="8"
+            autofocus
+            disabled
+            placeholder="000000"
+          />
+          <div v-if="otpDialog.success" class="otp-success">
+            测试成功：webhook 已接收 OTP
+          </div>
+          <div v-else class="otp-waiting">
+            等待 webhook 接收验证码...
+          </div>
+          <div class="otp-actions">
+            <TermBtn variant="ghost" @click="closeOtpTest">关闭</TermBtn>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
 import { useMessage } from "naive-ui";
 import { api } from "../../api/client";
 import { useWizardStore } from "../../stores/wizard";
@@ -74,7 +103,21 @@ const form = ref({
   otp_timeout: init.otp_timeout ?? initOtp.timeout ?? 300,
 });
 
-const status = ref<{ external_otp_token?: string }>({});
+const status = ref<{
+  external_otp_token?: string;
+  updated_at?: number;
+  latest?: {
+    otp?: string;
+    ts?: number;
+    source?: string;
+  };
+}>({});
+const otpDialog = ref({
+  open: false,
+  value: "",
+  success: false,
+  since: 0,
+});
 let timer: number | undefined;
 
 const webhookUrl = computed(() => {
@@ -93,6 +136,7 @@ async function refreshStatus() {
   try {
     const r = await api.get("/whatsapp/status");
     status.value = r.data;
+    maybeResolveOtpTest();
   } catch {}
 }
 
@@ -100,6 +144,31 @@ async function copy(value: string) {
   if (!value) return;
   await navigator.clipboard.writeText(value);
   message.success("已复制");
+}
+
+function openOtpTest() {
+  otpDialog.value = {
+    open: true,
+    value: "",
+    success: false,
+    since: Date.now() / 1000,
+  };
+  refreshStatus();
+}
+
+function closeOtpTest() {
+  otpDialog.value.open = false;
+}
+
+function maybeResolveOtpTest() {
+  if (!otpDialog.value.open || otpDialog.value.success) return;
+  const latest = status.value.latest;
+  const otp = latest?.otp || "";
+  const arrivedAt = Number(status.value.updated_at || latest?.ts || 0);
+  if (!otp || arrivedAt < otpDialog.value.since) return;
+  otpDialog.value.value = otp;
+  otpDialog.value.success = true;
+  message.success("OTP webhook 测试成功");
 }
 
 watch(form, () => {
@@ -186,7 +255,60 @@ code {
   padding: 10px 14px;
   font-size: 13px;
   font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
 }
 .wa-login-entry:hover { background: rgba(93, 255, 174, 0.12); }
 .wa-login-prompt { color: var(--fg-primary); }
+
+/* GoPay OTP modal */
+.otp-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.otp-modal {
+  background: var(--bg-base);
+  border: 1px solid var(--accent);
+  padding: 24px 28px;
+  width: min(420px, 90vw);
+  font-family: inherit;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+}
+.otp-head {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.otp-prompt { color: var(--fg-tertiary); margin-right: 6px; }
+.otp-desc { color: var(--fg-secondary); font-size: 12px; line-height: 1.6; margin: 8px 0 16px; }
+.otp-input {
+  width: 100%; box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  font: inherit; font-size: 22px;
+  letter-spacing: 0.4em;
+  text-align: center;
+  color: var(--fg-primary);
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.otp-input:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.otp-input:focus { border-color: var(--accent); }
+.otp-success,
+.otp-waiting {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.otp-success { color: var(--ok); }
+.otp-waiting { color: var(--fg-tertiary); }
+.otp-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
 </style>
