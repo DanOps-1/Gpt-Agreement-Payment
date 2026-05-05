@@ -115,8 +115,8 @@
             <span class="inventory-value">{{ inventoryUpdatedText }}</span>
           </div>
           <div class="inventory-head-actions">
-            <TermBtn variant="ghost" :loading="inventoryLoading" @click="refreshInventory">刷新库存</TermBtn>
             <TermBtn variant="ghost" @click="openAccountManager">账号管理</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryLoading" @click="refreshInventory">刷新库存</TermBtn>
           </div>
         </div>
         <div v-if="inventoryError" class="inventory-error">
