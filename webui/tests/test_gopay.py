@@ -285,6 +285,39 @@ def test_midtrans_linking_429_retries_then_success(monkeypatch):
 # ────────────────── OTP cancel ──────────────────
 
 
+def test_midtrans_linking_429_retries_past_406_limit(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(gopay.time, "sleep", lambda s: sleeps.append(float(s)))
+    monkeypatch.setattr(gopay.random, "uniform", lambda a, b: 3.5)
+
+    class Resp:
+        def __init__(self, status_code: int, text: str = "", body: dict | None = None):
+            self.status_code = status_code
+            self.text = text
+            self._body = body or {}
+
+        def json(self):
+            return self._body
+
+    class Ext:
+        def __init__(self):
+            self.calls = 0
+
+        def post(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls <= 5:
+                return Resp(429)
+            return Resp(201, body={"activation_link_url": f"https://x.test/?reference={LINK_REF}"})
+
+    charger = build_charger()
+    ext = Ext()
+    charger.ext = ext
+
+    assert charger._midtrans_init_linking(SNAP_TOKEN) == LINK_REF
+    assert ext.calls == 6
+    assert sleeps == [3.5] * 5
+
+
 @responses.activate
 def test_otp_provider_cancel_raises():
     responses.post("https://chatgpt.com/backend-api/payments/checkout", json={"id": CS_ID, "session_id": CS_ID})

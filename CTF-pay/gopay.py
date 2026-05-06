@@ -572,7 +572,8 @@ class GoPayCharger:
         }
         last_err: Optional[str] = None
         rate_limit_attempt = 0
-        for attempt in range(1, LINK_RETRY_LIMIT + 2):
+        attempt = 0
+        while attempt < LINK_RETRY_LIMIT + 1:
             r = self.ext.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
             if r.status_code == 201:
                 data = r.json()
@@ -583,6 +584,7 @@ class GoPayCharger:
                 self.log(f"[gopay] midtrans linking ok reference={ref}")
                 return ref
             if r.status_code == 406:
+                attempt += 1
                 try:
                     j = r.json()
                 except Exception:
