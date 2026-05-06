@@ -1,4 +1,5 @@
 """Run controller tests — mock subprocess so we don't actually spawn pipeline."""
+import sys
 import time
 import pytest
 
@@ -22,6 +23,7 @@ def test_run_preview_single(client):
     assert r.status_code == 200
     body = r.json()
     assert "xvfb-run" in body["cmd_str"]
+    assert sys.executable in body["cmd"]
     assert "pipeline.py" in body["cmd_str"]
     assert "--paypal" in body["cmd_str"]
 
