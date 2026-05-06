@@ -10,6 +10,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -32,6 +33,12 @@ class IdsRequest(BaseModel):
 class CheckRequest(IdsRequest):
     timeout_s: float = 10.0
     max_workers: int = 3
+
+
+class ServerPushRequest(IdsRequest):
+    target: str = "account_import_server"
+    import_url: str = "http://127.0.0.1:8787/api/import"
+    import_token: str = "dev-import-token"
 
 
 def _safe_filename(value: str) -> str:
@@ -119,6 +126,63 @@ def _load_pay_cfg() -> dict:
     if not isinstance(cfg, dict):
         raise HTTPException(status_code=500, detail="PAY_CONFIG_PATH JSON 顶层不是对象")
     return cfg
+
+
+def _server_push_payload(account: dict) -> dict:
+    return {
+        "email": str(account.get("email") or "").strip().lower(),
+        "password": str(account.get("password") or ""),
+        "extra": json.dumps(_cpa_auth_file_body(account), ensure_ascii=False, separators=(",", ":")),
+    }
+
+
+def _account_import_item(account: dict) -> dict:
+    return {
+        **_server_push_payload(account),
+        "enabled": True,
+    }
+
+
+def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, accounts: list[dict]) -> list[dict]:
+    url = str(req.import_url or "").strip()
+    token = str(req.import_token or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="账号导入服务器 URL 不能为空")
+    if not token:
+        raise HTTPException(status_code=400, detail="账号导入服务器 Bearer token 不能为空")
+
+    items = [_account_import_item(acc) for acc in accounts]
+    try:
+        resp = client.post(
+            url,
+            json={"type": "accounts", "items": items},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    except httpx.HTTPError as e:
+        return [
+            {"id": acc.get("id"), "email": str(acc.get("email") or "").strip().lower(), "status": "error", "error": str(e)}
+            for acc in accounts
+        ]
+
+    text = resp.text[:500]
+    try:
+        body = resp.json()
+    except Exception:
+        body = None
+    ok = 200 <= resp.status_code < 300
+    if isinstance(body, dict) and body.get("success") is False:
+        ok = False
+    error = "" if ok else ((body or {}).get("message") if isinstance(body, dict) else text)
+    return [
+        {
+            "id": acc.get("id"),
+            "email": str(acc.get("email") or "").strip().lower(),
+            "status": "ok" if ok else "fail",
+            "http_status": resp.status_code,
+            "error": error,
+        }
+        for acc in accounts
+    ]
 
 
 def _pipeline_module():
@@ -355,6 +419,45 @@ def backfill_rt(req: IdsRequest, user: str = CurrentUser):
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"started": True, "requested": len(req.ids), "status": status}
+
+
+@router.post("/accounts/server-push")
+def server_push(req: ServerPushRequest, user: str = CurrentUser):
+    """Push selected accounts to an account import server.
+
+    Request sent to import_url:
+      {type: "accounts", items: [{email, password, enabled, extra}, ...]}
+
+    extra is a JSON string containing the CPA auth-file payload.
+    """
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="ids 不能为空")
+    if len(req.ids) > 100:
+        raise HTTPException(status_code=400, detail="单次最大 100 个")
+    db = get_db()
+    accounts: list[dict] = []
+    results: list[dict] = [
+        {"id": aid, "email": "", "status": "missing", "error": "account not found"}
+        for aid in req.ids
+        if not db.get_registered_account(int(aid))
+    ]
+    for aid in req.ids:
+        acc = db.get_registered_account(int(aid))
+        if acc:
+            accounts.append(acc)
+    if accounts:
+        with httpx.Client(timeout=30.0, trust_env=False) as client:
+            results.extend(_push_account_import_server(client, req, accounts))
+    pushed_ids = [int(r["id"]) for r in results if r.get("status") == "ok" and r.get("id")]
+    if pushed_ids:
+        db.mark_accounts_server_pushed(pushed_ids)
+    summary = {
+        "total": len(results),
+        "ok": sum(1 for r in results if r.get("status") == "ok"),
+        "missing": sum(1 for r in results if r.get("status") == "missing"),
+        "fail": sum(1 for r in results if r.get("status") not in ("ok", "missing")),
+    }
+    return {"results": results, "summary": summary}
 
 
 @router.post("/accounts/cpa-push")

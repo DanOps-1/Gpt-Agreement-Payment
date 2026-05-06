@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS registered_accounts (
   last_check_at REAL DEFAULT 0,
   last_check_status TEXT DEFAULT '',
   last_check_message TEXT DEFAULT '',
-  downloaded_at REAL DEFAULT 0
+  downloaded_at REAL DEFAULT 0,
+  server_pushed_at REAL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_registered_accounts_email_id
   ON registered_accounts(email, id);
@@ -183,6 +184,8 @@ class Database:
             c.execute("ALTER TABLE registered_accounts ADD COLUMN last_check_message TEXT DEFAULT ''")
         if "downloaded_at" not in existing_acc:
             c.execute("ALTER TABLE registered_accounts ADD COLUMN downloaded_at REAL DEFAULT 0")
+        if "server_pushed_at" not in existing_acc:
+            c.execute("ALTER TABLE registered_accounts ADD COLUMN server_pushed_at REAL DEFAULT 0")
         existing_pipeline = {row["name"] for row in c.execute("PRAGMA table_info(pipeline_results)").fetchall()}
         if "sub2api_import" not in existing_pipeline:
             c.execute("ALTER TABLE pipeline_results ADD COLUMN sub2api_import TEXT DEFAULT ''")
@@ -313,7 +316,8 @@ class Database:
                 """
                 SELECT id, email, ts, password, session_token, access_token, device_id,
                        csrf_token, id_token, refresh_token, cookie_header,
-                       last_check_at, last_check_status, last_check_message, downloaded_at
+                       last_check_at, last_check_status, last_check_message, downloaded_at,
+                       server_pushed_at
                 FROM registered_accounts
                 ORDER BY id ASC
                 """
@@ -326,7 +330,8 @@ class Database:
                 """
                 SELECT id, email, ts, password, session_token, access_token, device_id,
                        csrf_token, id_token, refresh_token, cookie_header,
-                       last_check_at, last_check_status, last_check_message, downloaded_at
+                       last_check_at, last_check_status, last_check_message, downloaded_at,
+                       server_pushed_at
                 FROM registered_accounts WHERE id = ?
                 """,
                 (int(account_id),),
@@ -380,6 +385,18 @@ class Database:
         with self._conn() as c:
             cur = c.execute(
                 f"UPDATE registered_accounts SET downloaded_at = ? WHERE id IN ({placeholders})",
+                [time.time(), *clean],
+            )
+        return cur.rowcount
+
+    def mark_accounts_server_pushed(self, ids: list[int]) -> int:
+        clean = [int(i) for i in ids if str(i).strip().lstrip("-").isdigit()]
+        if not clean:
+            return 0
+        placeholders = ",".join("?" * len(clean))
+        with self._conn() as c:
+            cur = c.execute(
+                f"UPDATE registered_accounts SET server_pushed_at = ? WHERE id IN ({placeholders})",
                 [time.time(), *clean],
             )
         return cur.rowcount

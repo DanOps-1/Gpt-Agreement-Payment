@@ -1,15 +1,15 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="----------">STEP 06: GOPAY OTP</div>
-    <h2 class="step-h">$&nbsp;GoPay Accounts + External OTP<span class="term-cursor"></span></h2>
+    <div class="term-divider" data-tail="----------">第 06 步：GOPAY 验证码</div>
+    <h2 class="step-h">$&nbsp;GoPay 账号与外部验证码<span class="term-cursor"></span></h2>
     <p class="step-sub">
-      Configure one or more GoPay wallets. Each payment run randomly selects one account, and OTP polling is scoped to that account phone.
+      配置一个或多个 GoPay 钱包。每次支付会随机选择一个账号，OTP 轮询会按该账号手机号过滤。
     </p>
 
     <div class="accounts-panel">
       <div class="accounts-head">
-        <span class="label">GoPay Accounts</span>
-        <TermBtn variant="ghost" @click="addAccount">Add account</TermBtn>
+        <span class="label">GoPay 账号</span>
+        <TermBtn variant="ghost" @click="addAccount">添加账号</TermBtn>
       </div>
 
       <div v-for="(account, idx) in form.accounts" :key="account.id" class="account-box">
@@ -20,65 +20,70 @@
             :disabled="form.accounts.length <= 1"
             @click="removeAccount(idx)"
           >
-            Delete
+            删除
           </TermBtn>
         </div>
         <div class="form-stack">
-          <TermField v-model="account.label" label="Label" placeholder="wallet label" />
-          <TermField v-model="account.country_code" label="country_code" placeholder="62" />
-          <TermField v-model="account.phone_number" label="phone_number" placeholder="81234567890" />
-          <TermField v-model="account.pin" label="PIN" type="password" placeholder="GoPay PIN" />
+          <TermField v-model="account.label" label="标签" placeholder="钱包标签" />
+          <TermField v-model="account.country_code" label="国家区号" placeholder="62" />
+          <TermField v-model="account.phone_number" label="手机号" placeholder="81234567890" />
+          <TermField v-model="account.pin" label="支付 PIN" type="password" placeholder="GoPay PIN" />
         </div>
       </div>
     </div>
 
     <div class="form-stack otp-settings">
-      <TermField v-model.number="form.otp_timeout" label="OTP timeout seconds" type="number" />
+      <TermField v-model.number="form.otp_timeout" label="OTP 超时秒数" type="number" />
     </div>
 
     <div class="external-card">
       <div class="external-head">
         <div>
-          <span class="label">Webhook URL</span>
+          <span class="label">回调地址</span>
           <code>{{ webhookUrl }}</code>
         </div>
-        <TermBtn variant="ghost" @click="copy(webhookUrl)">Copy URL</TermBtn>
+        <TermBtn variant="ghost" @click="copy(webhookUrl)">复制地址</TermBtn>
       </div>
 
       <div class="external-head">
         <div>
-          <span class="label">Authorization Token</span>
-          <code>{{ status.external_otp_token || "loading..." }}</code>
+          <span class="label">授权令牌</span>
+          <code>{{ status.external_otp_token || "加载中..." }}</code>
         </div>
         <TermBtn
           variant="ghost"
           :disabled="!status.external_otp_token"
           @click="copy(status.external_otp_token || '')"
         >
-          Copy token
+          复制令牌
         </TermBtn>
       </div>
 
       <div class="hint-box">
-        <p>Header: <code>Authorization: Bearer {{ status.external_otp_token || "xxx" }}</code></p>
-        <p>Body: <code>{{ bodyTemplate }}</code></p>
+        <p>请求头：<code>Authorization: Bearer {{ status.external_otp_token || "xxx" }}</code></p>
+        <p>请求体：<code>{{ bodyTemplate }}</code></p>
       </div>
 
       <div class="curl-box">
-        <div class="label">curl test</div>
+        <div class="label">curl 测试</div>
         <pre>{{ curlExample }}</pre>
-        <TermBtn variant="ghost" @click="copy(curlExample)">Copy curl</TermBtn>
+        <TermBtn variant="ghost" @click="copy(curlExample)">复制 curl</TermBtn>
       </div>
     </div>
 
     <div class="gopay-actions">
-      <button class="wa-login-entry" type="button" @click="openOtpTest">
+      <button
+        class="wa-login-entry"
+        type="button"
+        :disabled="!otpAccountOptions.length"
+        @click="openOtpTest"
+      >
         <span class="wa-login-prompt">$</span>
-        Test OTP
+        测试验证码
       </button>
       <button class="wa-login-entry" type="button" @click="openUnbindDialog">
         <span class="wa-login-prompt">$</span>
-        Auto unbind
+        自动解绑
       </button>
     </div>
 
@@ -86,11 +91,17 @@
       <div v-if="otpDialog.open" class="otp-overlay" @click.self="closeOtpTest">
         <div class="otp-modal">
           <div class="otp-head">
-            <span class="otp-prompt">$</span> GoPay WhatsApp OTP
+            <span class="otp-prompt">$</span> GoPay WhatsApp 验证码
           </div>
           <p class="otp-desc">
-            Send an OTP payload to the webhook. The phone field should match one configured GoPay account.
+            向回调地址发送验证码测试载荷。请选择要验证的 GoPay 手机号，收到的验证码会按该手机号过滤。
           </p>
+          <TermSelect
+            v-model="otpDialog.accountKey"
+            class="otp-phone-select"
+            label="测试手机号"
+            :options="otpAccountOptions"
+          />
           <input
             class="otp-input"
             v-model="otpDialog.value"
@@ -100,16 +111,16 @@
             placeholder="000000"
           />
           <div v-if="otpDialog.success" class="otp-success">
-            Webhook received the OTP.
+            回调地址已收到该手机号的验证码。
           </div>
           <div v-else-if="otpDialog.preparing" class="otp-waiting">
-            Preparing test session...
+            正在准备测试会话...
           </div>
           <div v-else class="otp-waiting">
-            Waiting for webhook OTP...
+            正在等待回调验证码...
           </div>
           <div class="otp-actions">
-            <TermBtn variant="ghost" @click="closeOtpTest">Close</TermBtn>
+            <TermBtn variant="ghost" @click="closeOtpTest">关闭</TermBtn>
           </div>
         </div>
       </div>
@@ -119,14 +130,14 @@
       <div v-if="unbindDialog.open" class="otp-overlay" @click.self="closeUnbindDialog">
         <div class="unbind-modal">
           <div class="otp-head">
-            <span class="otp-prompt">$</span> GoPay Auto Unbind
+            <span class="otp-prompt">$</span> GoPay 自动解绑
           </div>
           <p class="otp-desc">
-            Save raw linked-apps requests for the existing unbind helper.
+            保存 linked-apps 原始请求，供现有解绑助手使用。
           </p>
           <TermField
             v-model="unbindDialog.base_url"
-            label="Base URL"
+            label="基础地址"
             placeholder="https://customer.gopayapi.com"
           />
           <textarea
@@ -134,32 +145,32 @@
             v-model="unbindDialog.value"
             autofocus
             spellcheck="false"
-            placeholder="Paste GET /v1/linkedapps raw request..."
+            placeholder="粘贴 GET /v1/linkedapps 原始请求..."
           />
-          <div class="label unlink-label">PATCH raw unlink request</div>
+          <div class="label unlink-label">PATCH 解绑原始请求</div>
           <textarea
             class="unbind-input unlink-patch-input"
             v-model="unbindDialog.unlink_raw_request"
             spellcheck="false"
-            placeholder="Paste PATCH /v1/links/{link_id} raw request..."
+            placeholder="粘贴 PATCH /v1/links/{link_id} 原始请求..."
           />
           <div v-if="unbindDialog.body || unbindDialog.fetchMeta" class="unbind-response">
-            <div class="label">Response Body</div>
+            <div class="label">响应内容</div>
             <div v-if="unbindDialog.fetchMeta" class="unbind-meta">{{ unbindDialog.fetchMeta }}</div>
             <div v-if="unbindDialog.hasData" class="unlink-url-box ok">
-              <span class="label">LinkedApps Data</span>
-              <code>data found</code>
+              <span class="label">LinkedApps 数据</span>
+              <code>已找到数据</code>
             </div>
             <div v-if="unbindDialog.preview_unlink_url" class="unlink-url-box">
-              <span class="label">Preview Unlink URL</span>
+              <span class="label">预览解绑地址</span>
               <code>{{ unbindDialog.preview_unlink_url }}</code>
             </div>
             <pre>{{ unbindDialog.body }}</pre>
           </div>
           <div class="otp-actions">
-            <TermBtn variant="ghost" @click="closeUnbindDialog">Cancel</TermBtn>
-            <TermBtn variant="ghost" :loading="unbindDialog.fetching" @click="fetchUnbindBody">Fetch body</TermBtn>
-            <TermBtn @click="saveUnbindRequest">Save</TermBtn>
+            <TermBtn variant="ghost" @click="closeUnbindDialog">取消</TermBtn>
+            <TermBtn variant="ghost" :loading="unbindDialog.fetching" @click="fetchUnbindBody">获取内容</TermBtn>
+            <TermBtn @click="saveUnbindRequest">保存</TermBtn>
           </div>
         </div>
       </div>
@@ -174,6 +185,7 @@ import { api } from "../../api/client";
 import { useWizardStore } from "../../stores/wizard";
 import TermBtn from "../term/TermBtn.vue";
 import TermField from "../term/TermField.vue";
+import TermSelect from "../term/TermSelect.vue";
 
 type GoPayAccountForm = {
   id: string;
@@ -244,6 +256,7 @@ const status = ref<{
 const otpDialog = ref({
   open: false,
   value: "",
+  accountKey: "",
   success: false,
   since: 0,
   preparing: false,
@@ -267,7 +280,33 @@ const webhookUrl = computed(() => {
   return new URL(`${base}api/whatsapp/external-otp`, window.location.origin).toString();
 });
 
-const sampleAccount = computed(() => form.value.accounts[0] || newAccount({}, 0));
+const otpAccountOptions = computed(() => form.value.accounts
+  .map((account, idx) => {
+    const phone = String(account.phone_number || "").trim();
+    const countryCode = String(account.country_code || "").replace(/^\+/, "") || "62";
+    if (!phone) return null;
+    const label = account.label
+      ? `${account.label} (+${countryCode} ${phone})`
+      : `GoPay #${idx + 1} (+${countryCode} ${phone})`;
+    return {
+      value: `${countryCode}:${phone}`,
+      label,
+      desc: `仅接收 +${countryCode} ${phone} 的 OTP`,
+    };
+  })
+  .filter(Boolean) as { value: string; label: string; desc: string }[]);
+
+const selectedOtpAccount = computed(() => {
+  const fallback = otpAccountOptions.value[0]?.value || "";
+  const key = otpDialog.value.accountKey || fallback;
+  const [countryCode = "62", phone = ""] = String(key).split(":");
+  return {
+    country_code: countryCode || "62",
+    phone_number: phone,
+  };
+});
+
+const sampleAccount = computed(() => selectedOtpAccount.value.phone_number ? selectedOtpAccount.value : (form.value.accounts[0] || newAccount({}, 0)));
 const samplePhone = computed(() => sampleAccount.value.phone_number || "81234567890");
 const sampleCountryCode = computed(() => sampleAccount.value.country_code || "62");
 
@@ -291,7 +330,14 @@ function removeAccount(index: number) {
 
 async function refreshStatus() {
   try {
-    const r = await api.get("/whatsapp/status");
+    const params = otpDialog.value.open && !otpDialog.value.success && !otpDialog.value.preparing
+      ? {
+        since: otpDialog.value.since,
+        phone: selectedOtpAccount.value.phone_number,
+        country_code: selectedOtpAccount.value.country_code,
+      }
+      : {};
+    const r = await api.get("/whatsapp/status", { params });
     status.value = r.data;
     maybeResolveOtpTest();
   } catch {}
@@ -300,13 +346,21 @@ async function refreshStatus() {
 async function copy(value: string) {
   if (!value) return;
   await navigator.clipboard.writeText(value);
-  message.success("Copied");
+  message.success("已复制");
 }
 
 async function openOtpTest() {
+  if (!otpAccountOptions.value.length) {
+    message.warning("请先配置 GoPay 手机号");
+    return;
+  }
+  if (!otpDialog.value.accountKey || !otpAccountOptions.value.some((opt) => opt.value === otpDialog.value.accountKey)) {
+    otpDialog.value.accountKey = otpAccountOptions.value[0].value;
+  }
   otpDialog.value = {
     open: true,
     value: "",
+    accountKey: otpDialog.value.accountKey,
     success: false,
     since: Date.now() / 1000,
     preparing: true,
@@ -317,7 +371,7 @@ async function openOtpTest() {
     otpDialog.value.since = Number(r.data?.since || otpDialog.value.since);
     if (r.data?.status) status.value = r.data.status;
   } catch {
-    message.warning("Test session failed to start; using browser time.");
+    message.warning("测试会话启动失败，改用浏览器时间。");
   } finally {
     otpDialog.value.preparing = false;
   }
@@ -341,7 +395,7 @@ function maybeResolveOtpTest() {
   if (!otp || arrivedAt < otpDialog.value.since) return;
   otpDialog.value.value = otp;
   otpDialog.value.success = true;
-  message.success("OTP webhook test passed");
+  message.success("验证码回调测试通过");
   if (otpTestTimer) {
     window.clearInterval(otpTestTimer);
     otpTestTimer = undefined;
@@ -376,15 +430,15 @@ async function saveUnbindRequest() {
       unlink_raw_request: form.value.auto_unbind_unlink_raw_request,
     });
     closeUnbindDialog();
-    message.success("Auto unbind request saved");
+    message.success("自动解绑请求已保存");
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "Failed to save auto unbind request");
+    message.error(e.response?.data?.detail || "自动解绑请求保存失败");
   }
 }
 
 async function fetchUnbindBody() {
   if (!unbindDialog.value.value.trim()) {
-    message.warning("Paste a raw request first");
+    message.warning("请先粘贴原始请求");
     return;
   }
   unbindDialog.value.fetching = true;
@@ -404,9 +458,9 @@ async function fetchUnbindBody() {
     unbindDialog.value.fetchMeta = `${r.data?.status_code || ""} ${r.data?.content_type || ""}`.trim();
     unbindDialog.value.hasData = Boolean(r.data?.has_data);
     unbindDialog.value.preview_unlink_url = r.data?.unlink_url || "";
-    message.success(unbindDialog.value.hasData ? "LinkedApps data found" : "Response fetched");
+    message.success(unbindDialog.value.hasData ? "已找到 LinkedApps 数据" : "已获取响应内容");
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "Failed to fetch body");
+    message.error(e.response?.data?.detail || "获取响应内容失败");
   } finally {
     unbindDialog.value.fetching = false;
   }
@@ -447,6 +501,16 @@ watch(form, () => {
   store.setAnswer("gopay", buildGopayAnswer());
   store.saveToServer();
 }, { deep: true });
+
+watch(otpAccountOptions, (options) => {
+  if (!options.length) {
+    otpDialog.value.accountKey = "";
+    return;
+  }
+  if (!options.some((opt) => opt.value === otpDialog.value.accountKey)) {
+    otpDialog.value.accountKey = options[0].value;
+  }
+}, { immediate: true });
 
 onMounted(() => {
   refreshStatus();
@@ -561,6 +625,13 @@ code {
 }
 .wa-login-entry:hover {
   background: rgba(93, 255, 174, 0.12);
+}
+.wa-login-entry:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.wa-login-entry:disabled:hover {
+  background: rgba(93, 255, 174, 0.06);
 }
 .wa-login-prompt {
   color: var(--fg-primary);

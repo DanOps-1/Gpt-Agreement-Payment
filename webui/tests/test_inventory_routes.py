@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+
+import respx
+from httpx import Response
+
 from datetime import datetime, timedelta, timezone
 
 from webui.backend.db import get_db
@@ -183,3 +188,46 @@ def test_check_persists_results(client, monkeypatch):
     assert by_email["invalid@x.com"]["last_check_status"] == "invalid"
     assert by_email["unknown@x.com"]["last_check_status"] == "unknown"
     assert by_email["valid@x.com"]["last_check_at"] > 0
+
+
+@respx.mock
+def test_server_push_posts_account_import_payload(client):
+    _login(client)
+    db = get_db()
+    db.clear_runtime_data()
+    db.add_registered_account({
+        "email": "Push@Example.com",
+        "password": "pw-123",
+        "access_token": "at-token",
+        "id_token": "id-token",
+        "refresh_token": "rt-token",
+    })
+    aid = db.iter_registered_accounts()[0]["id"]
+
+    pushed = respx.post("http://127.0.0.1:8787/api/import").mock(
+        return_value=Response(200, json={"success": True})
+    )
+
+    r = client.post("/api/inventory/accounts/server-push", json={
+        "ids": [aid],
+        "import_url": "http://127.0.0.1:8787/api/import",
+        "import_token": "dev-import-token",
+    })
+
+    assert r.status_code == 200
+    assert r.json()["summary"] == {"total": 1, "ok": 1, "missing": 0, "fail": 0}
+    req = pushed.calls.last.request
+    assert req.headers["authorization"] == "Bearer dev-import-token"
+    body = json.loads(req.content.decode())
+    assert body["type"] == "accounts"
+    assert len(body["items"]) == 1
+    item = body["items"][0]
+    assert item["email"] == "push@example.com"
+    assert item["password"] == "pw-123"
+    assert item["enabled"] is True
+    extra = json.loads(item["extra"])
+    assert extra["email"] == "push@example.com"
+    assert extra["id_token"] == "id-token"
+    assert extra["access_token"] == "at-token"
+    assert extra["refresh_token"] == "rt-token"
+    assert get_db().get_registered_account(aid)["server_pushed_at"] > 0

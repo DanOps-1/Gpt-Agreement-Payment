@@ -228,6 +228,14 @@
                 <span>全选本页 ({{ managerSelectedFilteredCount }} / {{ managerFilteredAccounts.length }})</span>
               </label>
               <div class="account-manager-filters">
+                <label class="manager-filter manager-filter--wide">
+                  <span>导入接口</span>
+                  <input v-model="accountManager.importUrl" />
+                </label>
+                <label class="manager-filter manager-filter--token">
+                  <span>Token</span>
+                  <input v-model="accountManager.importToken" type="password" />
+                </label>
                 <label class="manager-filter">
                   <span>RT</span>
                   <select v-model="accountManager.rtFilter" @change="accountManager.page = 1">
@@ -246,6 +254,7 @@
               </div>
               <div class="inventory-toolbar-actions">
                 <TermBtn :loading="accountManager.busy" :disabled="managerBackfillIds.length === 0" @click="backfillManagerSelectedRt">一键补RT ({{ managerBackfillIds.length }})</TermBtn>
+                <TermBtn :loading="accountManager.busy" :disabled="managerServerPushIds.length === 0" @click="pushManagerSelectedToServer">一键推送至导入服务器 ({{ managerServerPushIds.length }})</TermBtn>
                 <TermBtn :loading="accountManager.busy" :disabled="managerSelectedFilteredIds.length === 0" @click="downloadManagerSelected">下载勾选账号</TermBtn>
                 <TermBtn variant="danger" :loading="accountManager.busy" :disabled="downloadedIds.length === 0" @click="deleteDownloadedAccounts">删除已下载账号 ({{ downloadedIds.length }})</TermBtn>
               </div>
@@ -256,6 +265,7 @@
                 <span class="account-manager-email">{{ acc.email }}</span>
                 <span class="badge" :class="planBadgeClass(acc.plan_tag)">{{ planLabel(acc.plan_tag) }}</span>
                 <span class="badge" :class="rtBadgeClass(acc.rt_state)">{{ rtStateLabel(acc) }}</span>
+                <span v-if="acc.server_pushed" class="badge badge-ok">已推服务器</span>
                 <span v-if="acc.downloaded" class="badge badge-ok">已下载</span>
               </div>
               <div v-if="!managerFilteredAccounts.length" class="inventory-empty">
@@ -404,6 +414,8 @@ interface InventoryAccount {
   sub2api_pushed: boolean;
   downloaded: boolean;
   downloaded_at: number;
+  server_pushed: boolean;
+  server_pushed_at: number;
 }
 
 interface InventoryResponse {
@@ -478,6 +490,8 @@ const accountManager = ref({
   page: 1,
   rtFilter: "all" as "all" | "has_rt" | "no_rt",
   planFilter: "all" as "all" | "plus",
+  importUrl: "http://127.0.0.1:8787/api/import",
+  importToken: "dev-import-token",
 });
 
 function onGoPayToggle(v: boolean) {
@@ -799,13 +813,19 @@ const managerBackfillIds = computed(() => {
     .filter(a => selected.has(a.id) && a.can_backfill_rt)
     .map(a => a.id);
 });
+const managerServerPushIds = computed(() => {
+  const selected = new Set(managerSelectedIds.value);
+  return managerFilteredAccounts.value
+    .filter(a => selected.has(a.id) && !a.server_pushed)
+    .map(a => a.id);
+});
 function openAccountManager() {
   accountManager.value.open = true;
   accountManager.value.page = 1;
   accountManager.value.rtFilter = "all";
   accountManager.value.planFilter = "all";
   managerSelectedIds.value = new Set(
-    inventory.value.accounts.filter(a => !a.downloaded).map(a => a.id).filter(Boolean)
+    inventory.value.accounts.filter(a => !a.downloaded && !a.server_pushed).map(a => a.id).filter(Boolean)
   );
 }
 function closeAccountManager() {
@@ -866,6 +886,28 @@ async function backfillManagerSelectedRt() {
     openStream();
   } catch (e: any) {
     message.error(`补RT启动失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    accountManager.value.busy = false;
+  }
+}
+async function pushManagerSelectedToServer() {
+  const ids = managerServerPushIds.value;
+  if (!ids.length) { message.warning("请选择尚未推送至导入服务器的账号"); return; }
+  if (!accountManager.value.importUrl.trim()) { message.warning("请填写导入接口 URL"); return; }
+  if (!accountManager.value.importToken.trim()) { message.warning("请填写 Bearer token"); return; }
+  accountManager.value.busy = true;
+  try {
+    const r = await api.post("/inventory/accounts/server-push", {
+      ids,
+      import_url: accountManager.value.importUrl.trim(),
+      import_token: accountManager.value.importToken.trim(),
+    });
+    const s = r.data?.summary || {};
+    message.success(`导入服务器推送完成：ok=${s.ok || 0}  fail=${s.fail || 0}  missing=${s.missing || 0}`);
+    managerSelectedIds.value = new Set();
+    await refreshInventory();
+  } catch (e: any) {
+    message.error(`导入服务器推送失败：${e?.response?.data?.detail || e?.message || e}`);
   } finally {
     accountManager.value.busy = false;
   }
@@ -1699,6 +1741,22 @@ onBeforeUnmount(() => {
   color: var(--fg-primary);
   font: inherit;
   padding: 0 8px;
+}
+.manager-filter input {
+  height: 28px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  color: var(--fg-primary);
+  font: inherit;
+  padding: 0 8px;
+  box-sizing: border-box;
+}
+.manager-filter--wide input {
+  width: min(260px, 55vw);
+}
+.manager-filter--token input {
+  width: 150px;
 }
 .account-manager-list {
   height: 480px;

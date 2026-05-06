@@ -277,6 +277,8 @@ def build_accounts_inventory() -> dict:
             "last_check_at": acc.get("last_check_at") or 0,
             "downloaded_at": acc.get("downloaded_at") or 0,
             "downloaded": bool(acc.get("downloaded_at")),
+            "server_pushed_at": acc.get("server_pushed_at") or 0,
+            "server_pushed": bool(acc.get("server_pushed_at")),
         })
 
     return {
