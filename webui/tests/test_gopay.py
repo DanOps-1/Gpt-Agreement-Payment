@@ -252,7 +252,11 @@ def test_linking_406_exhaustion_raises():
 def test_midtrans_linking_429_retries_then_success(monkeypatch):
     sleeps: list[float] = []
     monkeypatch.setattr(gopay.time, "sleep", lambda s: sleeps.append(float(s)))
-    monkeypatch.setattr(gopay.random, "uniform", lambda a, b: 4.0)
+    def fake_uniform(a, b):
+        assert a == 2.0
+        assert b == 3.0
+        return 2.5
+    monkeypatch.setattr(gopay.random, "uniform", fake_uniform)
 
     class Resp:
         def __init__(self, status_code: int, text: str = "", body: dict | None = None):
@@ -279,7 +283,7 @@ def test_midtrans_linking_429_retries_then_success(monkeypatch):
 
     assert charger._midtrans_init_linking(SNAP_TOKEN) == LINK_REF
     assert ext.calls == 3
-    assert sleeps == [4.0, 4.0]
+    assert sleeps == [2.5, 2.5]
 
 
 # ────────────────── OTP cancel ──────────────────
@@ -288,7 +292,7 @@ def test_midtrans_linking_429_retries_then_success(monkeypatch):
 def test_midtrans_linking_429_retries_past_406_limit(monkeypatch):
     sleeps: list[float] = []
     monkeypatch.setattr(gopay.time, "sleep", lambda s: sleeps.append(float(s)))
-    monkeypatch.setattr(gopay.random, "uniform", lambda a, b: 3.5)
+    monkeypatch.setattr(gopay.random, "uniform", lambda a, b: 2.5)
 
     class Resp:
         def __init__(self, status_code: int, text: str = "", body: dict | None = None):
