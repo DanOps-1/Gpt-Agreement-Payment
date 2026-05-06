@@ -623,7 +623,7 @@ class RegistrationError(RuntimeError):
     pass
 
 
-def register(cardw_config_path, proxy=None, python="python3", timeout=600, browser: bool = True):
+def register(cardw_config_path, proxy=None, python=None, timeout=600, browser: bool = True):
     """注册一个新 ChatGPT 账号。
 
     browser=True 时走 Camoufox 真浏览器注册流程（Turnstile 真实执行，避免账号被风控）。
@@ -631,6 +631,7 @@ def register(cardw_config_path, proxy=None, python="python3", timeout=600, brows
 
     返回 dict: {email, session_token, access_token, device_id, ...}
     """
+    python = python or sys.executable
     cardw_config_path = str(Path(cardw_config_path).resolve())
     auth_bundle_dir = str(CARDW_DIR)
 
@@ -810,7 +811,7 @@ def _is_plus_plan(card_cfg: dict) -> bool:
 
 def pay(card_config_path, session_token=None, access_token=None,
         device_id=None, use_paypal=False, use_gopay=False,
-        gopay_otp_file=None, python="python3", timeout=600):
+        gopay_otp_file=None, python=None, timeout=600):
     """执行 Stripe 支付流程。
 
     use_paypal / use_gopay 互斥：默认 card 路径，paypal 走 PayPal browser，
@@ -819,6 +820,7 @@ def pay(card_config_path, session_token=None, access_token=None,
     gopay_otp_file: webui 模式 OTP 文件路径（gopay.py file-watch 读取）。
     返回 dict: {status, session_id, chatgpt_email, ...}
     """
+    python = python or sys.executable
     if use_paypal and use_gopay:
         raise PaymentError("use_paypal 与 use_gopay 互斥")
 
