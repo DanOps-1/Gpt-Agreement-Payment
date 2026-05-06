@@ -163,3 +163,24 @@ def test_gopay_auto_otp_skips_manual_fifo(tmp_path, monkeypatch):
     monkeypatch.setattr(runner_mod.s, "PAY_CONFIG_PATH", cfg)
 
     assert runner_mod._gopay_auto_otp_enabled() is True
+
+
+def test_runner_detects_gopay_otp_target_and_manual_submit_uses_phone(monkeypatch):
+    import webui.backend.runner as runner_mod
+
+    runner_mod._otp_pending = True
+    runner_mod._otp_to_db = True
+    runner_mod._otp_pending_phone = "81234567890"
+    runner_mod._otp_pending_country_code = "62"
+    calls = []
+
+    def fake_submit(value, *, phone="", country_code=""):
+        calls.append((value, phone, country_code))
+        return {"otp": value, "phone": phone, "country_code": country_code}
+
+    monkeypatch.setattr(runner_mod.wa_relay, "submit_manual_otp", fake_submit)
+
+    assert runner_mod._detect_gopay_otp_target("GOPAY_OTP_TARGET phone=81234567890 country_code=62") == ("81234567890", "62")
+    runner_mod.submit_otp("123456")
+    assert calls == [("123456", "81234567890", "62")]
+    assert runner_mod._otp_pending is False

@@ -26,6 +26,8 @@ class SettingsRequest(BaseModel):
 
 class ExternalOTPRequest(BaseModel):
     otp: str = Field(min_length=4, max_length=32)
+    phone: str = ""
+    country_code: str = ""
     source: str = "external"
     ts: float | None = None
 
@@ -49,8 +51,24 @@ def _check_relay_token(
 
 
 @router.get("/status")
-def get_status(user: str = CurrentUser):
+def get_status(
+    phone: str = "",
+    country_code: str = "",
+    since: float = 0.0,
+    user: str = CurrentUser,
+):
     st = wa_relay.status()
+    if phone or country_code or since:
+        filtered = wa_relay.latest_otp(
+            since=since,
+            phone=phone,
+            country_code=country_code,
+        )
+        if filtered:
+            st["latest"] = filtered
+            st["updated_at"] = filtered.get("received_at") or filtered.get("ts") or st.get("updated_at")
+        else:
+            st.pop("latest", None)
     st["external_otp_token"] = wa_relay.relay_token()
     st["external_otp_path"] = "/api/whatsapp/external-otp"
     return st
@@ -112,6 +130,8 @@ def external_otp(
             source=req.source or "external",
             ts=req.ts,
             sender="external_otp",
+            phone=req.phone,
+            country_code=req.country_code,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -123,12 +143,14 @@ def external_otp(
 def latest_otp(
     response: Response,
     since: float = 0.0,
+    phone: str = "",
+    country_code: str = "",
     token: str = "",
     x_wa_relay_token: str = Header(default=""),
     authorization: str = Header(default=""),
 ):
     _check_relay_token(token=token, x_wa_relay_token=x_wa_relay_token, authorization=authorization)
-    item = wa_relay.latest_otp(since=since)
+    item = wa_relay.latest_otp(since=since, phone=phone, country_code=country_code)
     if not item:
         response.status_code = 204
         return None

@@ -98,6 +98,8 @@ async def stream(user: str = CurrentUser):
                 yield {"event": "otp_pending", "data": json.dumps({
                     "pending": True,
                     "since": st.get("otp_pending_since"),
+                    "phone": st.get("otp_pending_phone") or "",
+                    "country_code": st.get("otp_pending_country_code") or "",
                 })}
             elif last_otp_pending:
                 last_otp_pending = False

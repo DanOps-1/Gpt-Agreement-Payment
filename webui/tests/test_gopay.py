@@ -8,6 +8,7 @@ import importlib.util
 import sys
 import time
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import requests
@@ -411,6 +412,46 @@ def test_whatsapp_file_otp_provider_reads_state(tmp_path):
     assert provider() == "246810"
 
 
+def test_extract_otp_from_payload_filters_phone():
+    payload = {
+        "history": [
+            {
+                "otp": "111111",
+                "phone": "81234567890",
+                "received_at": time.time(),
+                "text": "GoPay OTP 111111",
+            },
+            {
+                "otp": "222222",
+                "phone": "81234567891",
+                "received_at": time.time(),
+                "text": "GoPay OTP 222222",
+            },
+        ],
+    }
+    assert gopay._extract_otp_from_payload(payload, phone="81234567890", country_code="62") == "111111"
+    assert gopay._extract_otp_from_payload(payload, phone="81234567891", country_code="62") == "222222"
+
+
+def test_pick_gopay_account_config_uses_random_choice():
+    cfg = {
+        "otp": {"source": "manual"},
+        "accounts": [
+            {"label": "a", "country_code": "62", "phone_number": "100", "pin": "111111"},
+            {"label": "b", "country_code": "62", "phone_number": "200", "pin": "222222"},
+        ],
+    }
+
+    class DummyRandom:
+        def choice(self, values):
+            return values[1]
+
+    selected = gopay.pick_gopay_account_config(cfg, rng=DummyRandom(), log=lambda _m: None)
+    assert selected["phone_number"] == "200"
+    assert selected["pin"] == "222222"
+    assert selected["_selected_accounts_count"] == 2
+
+
 @responses.activate
 def test_whatsapp_http_otp_provider_reads_latest():
     url = "http://127.0.0.1:8765/latest"
@@ -426,6 +467,32 @@ def test_whatsapp_http_otp_provider_reads_latest():
         log=lambda _m: None,
     )
     assert provider() == "135790"
+
+
+@responses.activate
+def test_whatsapp_http_otp_provider_sends_phone_filter_and_skips_wrong_phone():
+    url = "http://127.0.0.1:8765/latest"
+    responses.get(
+        url,
+        json={"otp": "111111", "phone": "81234567891", "text": "GoPay OTP 111111"},
+    )
+    responses.get(
+        url,
+        json={"otp": "222222", "phone": "81234567890", "text": "GoPay OTP 222222"},
+    )
+    provider = gopay.whatsapp_http_otp_provider(
+        url,
+        timeout=5.0,
+        interval=0.1,
+        phone="81234567890",
+        country_code="62",
+        log=lambda _m: None,
+    )
+    assert provider() == "222222"
+    query = parse_qs(urlparse(responses.calls[0].request.url).query)
+    assert query["phone"] == ["81234567890"]
+    assert query["country_code"] == ["62"]
+    assert "since" in query
 
 
 # ────────────────── chatgpt session builder ──────────────────

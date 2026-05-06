@@ -4440,7 +4440,7 @@ def _drive_gopay_from_redirect(
     auth_cfg = (cfg.get("fresh_checkout") or {}).get("auth") or {}
     cs_session = _gopay._build_chatgpt_session(auth_cfg)
     proxy = (cfg.get("proxy") or "").strip() or None
-    gopay_cfg = cfg.get("gopay") or {}
+    gopay_cfg = _gopay.pick_gopay_account_config(cfg.get("gopay") or {}, log=_log)
 
     if otp_file:
         provider = _gopay.file_watch_otp_provider(_Path(otp_file), timeout=300.0)
@@ -7984,8 +7984,17 @@ def run(
             )
     if use_gopay:
         gopay_cfg = cfg.get("gopay") or {}
-        if not all(gopay_cfg.get(k) for k in ("country_code", "phone_number", "pin")):
-            raise ValueError("GoPay 模式需 cfg.gopay 提供 country_code / phone_number / pin")
+        try:
+            from pathlib import Path as _Path
+            import sys as _sys
+            here = _Path(__file__).resolve().parent
+            if str(here) not in _sys.path:
+                _sys.path.insert(0, str(here))
+            import gopay as _gopay
+            if not _gopay.normalize_gopay_accounts(gopay_cfg):
+                raise ValueError
+        except ValueError:
+            raise ValueError("GoPay 模式需 cfg.gopay 提供 accounts[]，或 country_code / phone_number / pin")
 
     _FIRST_NAMES = [
         "JAMES", "JOHN", "ROBERT", "MICHAEL", "WILLIAM", "DAVID", "RICHARD", "JOSEPH",

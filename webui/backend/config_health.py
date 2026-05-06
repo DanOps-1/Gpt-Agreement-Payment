@@ -127,6 +127,21 @@ def _missing_paths(obj: dict, paths: list[str]) -> list[str]:
     return [p for p in paths if _is_missing(_get(obj, p))]
 
 
+def _usable_gopay_accounts(gp: dict) -> list[dict]:
+    accounts = []
+    raw = gp.get("accounts") if isinstance(gp.get("accounts"), list) else []
+    for item in raw:
+        if isinstance(item, dict) and not any(
+            _is_missing(item.get(key)) for key in ("country_code", "phone_number", "pin")
+        ):
+            accounts.append(item)
+    if accounts:
+        return accounts
+    if not any(_is_missing(gp.get(key)) for key in ("country_code", "phone_number", "pin")):
+        return [gp]
+    return []
+
+
 def _requires_registration(req: dict) -> bool:
     mode = _text(req.get("mode")) or "single"
     if mode == "free_register":
@@ -290,21 +305,24 @@ def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
 
     if kind == "gopay":
         gp = pay_cfg.get("gopay") if isinstance(pay_cfg.get("gopay"), dict) else {}
-        missing = [
-            key for key in ("country_code", "phone_number", "pin")
-            if _is_missing(gp.get(key))
-        ]
-        if missing:
+        accounts = _usable_gopay_accounts(gp)
+        if not accounts:
             _check(
                 checks,
                 "gopay_config",
                 "fail",
                 "GoPay 支付配置不完整",
-                missing=[f"gopay.{x}" for x in missing],
-                action="在配置向导 GoPay 步骤填写国家码、手机号和 6 位 PIN 后重新导出",
+                missing=["gopay.accounts[]"],
+                action="在配置向导 GoPay 步骤添加至少一个国家码、手机号和 6 位 PIN 完整的账号后重新导出",
             )
         else:
-            _check(checks, "gopay_config", "ok", "GoPay 支付配置已配置", blocking=False)
+            _check(
+                checks,
+                "gopay_config",
+                "ok",
+                f"GoPay 支付配置已配置（{len(accounts)} 个账号）",
+                blocking=False,
+            )
 
         wa = wa_relay.status()
         if wa.get("status") == "connected":

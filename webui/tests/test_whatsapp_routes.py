@@ -131,16 +131,54 @@ def test_external_otp_writes_latest_and_resolves_runner(client, monkeypatch):
     r = client.post(
         "/api/whatsapp/external-otp",
         headers={"Authorization": f"Bearer {token}"},
-        json={"otp": "123456", "source": "android-notification-forwarder", "ts": 1234567890},
+        json={
+            "otp": "123456",
+            "phone": "81234567890",
+            "country_code": "62",
+            "source": "android-notification-forwarder",
+            "ts": 1234567890,
+        },
     )
 
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
     assert body["latest"]["otp"] == "123456"
+    assert body["latest"]["phone"] == "81234567890"
     assert body["latest"]["source"] == "android-notification-forwarder"
     assert wa_relay.latest_otp()["otp"] == "123456"
+    assert wa_relay.latest_otp(phone="81234567890", country_code="62")["otp"] == "123456"
     assert runner.status()["otp_pending"] is False
+
+
+def test_external_otp_wrong_phone_does_not_resolve_pending_runner(client):
+    from webui.backend import runner, wa_relay
+
+    token = wa_relay.relay_token()
+    runner._otp_pending = True
+    runner._otp_to_db = True
+    runner._otp_pending_phone = "81234567890"
+    runner._otp_pending_country_code = "62"
+
+    r = client.post(
+        "/api/whatsapp/external-otp",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "otp": "999999",
+            "phone": "81234567891",
+            "country_code": "62",
+            "source": "android-notification-forwarder",
+        },
+    )
+
+    assert r.status_code == 200
+    assert runner.status()["otp_pending"] is True
+    assert wa_relay.latest_otp(phone="81234567890", country_code="62") is None
+    assert wa_relay.latest_otp(phone="81234567891", country_code="62")["otp"] == "999999"
+
+    runner._otp_pending = False
+    runner._otp_pending_phone = ""
+    runner._otp_pending_country_code = ""
 
 
 def test_external_otp_status_uses_received_time_for_old_payload_ts(client):

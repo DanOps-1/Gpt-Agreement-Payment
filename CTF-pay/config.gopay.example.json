@@ -4,6 +4,20 @@
     "country_code": "62",
     "phone_number": "81234567890",
     "pin": "YOUR_6_DIGIT_GOPAY_PIN",
+    "accounts": [
+      {
+        "label": "wallet-1",
+        "country_code": "62",
+        "phone_number": "81234567890",
+        "pin": "YOUR_6_DIGIT_GOPAY_PIN"
+      },
+      {
+        "label": "wallet-2",
+        "country_code": "62",
+        "phone_number": "81234567891",
+        "pin": "YOUR_6_DIGIT_GOPAY_PIN"
+      }
+    ],
     "otp": {
       "source": "auto",
       "timeout": 300,

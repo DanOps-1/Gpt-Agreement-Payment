@@ -106,6 +106,12 @@ def test_export_writes_gopay_auto_otp(client, tmp_path, monkeypatch):
     pay = json.loads((tmp_path / "CTF-pay" / "config.paypal.json").read_text())
     assert pay["gopay"]["country_code"] == "62"
     assert pay["gopay"]["phone_number"] == "81234567890"
+    assert pay["gopay"]["accounts"] == [{
+        "label": "default",
+        "country_code": "62",
+        "phone_number": "81234567890",
+        "pin": "123456",
+    }]
     assert pay["gopay"]["otp"]["source"] == "auto"
     assert "path" not in pay["gopay"]["otp"]
     assert "url" not in pay["gopay"]["otp"]
@@ -114,6 +120,44 @@ def test_export_writes_gopay_auto_otp(client, tmp_path, monkeypatch):
     assert pay["gopay"]["auto_unbind"]["base_url"] == "https://gwa.gopayapi.com"
     assert pay["gopay"]["auto_unbind"]["raw_request"].startswith("POST /v1/linking/unbind")
     assert pay["gopay"]["auto_unbind"]["unlink_raw_request"].startswith("PATCH /v1/links/abc")
+
+
+def test_export_writes_gopay_multiple_accounts(client, tmp_path, monkeypatch):
+    _login(client)
+    _seed(tmp_path, monkeypatch)
+
+    answers = {
+        "payment": {"method": "gopay"},
+        "gopay": {
+            "otp_timeout": 180,
+            "accounts": [
+                {
+                    "label": "a",
+                    "country_code": "+62",
+                    "phone_number": "81234567890",
+                    "pin": "111111",
+                },
+                {
+                    "label": "b",
+                    "country_code": "62",
+                    "phone_number": "81234567891",
+                    "pin": "222222",
+                    "midtrans_client_id": "Mid-client-custom",
+                },
+            ],
+        },
+    }
+    r = client.post("/api/config/export", json={"answers": answers})
+    assert r.status_code == 200
+
+    pay = json.loads((tmp_path / "CTF-pay" / "config.paypal.json").read_text())
+    assert pay["gopay"]["country_code"] == "62"
+    assert pay["gopay"]["phone_number"] == "81234567890"
+    assert pay["gopay"]["pin"] == "111111"
+    assert pay["gopay"]["accounts"][0]["country_code"] == "62"
+    assert pay["gopay"]["accounts"][1]["phone_number"] == "81234567891"
+    assert pay["gopay"]["accounts"][1]["midtrans_client_id"] == "Mid-client-custom"
+    assert pay["gopay"]["otp"]["timeout"] == 180
 
 
 def test_save_gopay_auto_unbind_directly_updates_pay_config(client, tmp_path, monkeypatch):

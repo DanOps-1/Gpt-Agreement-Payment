@@ -357,12 +357,16 @@ interface RunStatus {
   log_count: number;
   otp_pending?: boolean;
   otp_pending_since?: number | null;
+  otp_pending_phone?: string;
+  otp_pending_country_code?: string;
 }
 
 interface WaOtpStatus {
   updated_at?: number;
   latest?: {
     otp?: string;
+    phone?: string;
+    country_code?: string;
     ts?: number;
     received_at?: number;
     source?: string;
@@ -465,6 +469,8 @@ const otpDialog = ref({
   since: 0,
   autoFilled: false,
   polling: false,
+  phone: "",
+  country_code: "",
 });
 const accountManager = ref({
   open: false,
@@ -481,6 +487,7 @@ function onGoPayToggle(v: boolean) {
 const status = ref<RunStatus>({
   running: false, pid: null, mode: null, cmd: null,
   started_at: null, ended_at: null, exit_code: null, log_count: 0,
+  otp_pending_phone: "", otp_pending_country_code: "",
 });
 
 const cmdPreview = ref("xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal");
@@ -1064,10 +1071,15 @@ function openStream() {
   });
   eventSource.addEventListener("otp_pending", (e) => {
     let since: number | undefined;
+    let phone = "";
+    let countryCode = "";
     try {
-      since = Number(JSON.parse((e as MessageEvent).data)?.since || 0) || undefined;
+      const payload = JSON.parse((e as MessageEvent).data);
+      since = Number(payload?.since || 0) || undefined;
+      phone = String(payload?.phone || "");
+      countryCode = String(payload?.country_code || "");
     } catch {}
-    openOtpDialog(since);
+    openOtpDialog(since, phone, countryCode);
   });
   eventSource.addEventListener("otp_resolved", () => {
     closeOtpDialog();
@@ -1092,7 +1104,7 @@ async function logout() {
   router.push("/login");
 }
 
-function openOtpDialog(since?: number | null) {
+function openOtpDialog(since?: number | null, phone?: string, countryCode?: string) {
   if (!otpDialog.value.open) {
     otpDialog.value.value = "";
     otpDialog.value.autoFilled = false;
@@ -1103,6 +1115,8 @@ function openOtpDialog(since?: number | null) {
   otpDialog.value.since = Number(
     since || status.value.otp_pending_since || otpDialog.value.since || Date.now() / 1000
   );
+  otpDialog.value.phone = phone || status.value.otp_pending_phone || otpDialog.value.phone || "";
+  otpDialog.value.country_code = countryCode || status.value.otp_pending_country_code || otpDialog.value.country_code || "";
   startOtpPolling();
   pollExternalOtp();
 }
@@ -1112,6 +1126,8 @@ function closeOtpDialog() {
   otpDialog.value.value = "";
   otpDialog.value.autoFilled = false;
   otpDialog.value.polling = false;
+  otpDialog.value.phone = "";
+  otpDialog.value.country_code = "";
   stopOtpPolling();
 }
 
@@ -1137,7 +1153,12 @@ function stopOtpPolling() {
 async function pollExternalOtp() {
   if (!otpDialog.value.open || otpDialog.value.submitting || otpDialog.value.submitted) return;
   try {
-    const r = await api.get<WaOtpStatus>("/whatsapp/status");
+    const params: Record<string, string | number> = {
+      since: otpDialog.value.since,
+    };
+    if (otpDialog.value.phone) params.phone = otpDialog.value.phone;
+    if (otpDialog.value.country_code) params.country_code = otpDialog.value.country_code;
+    const r = await api.get<WaOtpStatus>("/whatsapp/status", { params });
     const latest = r.data?.latest;
     const otp = latest?.otp || "";
     const arrivedAt = Number(r.data?.updated_at || latest?.received_at || 0);

@@ -38,6 +38,8 @@ _otp_file: Optional[Path] = None       # legacy file provider path, if used
 _otp_to_db: bool = False               # True when gopay.py waits on WebUI SQLite OTP endpoint
 _otp_pending: bool = False             # set when gopay.py asks/waits for OTP
 _otp_pending_since: Optional[float] = None
+_otp_pending_phone: str = ""
+_otp_pending_country_code: str = ""
 _otp_file_is_temp: bool = False
 _RUN_GOPAY_AUTO_UNBIND_ENABLED = False
 
@@ -143,6 +145,8 @@ def status() -> dict:
         "log_count": _seq_counter,
         "otp_pending": _otp_pending,
         "otp_pending_since": _otp_pending_since,
+        "otp_pending_phone": _otp_pending_phone,
+        "otp_pending_country_code": _otp_pending_country_code,
     }
 
 
@@ -158,7 +162,7 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
 
 def _start_cmd(cmd: list[str], mode: str, *, gopay: bool = False) -> dict:
     global _proc, _started_at, _ended_at, _exit_code, _cmd, _mode, _run_id
-    global _log_lines, _seq_counter, _otp_file, _otp_to_db, _otp_pending, _otp_pending_since, _otp_file_is_temp
+    global _log_lines, _seq_counter, _otp_file, _otp_to_db, _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code, _otp_file_is_temp
     with _lock:
         if _proc is not None and _proc.poll() is None:
             raise RuntimeError("a pipeline is already running")
@@ -182,6 +186,8 @@ def _start_cmd(cmd: list[str], mode: str, *, gopay: bool = False) -> dict:
         _otp_file_is_temp = otp_p is not None
         _otp_pending = False
         _otp_pending_since = None
+        _otp_pending_phone = ""
+        _otp_pending_country_code = ""
 
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         if gopay:
@@ -244,6 +250,16 @@ def _detect_otp_wait_target(line: str) -> tuple[str, Optional[Path]]:
     return "", None
 
 
+def _detect_gopay_otp_target(line: str) -> tuple[str, str]:
+    if "GOPAY_OTP_TARGET" not in line:
+        return "", ""
+    phone_match = re.search(r"\bphone=([+\d][+\d\-\s().]*)", line)
+    cc_match = re.search(r"\bcountry_code=([+\d]+)", line)
+    phone = "".join(ch for ch in (phone_match.group(1) if phone_match else "") if ch.isdigit())
+    country_code = "".join(ch for ch in (cc_match.group(1) if cc_match else "") if ch.isdigit())
+    return phone, country_code
+
+
 def _is_pay_success_line(line: str) -> bool:
     return bool(re.search(r"\[pay\].*结果:\s*state=succeeded\b", line))
 
@@ -270,7 +286,7 @@ def _run_gopay_auto_unbind() -> None:
 
 
 def _drain(proc: subprocess.Popen, run_id: int) -> None:
-    global _ended_at, _exit_code, _seq_counter, _log_lines, _otp_pending, _otp_pending_since, _otp_file, _otp_to_db, _otp_file_is_temp
+    global _ended_at, _exit_code, _seq_counter, _log_lines, _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code, _otp_file, _otp_to_db, _otp_file_is_temp
     try:
         if proc.stdout is None:
             return
@@ -289,6 +305,10 @@ def _drain(proc: subprocess.Popen, run_id: int) -> None:
                 _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line})
                 if len(_log_lines) > _MAX_LOG_LINES:
                     _log_lines = _log_lines[-_MAX_LOG_LINES:]
+                target_phone, target_country_code = _detect_gopay_otp_target(line)
+                if target_phone:
+                    _otp_pending_phone = target_phone
+                    _otp_pending_country_code = target_country_code
                 # Detect GoPay OTP request/wait markers.  The second form is
                 # used by the configured WhatsApp relay provider; making it
                 # pending lets the existing WebUI OTP modal act as a fallback
@@ -312,6 +332,8 @@ def _drain(proc: subprocess.Popen, run_id: int) -> None:
             _exit_code = proc.returncode
             _otp_pending = False
             _otp_pending_since = None
+            _otp_pending_phone = ""
+            _otp_pending_country_code = ""
             # Cleanup OTP file.  For the auto relay path this intentionally
             # removes stale OTPs too; future waits use mtime checks, but an
             # empty/clean file is easier to reason about.
@@ -433,7 +455,7 @@ def _terminate_process_tree(proc: subprocess.Popen, timeout: float = 5.0) -> Non
 
 
 def stop() -> dict:
-    global _proc, _ended_at, _exit_code, _otp_pending, _otp_pending_since
+    global _proc, _ended_at, _exit_code, _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code
     with _lock:
         proc = _proc
         run_id = _run_id
@@ -447,19 +469,23 @@ def stop() -> dict:
             _exit_code = proc.returncode if proc.poll() is not None else None
             _otp_pending = False
             _otp_pending_since = None
+            _otp_pending_phone = ""
+            _otp_pending_country_code = ""
     return status()
 
 
 def submit_otp(value: str) -> dict:
     """Front-end calls this with the OTP user typed. Stores it in DB by default."""
-    global _otp_pending, _otp_pending_since
+    global _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code
     with _lock:
         if not _otp_pending:
             raise RuntimeError("no OTP currently requested")
         path = _otp_file
         use_db = _otp_to_db
+        phone = _otp_pending_phone
+        country_code = _otp_pending_country_code
     if use_db:
-        wa_relay.submit_manual_otp(value)
+        wa_relay.submit_manual_otp(value, phone=phone, country_code=country_code)
     else:
         if path is None:
             raise RuntimeError("no OTP file currently requested")
@@ -468,16 +494,26 @@ def submit_otp(value: str) -> dict:
     with _lock:
         _otp_pending = False
         _otp_pending_since = None
+        _otp_pending_phone = ""
+        _otp_pending_country_code = ""
     return status()
 
 
 def notify_external_otp(item: dict | None = None) -> dict:
     """Mark a DB-backed OTP wait as resolved by the external webhook."""
-    global _otp_pending, _otp_pending_since, _seq_counter, _log_lines
+    global _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code, _seq_counter, _log_lines
     with _lock:
         if _otp_pending and _otp_to_db:
+            if _otp_pending_phone and item and not wa_relay._phone_matches(
+                item,
+                _otp_pending_phone,
+                _otp_pending_country_code,
+            ):
+                return status()
             _otp_pending = False
             _otp_pending_since = None
+            _otp_pending_phone = ""
+            _otp_pending_country_code = ""
             if item:
                 _seq_counter += 1
                 _log_lines.append({

@@ -26,6 +26,39 @@ def _payment_method(answers: dict) -> str:
     return (answers.get("payment") or {}).get("method", "both")
 
 
+def _normalize_gopay_accounts(gp: dict) -> list[dict]:
+    raw_accounts = gp.get("accounts") if isinstance(gp.get("accounts"), list) else []
+    accounts: list[dict] = []
+    for idx, item in enumerate(raw_accounts):
+        if not isinstance(item, dict):
+            continue
+        account = {
+            "label": str(item.get("label") or item.get("name") or f"account-{idx + 1}"),
+            "country_code": str(item.get("country_code") or gp.get("country_code") or "").lstrip("+"),
+            "phone_number": str(item.get("phone_number") or ""),
+            "pin": str(item.get("pin") or ""),
+        }
+        if item.get("midtrans_client_id") or gp.get("midtrans_client_id"):
+            account["midtrans_client_id"] = str(item.get("midtrans_client_id") or gp.get("midtrans_client_id"))
+        if all(account.get(k) for k in ("country_code", "phone_number", "pin")):
+            accounts.append(account)
+
+    if accounts:
+        return accounts
+
+    if all(gp.get(k) for k in ("country_code", "phone_number", "pin")):
+        account = {
+            "label": str(gp.get("label") or gp.get("name") or "default"),
+            "country_code": str(gp["country_code"]).lstrip("+"),
+            "phone_number": str(gp["phone_number"]),
+            "pin": str(gp["pin"]),
+        }
+        if gp.get("midtrans_client_id"):
+            account["midtrans_client_id"] = str(gp["midtrans_client_id"])
+        return [account]
+    return []
+
+
 def _project_pay(answers: dict) -> dict:
     """Map flat wizard answers onto CTF-pay config schema."""
     out: dict = {}
@@ -45,14 +78,17 @@ def _project_pay(answers: dict) -> dict:
         out["sub2api"] = answers["sub2api"]
     if pm == "gopay" and "gopay" in answers:
         gp = answers["gopay"] or {}
-        if all(gp.get(k) for k in ("country_code", "phone_number", "pin")):
+        accounts = _normalize_gopay_accounts(gp)
+        if accounts:
+            first = accounts[0]
             out["gopay"] = {
-                "country_code": str(gp["country_code"]).lstrip("+"),
-                "phone_number": str(gp["phone_number"]),
-                "pin": str(gp["pin"]),
+                "country_code": first["country_code"],
+                "phone_number": first["phone_number"],
+                "pin": first["pin"],
+                "accounts": accounts,
             }
-            if gp.get("midtrans_client_id"):
-                out["gopay"]["midtrans_client_id"] = gp["midtrans_client_id"]
+            if first.get("midtrans_client_id"):
+                out["gopay"]["midtrans_client_id"] = first["midtrans_client_id"]
             out["gopay"]["otp"] = {
                 "source": "auto",
                 "timeout": int(gp.get("otp_timeout") or 300),

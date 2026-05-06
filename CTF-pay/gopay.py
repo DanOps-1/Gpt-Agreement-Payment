@@ -37,6 +37,7 @@ import argparse
 import datetime as _dt
 import json
 import os
+import random
 import re
 import shlex
 import subprocess
@@ -85,6 +86,150 @@ LINK_RETRY_SLEEP_S = 12.0  # Midtrans 需要冷却 ~10s 才会让 406 → 201（
 DEFAULT_OTP_REGEX = r"(?<!\d)(\d{6})(?!\d)"
 
 
+def _phone_digits(value: Any) -> str:
+    return re.sub(r"\D", "", str(value or ""))
+
+
+def _phone_match_candidates(phone: str = "", country_code: str = "") -> set[str]:
+    local = _phone_digits(phone)
+    cc = _phone_digits(country_code)
+    candidates: set[str] = set()
+    if local:
+        candidates.add(local)
+        if cc and not local.startswith(cc):
+            candidates.add(f"{cc}{local}")
+    return candidates
+
+
+def _phone_values_match(
+    values: Any,
+    phone: str = "",
+    country_code: str = "",
+) -> bool:
+    candidates = _phone_match_candidates(phone, country_code)
+    if not candidates:
+        return True
+    raw_values = values if isinstance(values, (list, tuple, set)) else [values]
+    for value in raw_values:
+        digits = _phone_digits(value)
+        if not digits:
+            continue
+        if digits in candidates:
+            return True
+        # Accept a full international number for a locally configured account.
+        if any(digits.endswith(candidate) or candidate.endswith(digits) for candidate in candidates):
+            return True
+    return False
+
+
+def _collect_phone_values(obj: Any) -> list[str]:
+    values: list[str] = []
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            key_norm = str(key).lower().replace("-", "_")
+            if key_norm in (
+                "phone",
+                "phone_number",
+                "msisdn",
+                "recipient_phone",
+                "target_phone",
+                "account_phone",
+                "to_phone",
+            ):
+                if isinstance(value, (str, int, float)):
+                    values.append(str(value))
+                elif isinstance(value, dict):
+                    for sub_key in ("phone", "phone_number", "msisdn", "id"):
+                        sub_value = value.get(sub_key)
+                        if isinstance(sub_value, (str, int, float)):
+                            values.append(str(sub_value))
+            elif isinstance(value, (dict, list)):
+                values.extend(_collect_phone_values(value))
+    elif isinstance(obj, list):
+        for item in obj:
+            values.extend(_collect_phone_values(item))
+    return values
+
+
+def _mask_phone(phone: str = "", country_code: str = "") -> str:
+    digits = _phone_digits(phone)
+    cc = _phone_digits(country_code)
+    full = f"+{cc}{digits}" if cc and digits and not digits.startswith(cc) else digits
+    if not full:
+        return "-"
+    clean = full if full.startswith("+") else digits
+    tail = clean[-4:] if len(clean) >= 4 else clean
+    prefix = f"+{cc} " if cc and not digits.startswith(cc) else ""
+    return f"{prefix}***{tail}"
+
+
+def _has_gopay_account_fields(cfg: dict) -> bool:
+    return all(str(cfg.get(k) or "").strip() for k in ("country_code", "phone_number", "pin"))
+
+
+def normalize_gopay_accounts(gopay_cfg: dict) -> list[dict]:
+    """Return usable GoPay accounts from either new accounts[] or legacy fields."""
+    if not isinstance(gopay_cfg, dict):
+        return []
+
+    raw_accounts = gopay_cfg.get("accounts")
+    accounts: list[dict] = []
+    if isinstance(raw_accounts, list):
+        for idx, item in enumerate(raw_accounts):
+            if not isinstance(item, dict):
+                continue
+            account = dict(item)
+            if not account.get("country_code") and gopay_cfg.get("country_code"):
+                account["country_code"] = gopay_cfg.get("country_code")
+            if not account.get("midtrans_client_id") and gopay_cfg.get("midtrans_client_id"):
+                account["midtrans_client_id"] = gopay_cfg.get("midtrans_client_id")
+            if _has_gopay_account_fields(account):
+                account["_account_index"] = idx
+                accounts.append(account)
+
+    if accounts:
+        return accounts
+
+    if _has_gopay_account_fields(gopay_cfg):
+        return [{
+            "label": gopay_cfg.get("label") or gopay_cfg.get("name") or "default",
+            "country_code": gopay_cfg.get("country_code"),
+            "phone_number": gopay_cfg.get("phone_number"),
+            "pin": gopay_cfg.get("pin"),
+            "midtrans_client_id": gopay_cfg.get("midtrans_client_id"),
+            "_account_index": 0,
+        }]
+    return []
+
+
+def pick_gopay_account_config(
+    gopay_cfg: dict,
+    *,
+    log: Callable[[str], None] = print,
+    rng: Optional[random.Random] = None,
+) -> dict:
+    accounts = normalize_gopay_accounts(gopay_cfg)
+    if not accounts:
+        raise GoPayError("gopay config missing usable account: need country_code / phone_number / pin")
+
+    picker = rng.choice if rng is not None else random.choice
+    selected = dict(picker(accounts))
+    merged = {k: v for k, v in dict(gopay_cfg).items() if k != "accounts"}
+    merged.update({k: v for k, v in selected.items() if v is not None})
+    merged["_selected_account"] = True
+    merged["_selected_accounts_count"] = len(accounts)
+    merged["_selected_account_index"] = int(selected.get("_account_index") or 0)
+    merged["_selected_account_label"] = str(
+        selected.get("label") or selected.get("name") or f"account-{merged['_selected_account_index'] + 1}"
+    )
+    log(
+        "[gopay] selected account "
+        f"{merged['_selected_account_index'] + 1}/{len(accounts)} "
+        f"phone={_mask_phone(str(merged.get('phone_number') or ''), str(merged.get('country_code') or ''))}"
+    )
+    return merged
+
+
 # ──────────────────────────── exceptions ──────────────────────────
 
 
@@ -125,8 +270,12 @@ class GoPayCharger:
         runtime_cfg: Optional[dict] = None,
     ):
         self.cs = chatgpt_session
+        if isinstance(gopay_cfg, dict) and (
+            gopay_cfg.get("accounts") and not gopay_cfg.get("_selected_account")
+        ):
+            gopay_cfg = pick_gopay_account_config(gopay_cfg, log=log)
         self.country_code = str(gopay_cfg["country_code"]).lstrip("+")
-        self.phone = re.sub(r"\D", "", str(gopay_cfg["phone_number"]))
+        self.phone = _phone_digits(gopay_cfg["phone_number"])
         self.pin = str(gopay_cfg["pin"])
         self.midtrans_client_id = str(
             gopay_cfg.get("midtrans_client_id") or DEFAULT_MIDTRANS_CLIENT_ID
@@ -672,6 +821,10 @@ class GoPayCharger:
         # ── Linking: OTP + first PIN
         self._gopay_validate_reference(reference_id)
         self._gopay_user_consent(reference_id)
+        print(
+            f"GOPAY_OTP_TARGET phone={self.phone} country_code={self.country_code}",
+            flush=True,
+        )
         otp = self.otp_provider()
         if not otp:
             raise OTPCancelled("OTP not provided")
@@ -780,6 +933,26 @@ def _json_path_get(obj: Any, path: str) -> Any:
     return cur
 
 
+def _json_path_get_with_parent(obj: Any, path: str) -> tuple[Any, Any]:
+    cur = obj
+    parent = obj
+    for part in (path or "").split("."):
+        part = part.strip()
+        if not part:
+            continue
+        parent = cur
+        if isinstance(cur, dict):
+            cur = cur.get(part)
+        elif isinstance(cur, list) and part.isdigit():
+            idx = int(part)
+            if idx >= len(cur):
+                return None, parent
+            cur = cur[idx]
+        else:
+            return None, parent
+    return cur, parent
+
+
 def _parse_payload_timestamp(value: Any) -> Optional[float]:
     if value in (None, ""):
         return None
@@ -811,7 +984,7 @@ def _dict_timestamp(obj: dict) -> Optional[float]:
 
 
 def _iter_json_message_candidates(obj: Any) -> Any:
-    """Yield (text, timestamp) candidates from generic relay / Meta webhook JSON."""
+    """Yield (text, timestamp, source object) candidates from relay/webhook JSON."""
     if isinstance(obj, dict):
         ts = _dict_timestamp(obj)
         pieces: list[str] = []
@@ -826,14 +999,14 @@ def _iter_json_message_candidates(obj: Any) -> Any:
             elif isinstance(value, (str, int, float)):
                 pieces.append(str(value))
         if pieces:
-            yield " ".join(pieces), ts
+            yield " ".join(pieces), ts, obj
         for value in obj.values():
             yield from _iter_json_message_candidates(value)
     elif isinstance(obj, list):
         for item in obj:
             yield from _iter_json_message_candidates(item)
     elif isinstance(obj, str):
-        yield obj, None
+        yield obj, None, obj
 
 
 def _extract_otp_from_payload(
@@ -842,6 +1015,8 @@ def _extract_otp_from_payload(
     code_regex: str = DEFAULT_OTP_REGEX,
     json_path: str = "",
     issued_after: float = 0.0,
+    phone: str = "",
+    country_code: str = "",
 ) -> str:
     if isinstance(payload, str):
         stripped = payload.strip()
@@ -849,22 +1024,34 @@ def _extract_otp_from_payload(
             try:
                 payload = json.loads(stripped)
             except Exception:
+                if phone:
+                    return ""
                 return _extract_otp_from_text(payload, code_regex=code_regex)
         else:
+            if phone:
+                return ""
             return _extract_otp_from_text(payload, code_regex=code_regex)
 
     if json_path:
-        target = _json_path_get(payload, json_path)
+        target, parent = _json_path_get_with_parent(payload, json_path)
         if target is None:
             return ""
+        if phone:
+            source_phone_values = _collect_phone_values(target) or _collect_phone_values(parent)
+            if not source_phone_values or not _phone_values_match(source_phone_values, phone, country_code):
+                return ""
         if not isinstance(target, str):
             target = json.dumps(target, ensure_ascii=False)
         return _extract_otp_from_text(target, code_regex=code_regex)
 
     found = ""
-    for text, ts in _iter_json_message_candidates(payload):
+    for text, ts, source_obj in _iter_json_message_candidates(payload):
         if issued_after and ts is not None and ts < issued_after:
             continue
+        if phone:
+            phone_values = _collect_phone_values(source_obj)
+            if not phone_values or not _phone_values_match(phone_values, phone, country_code):
+                continue
         code = _extract_otp_from_text(text, code_regex=code_regex)
         if code:
             found = code
@@ -889,6 +1076,8 @@ def whatsapp_file_otp_provider(
     interval: float = 1.0,
     code_regex: str = DEFAULT_OTP_REGEX,
     json_path: str = "",
+    phone: str = "",
+    country_code: str = "",
     issued_after_slack_s: float = 15.0,
     delete_after_read: bool = False,
     log: Callable[[str], None] = print,
@@ -911,6 +1100,8 @@ def whatsapp_file_otp_provider(
                             code_regex=code_regex,
                             json_path=json_path,
                             issued_after=issued_after,
+                            phone=phone,
+                            country_code=country_code,
                         )
                         if code:
                             if delete_after_read:
@@ -938,6 +1129,8 @@ def whatsapp_http_otp_provider(
     params: Optional[dict] = None,
     code_regex: str = DEFAULT_OTP_REGEX,
     json_path: str = "",
+    phone: str = "",
+    country_code: str = "",
     issued_after_slack_s: float = 15.0,
     log: Callable[[str], None] = print,
 ) -> Callable[[], str]:
@@ -953,6 +1146,10 @@ def whatsapp_http_otp_provider(
         deadline = time.time() + timeout
         sess = requests.Session()
         base_params = dict(params or {})
+        if phone and "phone" not in base_params:
+            base_params["phone"] = phone
+        if country_code and "country_code" not in base_params:
+            base_params["country_code"] = country_code
         last_error = ""
         log(f"[gopay] waiting WhatsApp OTP from relay: {url}")
         while time.time() < deadline:
@@ -979,6 +1176,8 @@ def whatsapp_http_otp_provider(
                     code_regex=code_regex,
                     json_path=json_path,
                     issued_after=issued_after,
+                    phone=phone,
+                    country_code=country_code,
                 )
                 if code:
                     return code
@@ -998,6 +1197,8 @@ def command_otp_provider(
     timeout: float = 300.0,
     interval: float = 2.0,
     code_regex: str = DEFAULT_OTP_REGEX,
+    phone: str = "",
+    country_code: str = "",
     log: Callable[[str], None] = print,
 ) -> Callable[[], str]:
     """Poll a user-owned command that prints the latest WhatsApp OTP."""
@@ -1020,7 +1221,12 @@ def command_otp_provider(
                     check=False,
                 )
                 text = (proc.stdout or "") + "\n" + (proc.stderr or "")
-                code = _extract_otp_from_text(text, code_regex=code_regex)
+                code = _extract_otp_from_payload(
+                    text,
+                    code_regex=code_regex,
+                    phone=phone,
+                    country_code=country_code,
+                )
                 if code:
                     return code
                 if proc.returncode not in (0, 1):
@@ -1069,6 +1275,15 @@ def build_configured_otp_provider(
     code_regex = str(otp_cfg.get("code_regex") or DEFAULT_OTP_REGEX)
     json_path = str(otp_cfg.get("json_path") or "")
     slack = _float_cfg(otp_cfg, "issued_after_slack_s", 15.0)
+    otp_phone = _phone_digits(
+        otp_cfg.get("phone")
+        or otp_cfg.get("phone_number")
+        or gopay_cfg.get("phone_number")
+        or ""
+    )
+    otp_country_code = _phone_digits(
+        otp_cfg.get("country_code") or gopay_cfg.get("country_code") or ""
+    )
 
     env_url = os.getenv("WEBUI_GOPAY_OTP_URL", "").strip()
     url = str(otp_cfg.get("url") or otp_cfg.get("relay_url") or env_url or "").strip()
@@ -1089,6 +1304,8 @@ def build_configured_otp_provider(
             params=otp_cfg.get("params") if isinstance(otp_cfg.get("params"), dict) else None,
             code_regex=code_regex,
             json_path=json_path,
+            phone=otp_phone,
+            country_code=otp_country_code,
             issued_after_slack_s=slack,
             log=log,
         )
@@ -1101,6 +1318,8 @@ def build_configured_otp_provider(
                 interval=interval,
                 code_regex=code_regex,
                 json_path=json_path,
+                phone=otp_phone,
+                country_code=otp_country_code,
                 issued_after_slack_s=slack,
                 delete_after_read=bool(otp_cfg.get("delete_after_read", False)),
                 log=log,
@@ -1115,6 +1334,8 @@ def build_configured_otp_provider(
                 timeout=timeout,
                 interval=interval,
                 code_regex=code_regex,
+                phone=otp_phone,
+                country_code=otp_country_code,
                 log=log,
             )
         if source != "auto":
@@ -1214,13 +1435,14 @@ def main():
     args = parser.parse_args()
 
     cfg = _load_cfg(args.config)
-    gopay_cfg = cfg.get("gopay") or {}
-    if not gopay_cfg:
+    raw_gopay_cfg = cfg.get("gopay") or {}
+    if not raw_gopay_cfg:
         print("[error] config has no 'gopay' block", file=sys.stderr)
         sys.exit(2)
-    if not all(k in gopay_cfg for k in ("country_code", "phone_number", "pin")):
-        print("[error] gopay block missing country_code / phone_number / pin",
-              file=sys.stderr)
+    try:
+        gopay_cfg = pick_gopay_account_config(raw_gopay_cfg)
+    except GoPayError as e:
+        print(f"[error] {e}", file=sys.stderr)
         sys.exit(2)
 
     auth_cfg = (cfg.get("fresh_checkout") or {}).get("auth") or {}

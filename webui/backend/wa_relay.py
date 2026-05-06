@@ -203,6 +203,29 @@ def otp_url() -> str:
     return f"{base}/api/whatsapp/latest-otp?token={relay_token()}"
 
 
+def _digits(value: str | int | float | None) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _phone_matches(item: dict, phone: str = "", country_code: str = "") -> bool:
+    target = _digits(phone)
+    cc = _digits(country_code)
+    if not target:
+        return True
+    candidates = {target}
+    if cc and not target.startswith(cc):
+        candidates.add(f"{cc}{target}")
+    for key in ("phone", "phone_number", "msisdn", "target_phone", "recipient_phone"):
+        digits = _digits(item.get(key))
+        if not digits:
+            continue
+        if digits in candidates:
+            return True
+        if any(digits.endswith(candidate) or candidate.endswith(digits) for candidate in candidates):
+            return True
+    return False
+
+
 def is_running() -> bool:
     return _proc is not None and _proc.poll() is None
 
@@ -254,7 +277,12 @@ def apply_sidecar_state(payload: dict) -> dict:
     return state
 
 
-def submit_manual_otp(value: str) -> dict:
+def submit_manual_otp(
+    value: str,
+    *,
+    phone: str = "",
+    country_code: str = "",
+) -> dict:
     code = "".join(ch for ch in str(value or "") if ch.isdigit())
     if not code:
         raise ValueError("OTP 为空")
@@ -265,6 +293,8 @@ def submit_manual_otp(value: str) -> dict:
         "received_at": received_at,
         "from": "webui_manual",
         "source": "manual_webui",
+        "phone": _digits(phone),
+        "country_code": _digits(country_code),
         "engine": _engine or _read_preferred_engine(),
         "text": "",
     }
@@ -287,6 +317,8 @@ def submit_external_otp(
     source: str = "external",
     ts: float | None = None,
     sender: str = "external_otp",
+    phone: str = "",
+    country_code: str = "",
 ) -> dict:
     code = "".join(ch for ch in str(value or "") if ch.isdigit())
     if not code:
@@ -304,6 +336,8 @@ def submit_external_otp(
         "received_at": received_at,
         "from": sender or "external_otp",
         "source": source or "external",
+        "phone": _digits(phone),
+        "country_code": _digits(country_code),
         "engine": _engine or _read_preferred_engine(),
         "text": "",
     }
@@ -320,17 +354,31 @@ def submit_external_otp(
     return item
 
 
-def latest_otp(since: float = 0.0) -> dict | None:
-    latest = (_read_state().get("latest") or {})
-    if not isinstance(latest, dict) or not latest.get("otp"):
-        return None
-    try:
-        ts = float(latest.get("received_at") or latest.get("ts") or 0.0)
-    except Exception:
-        ts = 0.0
-    if since and ts < since:
-        return None
-    return latest
+def latest_otp(
+    since: float = 0.0,
+    *,
+    phone: str = "",
+    country_code: str = "",
+) -> dict | None:
+    state = _read_state()
+    history = state.get("history") if isinstance(state.get("history"), list) else []
+    latest = state.get("latest")
+    candidates = list(history)
+    if isinstance(latest, dict) and latest not in candidates:
+        candidates.append(latest)
+    for item in reversed(candidates):
+        if not isinstance(item, dict) or not item.get("otp"):
+            continue
+        try:
+            ts = float(item.get("received_at") or item.get("ts") or 0.0)
+        except Exception:
+            ts = 0.0
+        if since and ts < since:
+            continue
+        if not _phone_matches(item, phone, country_code):
+            continue
+        return item
+    return None
 
 
 def start(mode: str = "qr", pairing_phone: str = "", engine: str = "") -> dict:
