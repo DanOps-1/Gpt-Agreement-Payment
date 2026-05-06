@@ -238,6 +238,7 @@
                   <span>Token</span>
                   <input v-model="accountManager.importToken" type="password" />
                 </label>
+                <TermBtn :loading="accountManager.savingConfig" @click="() => saveAccountImportServerConfig()">保存服务器配置</TermBtn>
                 <label class="manager-filter">
                   <span>RT</span>
                   <select v-model="accountManager.rtFilter" @change="accountManager.page = 1">
@@ -490,6 +491,7 @@ const otpDialog = ref({
 const accountManager = ref({
   open: false,
   busy: false,
+  savingConfig: false,
   page: 1,
   rtFilter: "all" as "all" | "has_rt" | "no_rt",
   planFilter: "all" as "all" | "plus",
@@ -834,6 +836,33 @@ function openAccountManager() {
 function closeAccountManager() {
   accountManager.value.open = false;
 }
+async function loadAccountImportServerConfig() {
+  try {
+    const r = await api.get("/config/account-import-server");
+    const cfg = r.data || {};
+    accountManager.value.importUrl = String(cfg.url || "http://127.0.0.1:8787/api/import");
+    accountManager.value.importToken = String(cfg.token || "dev-import-token");
+  } catch {}
+}
+async function saveAccountImportServerConfig(options?: { quiet?: boolean }) {
+  if (!accountManager.value.importUrl.trim()) { message.warning("请填写导入接口 URL"); return false; }
+  if (!accountManager.value.importToken.trim()) { message.warning("请填写 Bearer token"); return false; }
+  accountManager.value.savingConfig = true;
+  try {
+    await api.post("/config/account-import-server", {
+      url: accountManager.value.importUrl.trim(),
+      token: accountManager.value.importToken.trim(),
+      timeout_s: 30,
+    });
+    if (!options?.quiet) message.success("服务器推送配置已保存");
+    return true;
+  } catch (e: any) {
+    message.error(`保存服务器推送配置失败：${e?.response?.data?.detail || e?.message || e}`);
+    return false;
+  } finally {
+    accountManager.value.savingConfig = false;
+  }
+}
 function toggleManagerSelect(id: number) {
   const next = new Set(managerSelectedIds.value);
   if (next.has(id)) next.delete(id); else next.add(id);
@@ -898,6 +927,7 @@ async function pushManagerSelectedToServer() {
   if (!ids.length) { message.warning("请选择尚未推送至导入服务器的账号"); return; }
   if (!accountManager.value.importUrl.trim()) { message.warning("请填写导入接口 URL"); return; }
   if (!accountManager.value.importToken.trim()) { message.warning("请填写 Bearer token"); return; }
+  if (!(await saveAccountImportServerConfig({ quiet: true }))) return;
   accountManager.value.busy = true;
   try {
     const r = await api.post("/inventory/accounts/server-push", {
@@ -1279,6 +1309,7 @@ onMounted(async () => {
   await refreshStatus();
   await refreshPreview();
   await checkConfigHealth();
+  await loadAccountImportServerConfig();
   await refreshInventory();
   if (status.value.running) {
     openStream();

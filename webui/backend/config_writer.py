@@ -63,6 +63,14 @@ def _project_pay(answers: dict) -> dict:
     """Map flat wizard answers onto CTF-pay config schema."""
     out: dict = {}
     pm = _payment_method(answers)
+    if "account_import_server" in answers:
+        cfg = answers.get("account_import_server") or {}
+        if isinstance(cfg, dict):
+            out["account_import_server"] = {
+                "url": str(cfg.get("url") or cfg.get("import_url") or "http://127.0.0.1:8787/api/import").strip(),
+                "token": str(cfg.get("token") or cfg.get("import_token") or "dev-import-token").strip(),
+                "timeout_s": float(cfg.get("timeout_s") or 30),
+            }
     if "paypal" in answers and pm in ("paypal", "both"):
         out["paypal"] = answers["paypal"]
     if "captcha" in answers:

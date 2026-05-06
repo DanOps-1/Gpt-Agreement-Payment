@@ -33,6 +33,12 @@ class GoPayAutoUnbindRequest(BaseModel):
     unlink_raw_request: str = ""
 
 
+class AccountImportServerRequest(BaseModel):
+    url: str = "http://127.0.0.1:8787/api/import"
+    token: str = "dev-import-token"
+    timeout_s: float = 30
+
+
 class GoPayAutoUnbindFetchRequest(BaseModel):
     base_url: str = ""
     raw_request: str
@@ -54,6 +60,55 @@ class GoPayManualUnbindRequest(BaseModel):
 @router.post("/export")
 def export(req: ExportRequest, user: str = CurrentUser):
     return write_configs(req.answers)
+
+
+def _load_pay_config() -> dict:
+    path = s.PAY_CONFIG_PATH
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_pay_config(data: dict) -> None:
+    path = s.PAY_CONFIG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+@router.get("/account-import-server")
+def get_account_import_server(user: str = CurrentUser):
+    data = _load_pay_config()
+    cfg = data.get("account_import_server") or {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    return {
+        "url": str(cfg.get("url") or cfg.get("import_url") or "http://127.0.0.1:8787/api/import"),
+        "token": str(cfg.get("token") or cfg.get("import_token") or "dev-import-token"),
+        "timeout_s": float(cfg.get("timeout_s") or 30),
+        "path": str(s.PAY_CONFIG_PATH),
+    }
+
+
+@router.post("/account-import-server")
+def save_account_import_server(req: AccountImportServerRequest, user: str = CurrentUser):
+    url = req.url.strip()
+    token = req.token.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="导入接口 URL 不能为空")
+    if not token:
+        raise HTTPException(status_code=400, detail="Bearer token 不能为空")
+    data = _load_pay_config()
+    data["account_import_server"] = {
+        "url": url,
+        "token": token,
+        "timeout_s": float(req.timeout_s or 30),
+    }
+    _save_pay_config(data)
+    return {"ok": True, "path": str(s.PAY_CONFIG_PATH), "account_import_server": data["account_import_server"]}
 
 
 @router.post("/gopay/auto-unbind")

@@ -570,6 +570,51 @@ def test_export_preserves_sub2api_config(client, tmp_path, monkeypatch):
     assert pay["sub2api"]["priority"] == 10
 
 
+def test_export_writes_account_import_server_config(client, tmp_path, monkeypatch):
+    _login(client)
+    _seed(tmp_path, monkeypatch)
+
+    answers = {
+        "account_import_server": {
+            "url": "http://127.0.0.1:8787/api/import",
+            "token": "dev-import-token",
+            "timeout_s": 12,
+        },
+    }
+    r = client.post("/api/config/export", json={"answers": answers})
+    assert r.status_code == 200
+
+    pay = json.loads((tmp_path / "CTF-pay" / "config.paypal.json").read_text())
+    assert pay["account_import_server"] == {
+        "url": "http://127.0.0.1:8787/api/import",
+        "token": "dev-import-token",
+        "timeout_s": 12,
+    }
+
+
+def test_account_import_server_config_can_be_saved_and_loaded(client, tmp_path, monkeypatch):
+    _login(client)
+    _seed(tmp_path, monkeypatch)
+
+    r = client.post("/api/config/account-import-server", json={
+        "url": "http://127.0.0.1:8787/api/import",
+        "token": "dev-import-token",
+        "timeout_s": 15,
+    })
+    assert r.status_code == 200
+
+    saved = json.loads((tmp_path / "CTF-pay" / "config.paypal.json").read_text())
+    assert saved["account_import_server"]["url"] == "http://127.0.0.1:8787/api/import"
+    assert saved["account_import_server"]["token"] == "dev-import-token"
+    assert saved["account_import_server"]["timeout_s"] == 15
+
+    r = client.get("/api/config/account-import-server")
+    assert r.status_code == 200
+    assert r.json()["url"] == "http://127.0.0.1:8787/api/import"
+    assert r.json()["token"] == "dev-import-token"
+    assert r.json()["timeout_s"] == 15
+
+
 def test_exported_reg_config_accepts_checkout_link_fields(client, tmp_path, monkeypatch):
     _login(client)
     _seed(tmp_path, monkeypatch)
