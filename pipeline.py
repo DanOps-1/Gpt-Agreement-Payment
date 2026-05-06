@@ -3243,20 +3243,19 @@ def _cpa_extra_for_server_import(account: dict, email: str) -> dict:
 
 
 def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | None = None) -> str:
-    import urllib.error
-    import urllib.request
+    import httpx
 
     email = _norm_email(email)
     if not email:
         return "skipped"
     account = dict(account or _find_latest_registered_account_for_email(email) or {})
     if not account:
-        print(f"[push-server] {email} 本地账号记录不存在，跳过")
+        print(f"[push-server] {email} local account record missing, skipped")
         return "missing"
 
     cfg = _server_import_cfg(card_cfg or {})
     if not cfg["url"] or not cfg["token"]:
-        print("[push-server] 缺少导入服务器 url/token，跳过")
+        print("[push-server] missing import server url/token, skipped")
         return "skipped"
 
     item = {
@@ -3266,37 +3265,34 @@ def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | 
         "extra": json.dumps(_cpa_extra_for_server_import(account, email), ensure_ascii=False, separators=(",", ":")),
     }
     payload = {"type": "accounts", "items": [item]}
-    req = urllib.request.Request(
-        cfg["url"],
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {cfg['token']}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
     try:
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(req, timeout=cfg["timeout_s"]) as resp:
-            text = resp.read().decode("utf-8", errors="ignore")
-        print(f"[push-server] ✓ {email} 已推送到账号导入服务器 {cfg['url']}")
+        with httpx.Client(timeout=float(cfg["timeout_s"]), trust_env=False) as client:
+            resp = client.post(
+                cfg["url"],
+                json=payload,
+                headers={"Authorization": f"Bearer {cfg['token']}"},
+            )
+        text = resp.text[:500]
+        try:
+            body = resp.json()
+        except Exception:
+            body = None
+        ok = 200 <= resp.status_code < 300
+        if isinstance(body, dict) and body.get("success") is False:
+            ok = False
+        if not ok:
+            print(f"[push-server] {email} push failed http={resp.status_code} body={text}")
+            return "fail_upload"
+        print(f"[push-server] {email} pushed to account import server {cfg['url']}")
         try:
             if account.get("id"):
                 get_db().mark_accounts_server_pushed([int(account["id"])])
         except Exception:
             pass
         return "ok"
-    except urllib.error.HTTPError as e:
-        try:
-            body = e.read().decode("utf-8", errors="ignore")[:300]
-        except Exception:
-            body = ""
-        print(f"[push-server] {email} 推送失败 http={e.code} {body}")
-        return "fail_upload"
     except Exception as e:
-        print(f"[push-server] {email} 推送异常: {e}")
+        print(f"[push-server] {email} push exception: {e}")
         return "fail_upload"
-
 
 def _sub2api_import_after_team(
     email: str,

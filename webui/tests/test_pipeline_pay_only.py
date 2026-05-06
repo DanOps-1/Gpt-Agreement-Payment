@@ -162,6 +162,58 @@ def test_pay_only_push_server_only_for_plus_success(tmp_path, monkeypatch):
     assert rows[-1]["server_push"] == "ok"
 
 
+def test_push_plus_account_to_server_posts_account_import_payload(tmp_path, monkeypatch):
+    db = _reset_db(tmp_path, monkeypatch)
+    aid = db.add_registered_account({
+        "email": "retry@example.com",
+        "password": "pw",
+        "access_token": "at",
+        "refresh_token": "rt",
+        "id_token": "id",
+    })
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"ok":true}'
+
+        def json(self):
+            return {"ok": True}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            calls.append({"init": kwargs})
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, json=None, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return FakeResponse()
+
+    monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(Client=FakeClient))
+
+    result = pipeline._push_plus_account_to_server(
+        "retry@example.com",
+        {"account_import_server": {"url": "http://127.0.0.1:8787/api/import", "token": "dev-import-token"}},
+    )
+
+    assert result == "ok"
+    req = calls[-1]
+    assert req["url"] == "http://127.0.0.1:8787/api/import"
+    assert req["headers"] == {"Authorization": "Bearer dev-import-token"}
+    assert req["json"]["type"] == "accounts"
+    item = req["json"]["items"][0]
+    assert item["email"] == "retry@example.com"
+    assert item["password"] == "pw"
+    assert item["enabled"] is True
+    assert json.loads(item["extra"])["refresh_token"] == "rt"
+    assert get_db().get_registered_account(aid)["server_pushed_at"] > 0
+
+
 def test_cpa_import_falls_back_to_access_token_without_refresh_token(tmp_path, monkeypatch):
     db = _reset_db(tmp_path, monkeypatch)
     db.add_registered_account({
