@@ -3123,7 +3123,10 @@ def update_payment_page_address(
             _log(f"      [address] step {step_idx + 1} 返回 {resp.status_code}, 继续 ...")
 
         # 模拟人类输入间隔 (2-5 秒)
-        time.sleep(random.uniform(2.0, 4.5))
+        # Keep a short browser-like pause between address updates; the last
+        # step continues directly into telemetry/confirm.
+        if step_idx < len(address_steps) - 1:
+            time.sleep(random.uniform(0.5, 1.0))
 
 def send_telemetry(
     session: requests.Session,

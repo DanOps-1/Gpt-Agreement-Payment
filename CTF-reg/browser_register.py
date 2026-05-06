@@ -684,12 +684,14 @@ def browser_register(cfg, mail_provider) -> dict:
             logger.info("[browser-reg] 等待跳转回 chatgpt.com ...")
             arrived = False
             last_url = ""
+            stagnant_url_since = 0
             for i in range(120):
                 time.sleep(1)
                 cur = page.url
                 if cur != last_url:
                     logger.info(f"[browser-reg] URL@{i}s: {cur[:120]}")
                     last_url = cur
+                    stagnant_url_since = i
                 # 到 chatgpt.com 且已加载 React 主界面
                 if "chatgpt.com" in cur and "auth.openai.com" not in cur:
                     # 等 /api/auth/session 能正常返回 accessToken 才算完成
@@ -709,17 +711,40 @@ def browser_register(cfg, mail_provider) -> dict:
                         pass
                 # 如果仍在 auth.openai.com，可能还有 /email-verification 或其他中转，继续点 continue
                 if "auth.openai.com" in cur and i % 10 == 5:
+                    clicked_continue = False
                     for sel in ['button:has-text("Continue")', 'button:has-text("Next")',
                                 'button[type="submit"]']:
                         try:
                             b = page.query_selector(sel)
                             if b and b.is_visible():
                                 b.click()
+                                clicked_continue = True
                                 logger.info(f"[browser-reg] 中转点击: {sel}")
                                 break
                         except Exception:
                             # 页面导航时 context destroyed，忽略
                             pass
+                    if clicked_continue:
+                        stagnant_url_since = i
+                if (
+                    "auth.openai.com/api/accounts/authorize" in cur
+                    and i - stagnant_url_since >= 15
+                ):
+                    has_continue = False
+                    for sel in ['button:has-text("Continue")', 'button:has-text("Next")',
+                                'button[type="submit"]']:
+                        try:
+                            b = page.query_selector(sel)
+                            if b and b.is_visible():
+                                has_continue = True
+                                break
+                        except Exception:
+                            pass
+                    if not has_continue:
+                        logger.warning(
+                            f"[browser-reg] authorize URL 15s no change and no continue button, fail fast: {cur[:120]}"
+                        )
+                        break
             if not arrived:
                 page.screenshot(path="/tmp/browser_reg_no_chatgpt.png")
                 raise RuntimeError(f"未跳转回 chatgpt.com，当前: {page.url[:120]}")
