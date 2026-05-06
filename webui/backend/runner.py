@@ -8,6 +8,8 @@ GoPay 妯″紡涓嬮澶栨敮鎸?OTP 涓浆锛氶粯璁ら€氳繃 WebUI
 淇濈暀 `GOPAY_OTP_REQUEST path=<file>` 鏃ф牸寮忚瘑鍒紝鍙綔涓烘樉寮?legacy
 file provider 鐨勫吋瀹?fallback銆?
 """
+from __future__ import annotations
+
 import json
 import os
 import re

@@ -11,6 +11,8 @@ Stripe Checkout 自动化支付脚本
 示例:
   python pay.py cs_live_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 """
+from __future__ import annotations
+
 
 import argparse
 import base64

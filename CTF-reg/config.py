@@ -1,6 +1,8 @@
 """
 自动化绑卡支付 - 配置文件
 """
+from __future__ import annotations
+
 import os
 import json
 from dataclasses import dataclass, field

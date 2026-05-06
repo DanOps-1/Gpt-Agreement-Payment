@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fastapi import Cookie, Depends, HTTPException
 from .db import get_db
 

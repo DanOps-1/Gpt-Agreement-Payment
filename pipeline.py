@@ -19,6 +19,8 @@ Pipeline 调度器：注册 ChatGPT 账号 → Stripe/PayPal 支付
   # 批量
   python pipeline.py --config CTF-pay/config.paypal.json --paypal --batch 5 --delay 30
 """
+from __future__ import annotations
+
 
 import argparse
 import json

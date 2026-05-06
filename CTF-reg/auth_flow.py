@@ -5,6 +5,8 @@
   -> signup -> send_otp -> verify_otp -> create_account
   -> redirect_chain -> auth_session -> (optional) oauth_token_exchange
 """
+from __future__ import annotations
+
 import json
 import base64
 import hashlib

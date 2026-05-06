@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException, Response, Cookie
 from pydantic import BaseModel
 from ..db import get_db
