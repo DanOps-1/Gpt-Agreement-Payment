@@ -126,6 +126,42 @@ def test_pay_only_success_imports_cpa_with_plus_tag(tmp_path, monkeypatch):
     assert rows[-1]["cpa_import"] == "ok"
 
 
+def test_pay_only_push_server_only_for_plus_success(tmp_path, monkeypatch):
+    db = _reset_db(tmp_path, monkeypatch)
+    card_config = tmp_path / "config.paypal.json"
+
+    db.add_registered_account({
+        "email": "retry@example.com",
+        "password": "pw",
+        "session_token": "sess-retry",
+        "access_token": "at-retry",
+        "device_id": "dev-retry",
+    })
+    card_config.write_text(json.dumps({
+        "fresh_checkout": {"plan": {"plan_name": "chatgptplusplan"}},
+    }), encoding="utf-8")
+
+    calls = []
+
+    monkeypatch.setattr(pipeline, "pay", lambda *args, **kwargs: {
+        "status": "succeeded",
+        "raw": {"session_id": "cs_test", "chatgpt_email": "retry@example.com"},
+    })
+    monkeypatch.setattr(
+        pipeline,
+        "_push_plus_account_to_server",
+        lambda email, card_cfg, account=None: calls.append((email, card_cfg, account)) or "ok",
+    )
+
+    result = pipeline.pay_only(str(card_config), use_gopay=True, push_server=True)
+
+    assert result["status"] == "succeeded"
+    assert calls
+    assert calls[0][0] == "retry@example.com"
+    rows = get_db().iter_pipeline_results()
+    assert rows[-1]["server_push"] == "ok"
+
+
 def test_cpa_import_falls_back_to_access_token_without_refresh_token(tmp_path, monkeypatch):
     db = _reset_db(tmp_path, monkeypatch)
     db.add_registered_account({

@@ -801,6 +801,13 @@ def _cpa_cfg_for_card_payment(card_cfg: dict) -> dict:
     return cpa_cfg
 
 
+def _is_plus_plan(card_cfg: dict) -> bool:
+    plan_cfg = ((card_cfg or {}).get("fresh_checkout") or {}).get("plan") or {}
+    plan_name = str(plan_cfg.get("plan_name") or "").lower()
+    plan_type = str(plan_cfg.get("plan_type") or "").lower()
+    return "plus" in plan_name or plan_type == "plus"
+
+
 def pay(card_config_path, session_token=None, access_token=None,
         device_id=None, use_paypal=False, use_gopay=False,
         gopay_otp_file=None, python="python3", timeout=600):
@@ -940,7 +947,8 @@ def pay(card_config_path, session_token=None, access_token=None,
 def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
              use_gopay=False, gopay_otp_file=None,
              timeout_reg=300, timeout_pay=600,
-             pool=None, team_client=None, card_cfg=None, proxy_pool=None):
+             pool=None, team_client=None, card_cfg=None, proxy_pool=None,
+             push_server=False):
     """全链路: 注册 → 支付 → (可选) gpt-team 导入探测 → 更新域池
     proxy_pool 非空时从 pool 挑代理，同时覆盖 CTF-reg + CTF-pay 两个 config 的 proxy 字段"""
     card_config_path = str(Path(card_config_path).resolve())
@@ -1068,6 +1076,17 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
                 print(f"[sub2api] 导入异常: {e}")
                 record["sub2api_import"] = "error"
 
+        if pay_status == "succeeded" and push_server and _is_plus_plan(card_cfg or {}):
+            try:
+                record["server_push"] = _push_plus_account_to_server(
+                    reg.get("email", ""),
+                    card_cfg or {},
+                    account=reg_acc or _find_latest_registered_account_for_email(reg.get("email", "")),
+                )
+            except Exception as e:
+                print(f"[push-server] 推送异常: {e}")
+                record["server_push"] = "error"
+
         _append_result(record)
         emoji = "✓" if pay_status == "succeeded" else "✗"
         perm = record.get("invite_permission", "-")
@@ -1101,6 +1120,7 @@ def singlexn(card_config_path, count, delay=30, **kwargs):
     use_gopay = bool(kwargs.get("use_gopay", False))
     gopay_otp_file = kwargs.get("gopay_otp_file", "")
     cardw_config_path = kwargs.get("cardw_config_path")
+    push_server = bool(kwargs.get("push_server", False))
 
     print(f"\n[singlexn] === single x {count} 串行 ===")
     results = []
@@ -1125,6 +1145,7 @@ def singlexn(card_config_path, count, delay=30, **kwargs):
                     use_paypal=use_paypal,
                     use_gopay=use_gopay,
                     gopay_otp_file=gopay_otp_file,
+                    push_server=push_server,
                 )
                 r["batch_index"] = i
                 if r.get("status") == "succeeded":
@@ -1192,6 +1213,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
     is_pay_only = bool(kwargs.pop("pay_only", False))
     use_gopay = bool(kwargs.pop("use_gopay", False))
     gopay_otp_file = kwargs.pop("gopay_otp_file", "")
+    push_server = bool(kwargs.get("push_server", False))
     if use_gopay:
         use_paypal = False
     kwargs["use_paypal"] = use_paypal
@@ -1239,6 +1261,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
                     card_config_path,
                     use_paypal=use_paypal, use_gopay=use_gopay,
                     gopay_otp_file=gopay_otp_file,
+                    push_server=push_server,
                 )
                 r["batch_index"] = i
                 if r.get("status") == "succeeded":
@@ -1329,6 +1352,16 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
                     except Exception as e:
                         print(f"[Team] probe 异常: {e}")
                         record["invite_permission"] = "error"
+                if pay_result.get("status") == "succeeded" and push_server and _is_plus_plan(card_cfg or {}):
+                    try:
+                        record["server_push"] = _push_plus_account_to_server(
+                            acc["email"],
+                            card_cfg or {},
+                            account=_find_latest_registered_account_for_email(acc["email"]),
+                        )
+                    except Exception as e:
+                        print(f"[push-server] 推送异常: {e}")
+                        record["server_push"] = "error"
             except Exception as e:
                 record = {
                     "registration": {"status": "ok", "email": acc["email"]},
@@ -1475,7 +1508,8 @@ def _select_recent_registered_account_for_pay_only() -> dict | None:
 
 
 def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
-             gopay_otp_file=None, timeout_pay=600, prefer_recent=True):
+             gopay_otp_file=None, timeout_pay=600, prefer_recent=True,
+             push_server=False):
     """Retry payment only.
 
     Default behavior is now:
@@ -1545,6 +1579,16 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
             except Exception as e:
                 print(f"[sub2api] 导入异常: {e}")
                 record["sub2api_import"] = "error"
+        if status == "succeeded" and push_server and _is_plus_plan(card_cfg or {}):
+            try:
+                record["server_push"] = _push_plus_account_to_server(
+                    pay_email,
+                    card_cfg or {},
+                    account=account or _find_latest_registered_account_for_email(pay_email),
+                )
+            except Exception as e:
+                print(f"[push-server] 推送异常: {e}")
+                record["server_push"] = "error"
         _append_result(record)
         return result
     except PaymentError as e:
@@ -3165,6 +3209,91 @@ def _sub2api_jwt_exp(access_token: str) -> tuple[str, int]:
         return "", 0
 
 
+def _server_import_cfg(card_cfg: dict) -> dict:
+    cfg = (card_cfg or {}).get("account_import_server") or (card_cfg or {}).get("push_server") or {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    return {
+        "url": str(cfg.get("url") or cfg.get("import_url") or os.environ.get("ACCOUNT_IMPORT_URL") or "http://127.0.0.1:8787/api/import").strip(),
+        "token": str(cfg.get("token") or cfg.get("import_token") or os.environ.get("ACCOUNT_IMPORT_TOKEN") or "dev-import-token").strip(),
+        "timeout_s": float(cfg.get("timeout_s") or os.environ.get("ACCOUNT_IMPORT_TIMEOUT_S") or 30),
+    }
+
+
+def _cpa_extra_for_server_import(account: dict, email: str) -> dict:
+    email = _norm_email(email or account.get("email"))
+    at = str(account.get("access_token") or "").strip()
+    rt = str(account.get("refresh_token") or "").strip()
+    id_tok = str(account.get("id_token") or "").strip() or at
+    expired_iso, _ = _sub2api_jwt_exp(at)
+    return {
+        "id_token": id_tok,
+        "access_token": at,
+        "refresh_token": rt,
+        "account_id": "",
+        "email": email,
+        "last_refresh": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expired": expired_iso,
+        "type": "codex",
+    }
+
+
+def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | None = None) -> str:
+    import urllib.error
+    import urllib.request
+
+    email = _norm_email(email)
+    if not email:
+        return "skipped"
+    account = dict(account or _find_latest_registered_account_for_email(email) or {})
+    if not account:
+        print(f"[push-server] {email} 本地账号记录不存在，跳过")
+        return "missing"
+
+    cfg = _server_import_cfg(card_cfg or {})
+    if not cfg["url"] or not cfg["token"]:
+        print("[push-server] 缺少导入服务器 url/token，跳过")
+        return "skipped"
+
+    item = {
+        "email": email,
+        "password": str(account.get("password") or ""),
+        "enabled": True,
+        "extra": json.dumps(_cpa_extra_for_server_import(account, email), ensure_ascii=False, separators=(",", ":")),
+    }
+    payload = {"type": "accounts", "items": [item]}
+    req = urllib.request.Request(
+        cfg["url"],
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {cfg['token']}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=cfg["timeout_s"]) as resp:
+            text = resp.read().decode("utf-8", errors="ignore")
+        print(f"[push-server] ✓ {email} 已推送到账号导入服务器 {cfg['url']}")
+        try:
+            if account.get("id"):
+                get_db().mark_accounts_server_pushed([int(account["id"])])
+        except Exception:
+            pass
+        return "ok"
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", errors="ignore")[:300]
+        except Exception:
+            body = ""
+        print(f"[push-server] {email} 推送失败 http={e.code} {body}")
+        return "fail_upload"
+    except Exception as e:
+        print(f"[push-server] {email} 推送异常: {e}")
+        return "fail_upload"
+
+
 def _sub2api_import_after_team(
     email: str,
     sid: str,
@@ -3870,6 +3999,8 @@ def main():
                         help="Comma-separated registered account ids for --free-backfill-rt")
     parser.add_argument("--count", type=int, default=0, metavar="N",
                         help="--free-register 模式下注册 N 次后退出（0 = 无限）")
+    parser.add_argument("--push-server", action="store_true",
+                        help="支付成功后将 Plus 账号推送到账号导入服务器")
     args = parser.parse_args()
 
     if args.paypal and args.gopay:
@@ -3903,7 +4034,8 @@ def main():
             singlexn(args.config, args.singlexn, delay=args.delay,
                      use_paypal=args.paypal, cardw_config_path=args.cardw_config,
                      register_only=args.register_only, pay_only=args.pay_only,
-                     use_gopay=args.gopay, gopay_otp_file=args.gopay_otp_file)
+                     use_gopay=args.gopay, gopay_otp_file=args.gopay_otp_file,
+                     push_server=args.push_server)
 
         elif "--singlexn" in sys.argv:
             print(f"[ERROR] --singlexn 参数必须 >= 1（当前 {args.singlexn}）", file=sys.stderr)
@@ -3913,7 +4045,8 @@ def main():
             batch(args.config, args.batch, delay=args.delay, workers=args.workers,
                   use_paypal=args.paypal, cardw_config_path=args.cardw_config,
                   register_only=args.register_only, pay_only=args.pay_only,
-                  use_gopay=args.gopay, gopay_otp_file=args.gopay_otp_file)
+                  use_gopay=args.gopay, gopay_otp_file=args.gopay_otp_file,
+                  push_server=args.push_server)
 
         elif "--batch" in sys.argv:
             print(f"[ERROR] --batch 参数必须 ≥ 1（当前 {args.batch}）", file=sys.stderr)
@@ -3935,13 +4068,15 @@ def main():
                 use_paypal=args.paypal,
                 use_gopay=args.gopay,
                 gopay_otp_file=args.gopay_otp_file,
+                push_server=args.push_server,
             )
             print(f"\n结果: {result.get('status', '?')}")
 
         else:
             pipeline(args.config, cardw_config_path=args.cardw_config,
                      use_paypal=args.paypal, use_gopay=args.gopay,
-                     gopay_otp_file=args.gopay_otp_file)
+                     gopay_otp_file=args.gopay_otp_file,
+                     push_server=args.push_server)
 
     except (RegistrationError, PaymentError) as e:
         print(f"\n[ERROR] {e}", file=sys.stderr)

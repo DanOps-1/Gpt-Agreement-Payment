@@ -53,10 +53,12 @@
           <div v-if="!isFreeMode" class="ctl-row toggles">
             <TermToggle v-model="form.pay_only">--pay-only</TermToggle>
             <TermToggle v-model="form.register_only" :disabled="form.pay_only">--register-only</TermToggle>
+            <TermToggle v-model="form.push_server">--push-server</TermToggle>
           </div>
           <p v-if="!isFreeMode" class="ctl-hint">
             <code>--pay-only</code> 跳过注册，优先复用最近注册但未支付账号；
-            <code>--register-only</code> 只注册不支付。
+            <code>--register-only</code> 只注册不支付；
+            <code>--push-server</code> 支付成功后把 Plus 账号推送到账号导入服务器。
           </p>
           <p v-else class="ctl-hint">
             <code>{{ form.mode }}</code> 不走支付步骤；OTP 经 CF KV 取，OAuth 拿 rt 后推 CPA 用 <code>cpa.free_plan_tag</code>。
@@ -465,6 +467,7 @@ const form = ref({
   gopay: false,
   pay_only: false,
   register_only: false,
+  push_server: false,
   singlexn: 5,
   batch: 5,
   workers: 3,
@@ -1247,7 +1250,7 @@ const isFreeMode = computed(() =>
 );
 
 watch(
-  () => [form.value.mode, form.value.paypal, form.value.gopay, form.value.pay_only, form.value.register_only, form.value.singlexn, form.value.batch, form.value.workers, form.value.self_dealer, form.value.count],
+  () => [form.value.mode, form.value.paypal, form.value.gopay, form.value.pay_only, form.value.register_only, form.value.push_server, form.value.singlexn, form.value.batch, form.value.workers, form.value.self_dealer, form.value.count],
   () => {
     configHealth.value = null;
     refreshPreview();

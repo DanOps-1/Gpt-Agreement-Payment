@@ -83,6 +83,9 @@ GOPAY_PIN_CLIENT_ID_CHARGE = "47180a8e-f56e-11ed-a05b-0242ac120003-GWC"
 DEFAULT_TIMEOUT = 30
 LINK_RETRY_LIMIT = 2  # 406 "account already linked" retry
 LINK_RETRY_SLEEP_S = 12.0  # Midtrans 需要冷却 ~10s 才会让 406 → 201（实测）
+LINK_429_RETRY_LIMIT = 10
+LINK_429_RETRY_SLEEP_MIN_S = 3.0
+LINK_429_RETRY_SLEEP_MAX_S = 5.0
 DEFAULT_OTP_REGEX = r"(?<!\d)(\d{6})(?!\d)"
 
 
@@ -568,6 +571,7 @@ class GoPayCharger:
             "Referer": f"https://app.midtrans.com/snap/v4/redirection/{snap_token}",
         }
         last_err: Optional[str] = None
+        rate_limit_attempt = 0
         for attempt in range(1, LINK_RETRY_LIMIT + 2):
             r = self.ext.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
             if r.status_code == 201:
@@ -591,6 +595,18 @@ class GoPayCharger:
                     last_err = r.text[:120]
                 self.log(f"[gopay] midtrans linking 406 ({last_err}), 冷却 {LINK_RETRY_SLEEP_S}s 再重试 {attempt}/{LINK_RETRY_LIMIT}")
                 time.sleep(LINK_RETRY_SLEEP_S)
+                continue
+            if r.status_code == 429:
+                rate_limit_attempt += 1
+                last_err = f"429 {r.text[:120]}"
+                if rate_limit_attempt > LINK_429_RETRY_LIMIT:
+                    raise GoPayError(f"midtrans linking 429 exhausted retries: {last_err}")
+                sleep_s = random.uniform(LINK_429_RETRY_SLEEP_MIN_S, LINK_429_RETRY_SLEEP_MAX_S)
+                self.log(
+                    "[gopay] midtrans linking 429 rate limited, "
+                    f"{sleep_s:.1f}s 后重试 {rate_limit_attempt}/{LINK_429_RETRY_LIMIT}"
+                )
+                time.sleep(sleep_s)
                 continue
             raise GoPayError(
                 f"midtrans linking unexpected status={r.status_code} body={r.text[:300]}",

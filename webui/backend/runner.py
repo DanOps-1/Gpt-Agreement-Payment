@@ -89,7 +89,8 @@ def _gopay_auto_otp_enabled() -> bool:
 def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: int,
               register_only: bool, pay_only: bool, gopay: bool = False,
               gopay_otp_file: str = "", count: int = 0,
-              backfill_rt_ids: Optional[list[int]] = None) -> list[str]:
+              backfill_rt_ids: Optional[list[int]] = None,
+              push_server: bool = False) -> list[str]:
     """根据参数拼出最终命令行。"""
     cmd = ["xvfb-run", "-a", "python", "-u", "pipeline.py",
            "--config", str(s.PAY_CONFIG_PATH)]
@@ -127,6 +128,8 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
         cmd.append("--register-only")
     elif pay_only:
         cmd.append("--pay-only")
+    if push_server:
+        cmd.append("--push-server")
     return cmd
 
 
@@ -152,10 +155,11 @@ def status() -> dict:
 
 def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
           self_dealer: int = 0, register_only: bool = False, pay_only: bool = False,
-          gopay: bool = False, count: int = 0) -> dict:
+          gopay: bool = False, count: int = 0, push_server: bool = False) -> dict:
     cmd = build_cmd(mode, paypal, batch, workers, self_dealer,
                     register_only, pay_only, gopay=gopay,
-                    gopay_otp_file="", count=count)
+                    gopay_otp_file="", count=count,
+                    push_server=push_server)
     return _start_cmd(cmd, mode, gopay=gopay)
 
 

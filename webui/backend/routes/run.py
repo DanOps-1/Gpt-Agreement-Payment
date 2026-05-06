@@ -19,6 +19,7 @@ class StartRequest(BaseModel):
     register_only: bool = False
     pay_only: bool = False
     gopay: bool = False
+    push_server: bool = False
     count: int = 0  # free_register 模式下注册次数（0 = 无限）
 
 
@@ -122,5 +123,6 @@ def preview(req: StartRequest, user: str = CurrentUser):
     cmd = runner.build_cmd(
         req.mode, req.paypal, req.batch, req.workers, req.self_dealer,
         req.register_only, req.pay_only, gopay=req.gopay, count=req.count,
+        push_server=req.push_server,
     )
     return {"cmd": cmd, "cmd_str": " ".join(cmd)}

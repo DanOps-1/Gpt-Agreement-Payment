@@ -50,6 +50,13 @@ def test_run_preview_daemon(client):
     assert "--daemon" in body["cmd_str"]
 
 
+def test_run_preview_push_server(client):
+    _login(client)
+    r = client.post("/api/run/preview", json={"mode": "single", "push_server": True})
+    body = r.json()
+    assert "--push-server" in body["cmd_str"]
+
+
 def test_run_invalid_mode(client):
     _login(client)
     r = client.post("/api/run/preview", json={"mode": "bogus"})
