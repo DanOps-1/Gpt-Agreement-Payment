@@ -145,18 +145,13 @@ def _safe_headers_for_log(headers: Any) -> dict[str, str]:
 
 def _safe_all_headers_for_log(headers: Any) -> dict[str, str]:
     out: dict[str, str] = {}
-    sensitive = ("authorization", "cookie", "set-cookie", "x-api-key")
     try:
         items = headers.items()
     except Exception:
         return out
     for key, value in items:
         k = str(key)
-        lk = k.lower()
-        if any(s in lk for s in sensitive):
-            out[k] = "<redacted>"
-        else:
-            out[k] = str(value)[:300]
+        out[k] = str(value)[:1000]
     return out
 
 
