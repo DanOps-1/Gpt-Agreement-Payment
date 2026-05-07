@@ -4459,6 +4459,7 @@ def _drive_gopay_from_redirect(
     charger = _gopay.GoPayCharger(
         cs_session, gopay_cfg,
         otp_provider=provider, proxy=proxy,
+        proxy_cfg=cfg,
         runtime_cfg=cfg.get("runtime"),
     )
     _log(f"      [gopay] 从 redirect 接管 → {redirect_url[:80]}...")

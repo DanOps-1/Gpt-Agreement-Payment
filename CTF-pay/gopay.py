@@ -84,6 +84,7 @@ DEFAULT_TIMEOUT = 30
 LINK_RETRY_LIMIT = 2  # 406 "account already linked" retry
 LINK_RETRY_SLEEP_S = 12.0  # Midtrans 需要冷却 ~10s 才会让 406 → 201（实测）
 LINK_429_RETRY_LIMIT = 30
+LINK_429_PROXY_SWITCH_EVERY = 10
 LINK_429_RETRY_SLEEP_MIN_S = 2.0
 LINK_429_RETRY_SLEEP_MAX_S = 3.0
 TRANSIENT_REQUEST_RETRY_LIMIT = 3
@@ -152,6 +153,31 @@ def _safe_all_headers_for_log(headers: Any) -> dict[str, str]:
     for key, value in items:
         k = str(key)
         out[k] = str(value)[:1000]
+    return out
+
+
+def _proxy_list_from_cfg(cfg: Optional[dict], primary_proxy: Optional[str] = None) -> list[str]:
+    out: list[str] = []
+    if primary_proxy:
+        out.append(str(primary_proxy).strip())
+    cfg = cfg or {}
+    candidates: list[Any] = []
+    proxies_cfg = cfg.get("proxies")
+    if isinstance(proxies_cfg, dict):
+        candidates.append(proxies_cfg.get("list"))
+    candidates.append(cfg.get("proxy_pool"))
+    candidates.append(cfg.get("proxy_list"))
+    candidates.append(cfg.get("proxies"))
+    for raw in candidates:
+        if isinstance(raw, str):
+            parts = [p.strip() for p in re.split(r"[\r\n,]+", raw) if p.strip()]
+        elif isinstance(raw, list):
+            parts = [str(p).strip() for p in raw if str(p).strip()]
+        else:
+            parts = []
+        for proxy in parts:
+            if proxy and proxy not in out:
+                out.append(proxy)
     return out
 
 
@@ -336,6 +362,7 @@ class GoPayCharger:
         otp_provider: Callable[[], str],
         log: Callable[[str], None] = print,
         proxy: Optional[str] = None,
+        proxy_cfg: Optional[dict] = None,
         runtime_cfg: Optional[dict] = None,
     ):
         self.cs = chatgpt_session
@@ -351,6 +378,8 @@ class GoPayCharger:
         )
         self.otp_provider = otp_provider
         self.log = log
+        self.proxy_pool = _proxy_list_from_cfg(proxy_cfg, proxy)
+        self.proxy_index = 0
         # Stripe runtime fingerprint (js_checksum / rv_timestamp / version) — these
         # are computed by Stripe.js client-side; replay the captured values from
         # config.runtime or HAR. Without them confirm 400.
@@ -365,15 +394,33 @@ class GoPayCharger:
             ),
             "Accept-Language": "en-US,en;q=0.9",
         })
-        if proxy:
-            try:
-                self.cs.proxies = {"http": proxy, "https": proxy}
-            except Exception:
-                pass
-            try:
-                self.ext.proxies = {"http": proxy, "https": proxy}
-            except Exception:
-                pass
+        if self.proxy_pool:
+            self._apply_proxy(self.proxy_pool[0])
+
+    def _apply_proxy(self, proxy: str) -> None:
+        proxy = str(proxy or "").strip()
+        try:
+            self.cs.proxies = {"http": proxy, "https": proxy} if proxy else {"http": "", "https": ""}
+        except Exception:
+            pass
+        try:
+            self.ext.proxies = {"http": proxy, "https": proxy} if proxy else {"http": "", "https": ""}
+        except Exception:
+            pass
+
+    def _switch_proxy_after_429(self) -> bool:
+        if len(self.proxy_pool) <= 1:
+            self.log("[gopay] midtrans linking 429 reached 10 times, no alternate proxy configured")
+            return False
+        old_proxy = self.proxy_pool[self.proxy_index % len(self.proxy_pool)]
+        self.proxy_index = (self.proxy_index + 1) % len(self.proxy_pool)
+        new_proxy = self.proxy_pool[self.proxy_index]
+        self._apply_proxy(new_proxy)
+        self.log(
+            "[gopay] midtrans linking 429 reached 10 times, switched proxy "
+            f"{self.proxy_index + 1}/{len(self.proxy_pool)}: {old_proxy} -> {new_proxy}"
+        )
+        return True
 
     def _request_ext(self, method: str, url: str, *, retry_label: str = "", **kwargs: Any):
         last_exc: Exception | None = None
@@ -719,12 +766,10 @@ class GoPayCharger:
                     "[gopay] midtrans linking 429 request_headers="
                     + json.dumps(_safe_all_headers_for_log(effective_headers), ensure_ascii=False, separators=(",", ":"))
                 )
-                self.log(
-                    "[gopay] midtrans linking 429 response_headers="
-                    + json.dumps(_safe_all_headers_for_log(r.headers), ensure_ascii=False, separators=(",", ":"))
-                )
                 if rate_limit_attempt > LINK_429_RETRY_LIMIT:
                     raise GoPayError(f"midtrans linking 429 exhausted retries: {last_err}")
+                if rate_limit_attempt % LINK_429_PROXY_SWITCH_EVERY == 0:
+                    self._switch_proxy_after_429()
                 sleep_s = random.uniform(LINK_429_RETRY_SLEEP_MIN_S, LINK_429_RETRY_SLEEP_MAX_S)
                 self.log(
                     "[gopay] midtrans linking 429 rate limited, "
@@ -1619,6 +1664,7 @@ def main():
     charger = GoPayCharger(
         cs_session, gopay_cfg,
         otp_provider=provider, proxy=proxy_url,
+        proxy_cfg=cfg,
         runtime_cfg=cfg.get("runtime"),
     )
     try:
