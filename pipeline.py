@@ -32,6 +32,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -318,6 +319,7 @@ class DomainPool:
         self.state = self._load()
         self.provisioner = provisioner
         self.min_available = max(1, int(min_available))
+        self._lock = threading.Lock()
 
     def _load(self):
         try:
@@ -385,6 +387,13 @@ class DomainPool:
         meta["last_used_ts"] = time.time()
         meta["last_used_iso"] = datetime.now(timezone.utc).isoformat()
         self._save()
+
+    def pick_and_mark_used(self):
+        with self._lock:
+            domain = self.pick()
+            if domain:
+                self.mark_used(domain)
+            return domain
 
     def mark_result(self, domain, invite_status):
         """invite_status: 'ok' / 'no_permission' / 'unknown'
@@ -959,6 +968,12 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
 
     if card_cfg is None:
         card_cfg = _read_card_cfg(card_config_path)
+    else:
+        try:
+            if Path(card_config_path).resolve() != Path(str(card_cfg.get("_source_path", ""))).resolve():
+                card_cfg = _read_card_cfg(card_config_path)
+        except Exception:
+            card_cfg = _read_card_cfg(card_config_path)
     cardw_config_path = _load_cardw_path_from_card_cfg(card_cfg, cardw_config_path)
 
     # 内部 fallback：如果外部没传 pool/team/proxy，也自动构造（单次调用场景）
@@ -980,14 +995,13 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
 
     # 挑域 + 写临时 CTF-reg config（同时覆盖 proxy）
     # pool.domains 为空时，若有 provisioner 仍要让 pick() 触发自动开通
-    picked_domain = pool.pick() if pool and (pool.domains or pool.provisioner) else ""
+    picked_domain = pool.pick_and_mark_used() if pool and (pool.domains or pool.provisioner) else ""
     temp_cardw = None
     effective_cardw = cardw_config_path
     if picked_domain or picked_proxy:
         temp_cardw = _rewrite_cardw_with_domain(cardw_config_path, picked_domain, picked_proxy)
         effective_cardw = temp_cardw
         if picked_domain:
-            pool.mark_used(picked_domain)
             print(f"[DomainPool] 本次使用域: {picked_domain}")
 
     # CTF-pay 也覆盖 proxy（支付流程走同一代理）
@@ -1179,6 +1193,89 @@ def _run_one_pay_only(args_tuple):
     return {"batch_index": args_tuple[0], "status": "error", "error": "deprecated path"}
 
 
+def _run_batch_worker(args_tuple):
+    worker_id, task_indices, card_config_path, kwargs, workers, use_gopay, proxy_pool, card_cfg = args_tuple
+    temp_card = None
+    results = []
+    try:
+        worker_card_path, _picked_proxy = _worker_card_config(
+            card_config_path,
+            card_cfg,
+            worker_id,
+            workers,
+            proxy_pool=proxy_pool,
+            use_gopay=use_gopay,
+        )
+        if worker_card_path != card_config_path:
+            temp_card = worker_card_path
+        worker_kwargs = dict(kwargs)
+        worker_kwargs["card_cfg"] = None
+        worker_kwargs["proxy_pool"] = ProxyPool([_picked_proxy]) if _picked_proxy else ProxyPool()
+        for idx in task_indices:
+            print(f"\n[batch-worker-{worker_id}] start task {idx + 1}")
+            r = pipeline(worker_card_path, **worker_kwargs)
+            r["batch_index"] = idx
+            r["worker_id"] = worker_id
+            if _picked_proxy:
+                r["proxy"] = _picked_proxy
+            results.append(r)
+    except Exception as e:
+        for idx in task_indices[len(results):]:
+            results.append({
+                "batch_index": idx,
+                "worker_id": worker_id,
+                "status": "error",
+                "error": str(e)[:200],
+            })
+    finally:
+        if temp_card and os.path.exists(temp_card):
+            try: os.unlink(temp_card)
+            except Exception: pass
+    return results
+
+
+def _run_pay_only_worker(args_tuple):
+    worker_id, task_indices, card_config_path, use_paypal, use_gopay, gopay_otp_file, push_server, workers, proxy_pool, card_cfg = args_tuple
+    temp_card = None
+    results = []
+    try:
+        worker_card_path, picked_proxy = _worker_card_config(
+            card_config_path,
+            card_cfg,
+            worker_id,
+            workers,
+            proxy_pool=proxy_pool,
+            use_gopay=use_gopay,
+        )
+        if worker_card_path != card_config_path:
+            temp_card = worker_card_path
+        for idx in task_indices:
+            print(f"\n[pay-only-worker-{worker_id}] start task {idx + 1}")
+            try:
+                r = pay_only(
+                    worker_card_path,
+                    use_paypal=use_paypal,
+                    use_gopay=use_gopay,
+                    gopay_otp_file=gopay_otp_file,
+                    push_server=push_server,
+                )
+                r["batch_index"] = idx
+                r["worker_id"] = worker_id
+                if picked_proxy:
+                    r["proxy"] = picked_proxy
+            except Exception as e:
+                r = {"batch_index": idx, "worker_id": worker_id, "status": "error", "error": str(e)[:200]}
+                print(f"[pay-only-worker-{worker_id}] payment exception: {e}")
+            results.append(r)
+            if idx != task_indices[-1]:
+                time.sleep(0)
+    finally:
+        if temp_card and os.path.exists(temp_card):
+            try: os.unlink(temp_card)
+            except Exception: pass
+    return results
+
+
 def _register_one(args_tuple):
     """单个注册任务。args_tuple = (idx, cardw_config_path, pool_or_None)
     pool 非空时为每个 worker 独立 pick 域 + 改写临时 cardw config。"""
@@ -1192,8 +1289,7 @@ def _register_one(args_tuple):
     effective = cardw_config_path
     try:
         if pool and pool.domains:
-            picked_domain = pool.pick()
-            pool.mark_used(picked_domain)
+            picked_domain = pool.pick_and_mark_used()
             temp_cardw = _rewrite_cardw_with_domain(cardw_config_path, picked_domain)
             effective = temp_cardw
         r = register(effective)
@@ -1255,6 +1351,30 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
 
     # ── pay-only batch：每次 pay_only（复用未付账号），串行
     if is_pay_only:
+        if workers > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            proxy_pool = _build_proxy_pool_from_card_cfg(card_cfg)
+            _validate_worker_resources(card_cfg, workers, use_gopay=use_gopay, proxy_pool=proxy_pool)
+            task_chunks = [range(worker_id, count, workers) for worker_id in range(workers)]
+            print(f"\n[batch] === pay-only parallel: workers={workers} count={count} ===")
+            results = [None] * count
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(
+                        _run_pay_only_worker,
+                        (worker_id, chunk, card_config_path, use_paypal, use_gopay, gopay_otp_file,
+                         push_server, workers, proxy_pool, card_cfg),
+                    ): worker_id
+                    for worker_id, chunk in enumerate(task_chunks)
+                    if chunk
+                }
+                for future in as_completed(futures):
+                    for r in future.result():
+                        results[int(r.get("batch_index", 0))] = r
+            ok_count = sum(1 for r in results if r and r.get("status") == "succeeded")
+            print(f"\n[batch] pay-only parallel 完成: {ok_count}/{count} 成功")
+            return results
+
         print(f"\n[batch] === pay-only × {count} 串行 ===")
         results = []
         ok_count = 0
@@ -1284,6 +1404,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
     pool = _build_domain_pool_from_cardw(cardw_path, cd_h)
     team_client = _build_team_client_from_card_cfg(card_cfg)
     proxy_pool = _build_proxy_pool_from_card_cfg(card_cfg)
+    _validate_worker_resources(card_cfg, workers, use_gopay=use_gopay, proxy_pool=proxy_pool)
     if pool.domains:
         print(f"[DomainPool] 域池大小={len(pool.domains)}  cooldown={cd_h}h")
         for d, st, lr in pool.summary():
@@ -1397,13 +1518,20 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
         # 非 PayPal: 全并行
         from concurrent.futures import ThreadPoolExecutor, as_completed
         print(f"\n[batch] 并行模式: {workers} workers × {count} 任务")
-        tasks = [(i, card_config_path, kwargs) for i in range(count)]
+        task_chunks = [range(worker_id, count, workers) for worker_id in range(workers)]
         results = [None] * count
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(_run_one, t): t[0] for t in tasks}
+            futures = {
+                executor.submit(
+                    _run_batch_worker,
+                    (worker_id, chunk, card_config_path, kwargs, workers, use_gopay, proxy_pool, card_cfg),
+                ): worker_id
+                for worker_id, chunk in enumerate(task_chunks)
+                if chunk
+            }
             for future in as_completed(futures):
-                idx = futures[future]
-                results[idx] = future.result()
+                for r in future.result():
+                    results[int(r.get("batch_index", 0))] = r
 
     # 汇总
     print(f"\n{'='*60}")
@@ -1811,7 +1939,10 @@ def _exchange_rt_with_classification(
 
 def _read_card_cfg(path):
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if isinstance(data, dict):
+        data["_source_path"] = str(Path(path).resolve())
+    return data
 
 
 def _load_cardw_path_from_card_cfg(card_cfg, fallback_cardw=None):
@@ -1896,6 +2027,7 @@ def _cleanup_temp_leftovers(max_age_s: int = 1800, verbose: bool = False) -> dic
 
     # 3. 项目内临时 config（pipeline 产生的 temp json）
     for base, pattern, key in [(CARD_DIR, "pipeline_pay_*.json", "cfg_pay"),
+                                 (CARD_DIR, "pipeline_worker_*_pay_*.json", "cfg_pay"),
                                  (CARDW_DIR, "pipeline_cardw_*.json", "cfg_cardw")]:
         try:
             for p in base.glob(pattern):
@@ -2735,12 +2867,26 @@ class ProxyPool:
         self.proxies = [p for p in (proxies or []) if p and str(p).strip()]
         self.rotation = rotation  # static / random / lru
         self.state_file = state_file
+        self._lock = threading.Lock()
+        self._cursor = 0
 
     def pick(self) -> str:
         if not self.proxies:
             return ""
         if self.rotation == "random":
             return random.choice(self.proxies)
+        return self.proxies[0]
+
+    def pick_for_worker(self, worker_id: int) -> str:
+        if not self.proxies:
+            return ""
+        if self.rotation == "random":
+            with self._lock:
+                proxy = self.proxies[self._cursor % len(self.proxies)]
+                self._cursor += 1
+                return proxy
+        if len(self.proxies) > 1 or self.rotation in ("round_robin", "worker", "lru"):
+            return self.proxies[int(worker_id) % len(self.proxies)]
         return self.proxies[0]
 
     def mark_fail(self, proxy):
@@ -2753,6 +2899,23 @@ def _build_proxy_pool_from_card_cfg(card_cfg) -> "ProxyPool":
     if not pp.get("enabled"):
         return ProxyPool()
     return ProxyPool(proxies=pp.get("list", []), rotation=pp.get("rotation", "static"))
+
+
+def _validate_worker_resources(card_cfg, workers, *, use_gopay=False, proxy_pool=None):
+    workers = max(1, int(workers or 1))
+    if workers <= 1:
+        return
+    if use_gopay:
+        accounts = _gopay_accounts_from_card_cfg(card_cfg or {})
+        if accounts and len(accounts) < workers:
+            raise RuntimeError(
+                f"workers={workers} 但 GoPay accounts 只有 {len(accounts)} 个，无法保证手机号不重复"
+            )
+    pool = proxy_pool or _build_proxy_pool_from_card_cfg(card_cfg or {})
+    if pool.proxies and len(pool.proxies) < workers:
+        raise RuntimeError(
+            f"workers={workers} 但 HTTP 代理只有 {len(pool.proxies)} 个，无法保证代理不重复"
+        )
 
 
 def _rewrite_cardw_with_domain(src_path, domain, proxy_url=""):
@@ -2784,6 +2947,81 @@ def _rewrite_card_with_proxy(src_path, proxy_url):
     json.dump(data, tmp, ensure_ascii=False, indent=2)
     tmp.close()
     return tmp.name
+
+
+def _gopay_accounts_from_card_cfg(card_cfg: dict) -> list[dict]:
+    gp = (card_cfg or {}).get("gopay") or {}
+    if not isinstance(gp, dict):
+        return []
+    accounts = gp.get("accounts")
+    usable = []
+    if isinstance(accounts, list):
+        for item in accounts:
+            if not isinstance(item, dict):
+                continue
+            if all(str(item.get(k) or gp.get(k) or "").strip() for k in ("country_code", "phone_number", "pin")):
+                merged = dict(item)
+                if not merged.get("country_code") and gp.get("country_code"):
+                    merged["country_code"] = gp.get("country_code")
+                if not merged.get("midtrans_client_id") and gp.get("midtrans_client_id"):
+                    merged["midtrans_client_id"] = gp.get("midtrans_client_id")
+                usable.append(merged)
+    elif all(str(gp.get(k) or "").strip() for k in ("country_code", "phone_number", "pin")):
+        usable.append({
+            "label": gp.get("label") or gp.get("name") or "default",
+            "country_code": gp.get("country_code"),
+            "phone_number": gp.get("phone_number"),
+            "pin": gp.get("pin"),
+            "midtrans_client_id": gp.get("midtrans_client_id"),
+        })
+    return usable
+
+
+def _rewrite_card_for_worker(src_path, *, proxy_url="", gopay_account=None, worker_id=0):
+    with open(src_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if proxy_url:
+        data["proxy"] = proxy_url
+    if gopay_account:
+        gp = data.setdefault("gopay", {})
+        base_gp = {k: v for k, v in gp.items() if k != "accounts"}
+        selected = dict(gopay_account)
+        base_gp.update({k: v for k, v in selected.items() if v is not None})
+        base_gp["_selected_account"] = True
+        base_gp["_selected_worker_id"] = int(worker_id)
+        data["gopay"] = base_gp
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", prefix=f"pipeline_worker_{worker_id}_pay_",
+        dir=str(CARD_DIR), delete=False,
+    )
+    json.dump(data, tmp, ensure_ascii=False, indent=2)
+    tmp.close()
+    return tmp.name
+
+
+def _worker_card_config(card_config_path, card_cfg, worker_id, workers, proxy_pool=None, use_gopay=False):
+    picked_proxy = proxy_pool.pick_for_worker(worker_id) if proxy_pool and proxy_pool.proxies else ""
+    selected_gopay = None
+    if use_gopay:
+        accounts = _gopay_accounts_from_card_cfg(card_cfg or {})
+        if accounts:
+            if workers > len(accounts):
+                raise RuntimeError(
+                    f"workers={workers} 但 GoPay accounts 只有 {len(accounts)} 个，无法保证手机号不重复"
+                )
+            selected_gopay = accounts[int(worker_id) % len(accounts)]
+            label = selected_gopay.get("label") or selected_gopay.get("name") or f"account-{worker_id + 1}"
+            print(f"[batch-worker-{worker_id}] GoPay account={label}")
+    if picked_proxy:
+        print(f"[batch-worker-{worker_id}] proxy={picked_proxy}")
+    if picked_proxy or selected_gopay:
+        return _rewrite_card_for_worker(
+            card_config_path,
+            proxy_url=picked_proxy,
+            gopay_account=selected_gopay,
+            worker_id=worker_id,
+        ), picked_proxy
+    return card_config_path, ""
 
 
 def _find_latest_refresh_token_for_email(email, session_id=""):
@@ -3767,13 +4005,12 @@ def free_register_loop(card_config_path, cardw_config_path=None, count: int = 0)
 
         print(f"\n=== [free-register] {iteration}/{count or '∞'} ===")
 
-        picked_domain = pool.pick() if pool and (pool.domains or pool.provisioner) else ""
+        picked_domain = pool.pick_and_mark_used() if pool and (pool.domains or pool.provisioner) else ""
         temp_cardw = None
         effective_cardw = cardw_path
         if picked_domain:
             temp_cardw = _rewrite_cardw_with_domain(cardw_path, picked_domain, "")
             effective_cardw = temp_cardw
-            pool.mark_used(picked_domain)
             print(f"[free-register] 用域: {picked_domain}")
 
         try:

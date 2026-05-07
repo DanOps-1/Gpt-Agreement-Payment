@@ -2,6 +2,8 @@ import json
 import sys
 import types
 
+import pytest
+
 import pipeline
 from webui.backend.db import get_db
 
@@ -264,3 +266,58 @@ def test_cpa_import_falls_back_to_access_token_without_refresh_token(tmp_path, m
     assert body["access_token"].startswith("eyJhbGciOiJub25lIn0.")
     assert body["refresh_token"] == ""
     assert body["account_id"] == "acct_123"
+
+
+def test_worker_card_config_assigns_distinct_gopay_and_proxy(tmp_path):
+    card_config = tmp_path / "config.paypal.json"
+    card_config.write_text(json.dumps({
+        "proxy": "http://base-proxy",
+        "gopay": {
+            "country_code": "+62",
+            "midtrans_client_id": "midtrans-base",
+            "accounts": [
+                {"label": "a", "phone_number": "111", "pin": "111111"},
+                {"label": "b", "phone_number": "222", "pin": "222222"},
+            ],
+        },
+        "proxies": {
+            "enabled": True,
+            "list": ["http://proxy-a", "http://proxy-b"],
+        },
+    }), encoding="utf-8")
+    card_cfg = pipeline._read_card_cfg(str(card_config))
+    proxy_pool = pipeline._build_proxy_pool_from_card_cfg(card_cfg)
+
+    path0, px0 = pipeline._worker_card_config(str(card_config), card_cfg, 0, 2, proxy_pool, True)
+    path1, px1 = pipeline._worker_card_config(str(card_config), card_cfg, 1, 2, proxy_pool, True)
+
+    try:
+        data0 = json.loads(open(path0, encoding="utf-8").read())
+        data1 = json.loads(open(path1, encoding="utf-8").read())
+        assert px0 == "http://proxy-a"
+        assert px1 == "http://proxy-b"
+        assert data0["proxy"] == "http://proxy-a"
+        assert data1["proxy"] == "http://proxy-b"
+        assert data0["gopay"]["phone_number"] == "111"
+        assert data1["gopay"]["phone_number"] == "222"
+        assert "accounts" not in data0["gopay"]
+        assert "accounts" not in data1["gopay"]
+    finally:
+        pipeline.os.unlink(path0)
+        pipeline.os.unlink(path1)
+
+
+def test_validate_worker_resources_rejects_duplicate_proxy_or_gopay():
+    with pytest.raises(RuntimeError, match="GoPay accounts"):
+        pipeline._validate_worker_resources(
+            {"gopay": {"accounts": [{"country_code": "+62", "phone_number": "111", "pin": "111111"}]}},
+            2,
+            use_gopay=True,
+        )
+
+    with pytest.raises(RuntimeError, match="HTTP 代理"):
+        pipeline._validate_worker_resources(
+            {"proxies": {"enabled": True, "list": ["http://proxy-a"]}},
+            2,
+            use_gopay=False,
+        )
