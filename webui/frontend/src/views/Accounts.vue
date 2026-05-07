@@ -115,12 +115,11 @@
         <strong>AccessToken检测</strong>
         <span>
           total={{ accessCheck.summary.total || 0 }}
-          valid={{ accessCheck.summary.valid || 0 }}
+          refreshed={{ accessCheck.summary.refreshed || 0 }}
           ok={{ accessCheck.summary.ok || 0 }}
           quota={{ accessCheck.summary.quota_limited || 0 }}
           invalid={{ accessCheck.summary.invalid || 0 }}
-          no_at={{ accessCheck.summary.no_access_token || 0 }}
-          proxy_required={{ accessCheck.summary.proxy_required || 0 }}
+          no_rt={{ accessCheck.summary.no_refresh_token || 0 }}
         </span>
         <span v-if="planSummary" class="result-extra">plan: {{ planSummary }}</span>
         <div class="result-list-inline">
@@ -176,6 +175,15 @@
               <span :class="['asset', { ok: acc.has_session_token }]">session</span>
               <span :class="['asset', { ok: acc.has_access_token }]">access</span>
               <span :class="['asset', { ok: acc.has_device_id }]">device</span>
+              <div v-if="accessUsageBadges(acc).length" class="usage-badges">
+                <span
+                  v-for="badge in accessUsageBadges(acc)"
+                  :key="badge.label"
+                  :class="['badge', badge.kind === 'error' ? 'badge-danger' : badge.kind === 'warn' ? 'badge-warn' : 'badge-ok']"
+                >
+                  {{ badge.label }}
+                </span>
+              </div>
             </td>
             <td><span :class="['badge', acc.downloaded ? 'badge-ok' : 'badge-muted']">{{ acc.downloaded ? "已下载" : "未下载" }}</span></td>
             <td><span :class="['badge', acc.server_pushed ? 'badge-ok' : 'badge-muted']">{{ acc.server_pushed ? "已推送" : "可推送" }}</span></td>
@@ -240,6 +248,11 @@ interface AccessCheckResult {
   summary: Record<string, any>;
 }
 
+interface UsageBadge {
+  label: string;
+  kind: "ok" | "warn" | "error";
+}
+
 const router = useRouter();
 const message = useMessage();
 const dialog = useDialog();
@@ -248,6 +261,7 @@ const inventory = ref<InventoryResponse>({ accounts: [], counts: {} });
 const managerSelectedIds = ref<Set<number>>(new Set());
 const rtCheck = ref<RtCheckResult | null>(null);
 const accessCheck = ref<AccessCheckResult | null>(null);
+const accessUsageById = ref<Record<number, Record<string, any>>>({});
 const manager = ref({
   busy: false,
   savingConfig: false,
@@ -430,8 +444,13 @@ async function detectSelectedAccessToken() {
       max_workers: 3,
     });
     accessCheck.value = r.data || null;
+    accessUsageById.value = Object.fromEntries(
+      (r.data?.results || [])
+        .filter((item: any) => Number(item?.id))
+        .map((item: any) => [Number(item.id), item])
+    );
     const s = r.data?.summary || {};
-    message.success(`AccessToken检测完成：valid=${s.valid || 0} ok=${s.ok || 0} quota=${s.quota_limited || 0} invalid=${s.invalid || 0} no_at=${s.no_access_token || 0} proxy_required=${s.proxy_required || 0}`);
+    message.success(`AccessToken检测完成：refreshed=${s.refreshed || 0} ok=${s.ok || 0} quota=${s.quota_limited || 0} invalid=${s.invalid || 0} no_rt=${s.no_refresh_token || 0}`);
     await refreshInventory();
   } catch (e: any) {
     message.error(`AccessToken检测失败：${e?.response?.data?.detail || e?.message || e}`);
@@ -572,6 +591,51 @@ function payBadgeClass(state: string) {
   if (state === "consumed") return "badge-plus";
   if (state === "no_auth") return "badge-warn";
   return "badge-muted";
+}
+
+function accessUsageBadges(acc: InventoryAccount): UsageBadge[] {
+  const result = accessUsageById.value[acc.id];
+  if (!result) return [];
+
+  const httpStatus = Number(result.http_status || 0);
+  if (httpStatus === 401 || httpStatus === 403) {
+    return [{ label: String(httpStatus), kind: "error" }];
+  }
+  if (result.status === "invalid") {
+    return [{ label: httpStatus ? String(httpStatus) : "invalid", kind: "error" }];
+  }
+  if (result.status === "no_refresh_token") {
+    return [{ label: "no_rt", kind: "warn" }];
+  }
+
+  const badges: UsageBadge[] = [];
+  const fiveHour = quotaBadgeLabel("5h", result.five_hour_quota);
+  const weekly = quotaBadgeLabel("week", result.weekly_quota);
+  if (fiveHour) badges.push({ label: fiveHour, kind: "ok" });
+  if (weekly) badges.push({ label: weekly, kind: "ok" });
+  if (!badges.length && result.status === "quota_limited") {
+    badges.push({ label: "quota", kind: "warn" });
+  }
+  if (!badges.length && result.status) {
+    badges.push({ label: String(result.status), kind: result.oauth_valid ? "warn" : "error" });
+  }
+  return badges;
+}
+
+function quotaBadgeLabel(prefix: string, quota: any): string {
+  if (!quota || typeof quota !== "object") return "";
+  const percent = quota.percent_remaining ?? quota.remaining_percent;
+  if (percent !== undefined && percent !== null && percent !== "") {
+    const n = Number(percent);
+    const value = Number.isFinite(n) ? Math.round(n <= 1 ? n * 100 : n) : String(percent);
+    return `${prefix}:${value}%`;
+  }
+  const remaining = quota.remaining;
+  const limit = quota.limit;
+  if (remaining !== undefined && remaining !== null && limit !== undefined && limit !== null) {
+    return `${prefix}:${remaining}/${limit}`;
+  }
+  return "";
 }
 </script>
 
@@ -843,6 +907,14 @@ th {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.usage-badges {
+  display: flex;
+  flex-basis: 100%;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
 }
 
 .asset {

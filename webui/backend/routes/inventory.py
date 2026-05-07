@@ -492,9 +492,9 @@ def check_oauth_usage(req: CheckRequest, user: str = CurrentUser):
         "ok": sum(1 for r in results if r.get("status") == "ok"),
         "valid": sum(1 for r in results if r.get("oauth_valid")),
         "invalid": sum(1 for r in results if r.get("status") in ("invalid", "expired", "forbidden")),
+        "refreshed": sum(1 for r in results if r.get("oauth_valid")),
         "quota_limited": sum(1 for r in results if r.get("status") == "quota_limited"),
-        "no_access_token": sum(1 for r in results if r.get("status") == "no_access_token"),
-        "proxy_required": sum(1 for r in results if r.get("status") == "proxy_required"),
+        "no_refresh_token": sum(1 for r in results if r.get("status") == "no_refresh_token"),
         "unknown": sum(1 for r in results if r.get("status") == "unknown"),
         "missing": sum(1 for r in results if r.get("status") == "missing"),
     }
@@ -505,9 +505,9 @@ def check_oauth_usage(req: CheckRequest, user: str = CurrentUser):
     summary["plans"] = plans
     runner._append_log(
         "[inventory:oauth-usage-check] "
-        f"total={summary['total']} valid={summary['valid']} ok={summary['ok']} "
+        f"total={summary['total']} refreshed={summary['refreshed']} ok={summary['ok']} "
         f"quota_limited={summary['quota_limited']} invalid={summary['invalid']} "
-        f"no_access_token={summary['no_access_token']} proxy_required={summary['proxy_required']} unknown={summary['unknown']} "
+        f"no_refresh_token={summary['no_refresh_token']} unknown={summary['unknown']} "
         f"plans={json.dumps(plans, ensure_ascii=False, separators=(',', ':'))}"
     )
     return {"results": results, "summary": summary}

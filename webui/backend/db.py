@@ -354,6 +354,35 @@ class Database:
             )
         return cur.rowcount > 0
 
+    def update_registered_account_oauth_tokens(
+        self,
+        account_id: int,
+        *,
+        access_token: str = "",
+        id_token: str = "",
+        refresh_token: str = "",
+    ) -> bool:
+        updates: list[str] = []
+        params: list[Any] = []
+        if access_token:
+            updates.append("access_token = ?")
+            params.append(_text(access_token))
+        if id_token:
+            updates.append("id_token = ?")
+            params.append(_text(id_token))
+        if refresh_token:
+            updates.append("refresh_token = ?")
+            params.append(_text(refresh_token))
+        if not updates:
+            return False
+        params.append(int(account_id))
+        with self._conn() as c:
+            cur = c.execute(
+                f"UPDATE registered_accounts SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+        return cur.rowcount > 0
+
     def update_account_check(self, account_id: int, status: str, message: str = "") -> bool:
         """Record validity probe outcome (status: 'valid' | 'invalid' | 'unknown')."""
         with self._conn() as c:
