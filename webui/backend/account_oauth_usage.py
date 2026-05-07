@@ -154,6 +154,7 @@ def inspect_account_oauth_usage(account: dict, *, timeout_s: float = 10.0) -> di
     email = str(account.get("email") or "").strip().lower()
     old_rt = str(account.get("refresh_token") or "").strip()
     if not old_rt:
+        get_db().set_oauth_status(email, "missing", "refresh_token missing")
         return {
             "id": aid,
             "email": email,

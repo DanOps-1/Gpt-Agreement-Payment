@@ -410,6 +410,13 @@ def check_account_rt(req: IdsRequest, user: str = CurrentUser):
         has_rt = bool(acc.get("has_refresh_token"))
         cooldown = int(acc.get("oauth_cooldown_remaining_s") or 0)
         reason = str(acc.get("oauth_fail_reason") or "")
+        if not has_rt and rt_state in ("missing", "oauth_succeeded"):
+            email = str(acc.get("email") or "").strip().lower()
+            if email:
+                get_db().set_oauth_status(email, "missing", "refresh_token missing")
+            rt_state = "missing"
+            cooldown = 0
+            reason = "refresh_token missing"
         if has_rt:
             message = "refresh_token exists"
         elif rt_state == "cooldown":
