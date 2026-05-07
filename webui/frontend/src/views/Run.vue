@@ -821,7 +821,7 @@ const managerBackfillIds = computed(() => {
 const managerServerPushIds = computed(() => {
   const selected = new Set(managerSelectedIds.value);
   return managerFilteredAccounts.value
-    .filter(a => selected.has(a.id) && !a.server_pushed)
+    .filter(a => selected.has(a.id))
     .map(a => a.id);
 });
 function openAccountManager() {
@@ -830,7 +830,7 @@ function openAccountManager() {
   accountManager.value.rtFilter = "all";
   accountManager.value.planFilter = "all";
   managerSelectedIds.value = new Set(
-    inventory.value.accounts.filter(a => !a.downloaded && !a.server_pushed).map(a => a.id).filter(Boolean)
+    inventory.value.accounts.filter(a => !a.downloaded).map(a => a.id).filter(Boolean)
   );
 }
 function closeAccountManager() {
@@ -924,7 +924,7 @@ async function backfillManagerSelectedRt() {
 }
 async function pushManagerSelectedToServer() {
   const ids = managerServerPushIds.value;
-  if (!ids.length) { message.warning("请选择尚未推送至导入服务器的账号"); return; }
+  if (!ids.length) { message.warning("请选择要推送至导入服务器的账号"); return; }
   if (!accountManager.value.importUrl.trim()) { message.warning("请填写导入接口 URL"); return; }
   if (!accountManager.value.importToken.trim()) { message.warning("请填写 Bearer token"); return; }
   if (!(await saveAccountImportServerConfig({ quiet: true }))) return;
