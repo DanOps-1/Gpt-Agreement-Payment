@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import CurrentUser
 from ..account_inventory import build_accounts_inventory
+from ..account_oauth_usage import inspect_accounts_oauth_usage
 from ..account_validator import validate_accounts
 from ..db import get_db
 from .. import settings as s
@@ -473,6 +474,41 @@ def check_accounts(req: CheckRequest, user: str = CurrentUser):
         "invalid": sum(1 for r in results if r.get("status") == "invalid"),
         "unknown": sum(1 for r in results if r.get("status") == "unknown"),
     }
+    return {"results": results, "summary": summary}
+
+
+@router.post("/accounts/oauth-usage-check")
+def check_oauth_usage(req: CheckRequest, user: str = CurrentUser):
+    """Validate access_token OAuth state and inspect ChatGPT/Codex usage."""
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="ids 不能为空")
+    if len(req.ids) > 100:
+        raise HTTPException(status_code=400, detail="单次最多 100 个")
+    workers = max(1, min(int(req.max_workers), 8))
+    timeout = max(2.0, min(float(req.timeout_s), 30.0))
+    results = inspect_accounts_oauth_usage(req.ids, max_workers=workers, timeout_s=timeout)
+    summary = {
+        "total": len(results),
+        "ok": sum(1 for r in results if r.get("status") == "ok"),
+        "valid": sum(1 for r in results if r.get("oauth_valid")),
+        "invalid": sum(1 for r in results if r.get("status") in ("invalid", "expired", "forbidden")),
+        "quota_limited": sum(1 for r in results if r.get("status") == "quota_limited"),
+        "no_access_token": sum(1 for r in results if r.get("status") == "no_access_token"),
+        "unknown": sum(1 for r in results if r.get("status") == "unknown"),
+        "missing": sum(1 for r in results if r.get("status") == "missing"),
+    }
+    plans: dict[str, int] = {}
+    for item in results:
+        plan = str(item.get("plan") or "unknown").strip().lower() or "unknown"
+        plans[plan] = plans.get(plan, 0) + 1
+    summary["plans"] = plans
+    runner._append_log(
+        "[inventory:oauth-usage-check] "
+        f"total={summary['total']} valid={summary['valid']} ok={summary['ok']} "
+        f"quota_limited={summary['quota_limited']} invalid={summary['invalid']} "
+        f"no_access_token={summary['no_access_token']} unknown={summary['unknown']} "
+        f"plans={json.dumps(plans, ensure_ascii=False, separators=(',', ':'))}"
+    )
     return {"results": results, "summary": summary}
 
 

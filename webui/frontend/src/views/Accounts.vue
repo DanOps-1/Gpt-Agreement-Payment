@@ -78,6 +78,9 @@
       <TermBtn :loading="manager.busy" :disabled="managerSelectedFilteredIds.length === 0" @click="detectSelectedRt">
         RT检测 ({{ managerSelectedFilteredIds.length }})
       </TermBtn>
+      <TermBtn :loading="manager.busy" :disabled="managerSelectedFilteredIds.length === 0" @click="detectSelectedAccessToken">
+        AccessToken检测 ({{ managerSelectedFilteredIds.length }})
+      </TermBtn>
       <TermBtn :loading="manager.busy" :disabled="managerBackfillIds.length === 0" @click="backfillManagerSelectedRt">
         一键补RT ({{ managerBackfillIds.length }})
       </TermBtn>
@@ -105,6 +108,27 @@
         </span>
       </div>
       <button class="text-button" type="button" @click="rtCheck = null">关闭</button>
+    </section>
+
+    <section v-if="accessCheck" class="rt-result-band">
+      <div>
+        <strong>AccessToken检测</strong>
+        <span>
+          total={{ accessCheck.summary.total || 0 }}
+          valid={{ accessCheck.summary.valid || 0 }}
+          ok={{ accessCheck.summary.ok || 0 }}
+          quota={{ accessCheck.summary.quota_limited || 0 }}
+          invalid={{ accessCheck.summary.invalid || 0 }}
+          no_at={{ accessCheck.summary.no_access_token || 0 }}
+        </span>
+        <span v-if="planSummary" class="result-extra">plan: {{ planSummary }}</span>
+        <div class="result-list-inline">
+          <span v-for="item in accessCheck.results.slice(0, 8)" :key="String(item.id)">
+            {{ item.email || ("id=" + item.id) }} {{ item.plan || "-" }} {{ item.status }} {{ item.message || "" }}
+          </span>
+        </div>
+      </div>
+      <button class="text-button" type="button" @click="accessCheck = null">关闭</button>
     </section>
 
     <section class="table-wrap">
@@ -210,6 +234,11 @@ interface RtCheckResult {
   summary: Record<string, number>;
 }
 
+interface AccessCheckResult {
+  results: Array<Record<string, unknown>>;
+  summary: Record<string, any>;
+}
+
 const router = useRouter();
 const message = useMessage();
 const dialog = useDialog();
@@ -217,6 +246,7 @@ const loading = ref(false);
 const inventory = ref<InventoryResponse>({ accounts: [], counts: {} });
 const managerSelectedIds = ref<Set<number>>(new Set());
 const rtCheck = ref<RtCheckResult | null>(null);
+const accessCheck = ref<AccessCheckResult | null>(null);
 const manager = ref({
   busy: false,
   savingConfig: false,
@@ -280,6 +310,13 @@ const managerServerPushIds = computed(() => {
   return managerFilteredAccounts.value
     .filter(a => selected.has(a.id) && a.has_refresh_token)
     .map(a => a.id);
+});
+const planSummary = computed(() => {
+  const plans = accessCheck.value?.summary?.plans;
+  if (!plans || typeof plans !== "object") return "";
+  return Object.entries(plans)
+    .map(([k, v]) => `${k}:${v}`)
+    .join(" ");
 });
 
 watch(
@@ -376,6 +413,27 @@ async function detectSelectedRt() {
     await refreshInventory();
   } catch (e: any) {
     message.error(`RT检测失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    manager.value.busy = false;
+  }
+}
+
+async function detectSelectedAccessToken() {
+  const ids = managerSelectedFilteredIds.value;
+  if (!ids.length) { message.warning("请选择要检测AccessToken的账号"); return; }
+  manager.value.busy = true;
+  try {
+    const r = await api.post("/inventory/accounts/oauth-usage-check", {
+      ids,
+      timeout_s: 12,
+      max_workers: 3,
+    });
+    accessCheck.value = r.data || null;
+    const s = r.data?.summary || {};
+    message.success(`AccessToken检测完成：valid=${s.valid || 0} ok=${s.ok || 0} quota=${s.quota_limited || 0} invalid=${s.invalid || 0} no_at=${s.no_access_token || 0}`);
+    await refreshInventory();
+  } catch (e: any) {
+    message.error(`AccessToken检测失败：${e?.response?.data?.detail || e?.message || e}`);
   } finally {
     manager.value.busy = false;
   }
@@ -654,6 +712,26 @@ select:focus {
 .rt-result-band strong {
   margin-right: 12px;
   color: var(--fg-primary);
+}
+
+.result-extra {
+  margin-left: 12px;
+}
+
+.result-list-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 8px;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+}
+
+.result-list-inline span {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .text-button {
