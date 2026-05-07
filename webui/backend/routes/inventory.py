@@ -129,10 +129,14 @@ def _load_pay_cfg() -> dict:
 
 
 def _server_push_payload(account: dict) -> dict:
+    extra = _cpa_auth_file_body(account)
     return {
         "email": str(account.get("email") or "").strip().lower(),
         "password": str(account.get("password") or ""),
-        "extra": json.dumps(_cpa_auth_file_body(account), ensure_ascii=False, separators=(",", ":")),
+        "id_token": extra.get("id_token") or "",
+        "access_token": extra.get("access_token") or "",
+        "refresh_token": extra.get("refresh_token") or "",
+        "extra": json.dumps(extra, ensure_ascii=False, separators=(",", ":")),
     }
 
 
@@ -151,7 +155,21 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     if not token:
         raise HTTPException(status_code=400, detail="账号导入服务器 Bearer token 不能为空")
 
-    items = [_account_import_item(acc) for acc in accounts]
+    ready_accounts = [acc for acc in accounts if str(acc.get("refresh_token") or "").strip()]
+    skipped = [
+        {
+            "id": acc.get("id"),
+            "email": str(acc.get("email") or "").strip().lower(),
+            "status": "no_rt",
+            "error": "refresh_token missing",
+        }
+        for acc in accounts
+        if not str(acc.get("refresh_token") or "").strip()
+    ]
+    if not ready_accounts:
+        return skipped
+
+    items = [_account_import_item(acc) for acc in ready_accounts]
     try:
         resp = client.post(
             url,
@@ -161,7 +179,7 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     except httpx.HTTPError as e:
         return [
             {"id": acc.get("id"), "email": str(acc.get("email") or "").strip().lower(), "status": "error", "error": str(e)}
-            for acc in accounts
+            for acc in ready_accounts
         ]
 
     text = resp.text[:500]
@@ -173,7 +191,7 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     if isinstance(body, dict) and body.get("success") is False:
         ok = False
     error = "" if ok else ((body or {}).get("message") if isinstance(body, dict) else text)
-    return [
+    pushed = [
         {
             "id": acc.get("id"),
             "email": str(acc.get("email") or "").strip().lower(),
@@ -181,8 +199,9 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
             "http_status": resp.status_code,
             "error": error,
         }
-        for acc in accounts
+        for acc in ready_accounts
     ]
+    return [*skipped, *pushed]
 
 
 def _pipeline_module():

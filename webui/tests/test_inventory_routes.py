@@ -225,9 +225,39 @@ def test_server_push_posts_account_import_payload(client):
     assert item["email"] == "push@example.com"
     assert item["password"] == "pw-123"
     assert item["enabled"] is True
+    assert item["id_token"] == "id-token"
+    assert item["access_token"] == "at-token"
+    assert item["refresh_token"] == "rt-token"
     extra = json.loads(item["extra"])
     assert extra["email"] == "push@example.com"
     assert extra["id_token"] == "id-token"
     assert extra["access_token"] == "at-token"
     assert extra["refresh_token"] == "rt-token"
     assert get_db().get_registered_account(aid)["server_pushed_at"] > 0
+
+
+@respx.mock
+def test_server_push_skips_accounts_without_refresh_token(client):
+    _login(client)
+    db = get_db()
+    db.clear_runtime_data()
+    db.add_registered_account({
+        "email": "NoRt@Example.com",
+        "password": "pw-123",
+        "access_token": "at-token",
+    })
+    aid = db.iter_registered_accounts()[0]["id"]
+    pushed = respx.post("http://127.0.0.1:8787/api/import").mock(
+        return_value=Response(200, json={"success": True})
+    )
+
+    r = client.post("/api/inventory/accounts/server-push", json={
+        "ids": [aid],
+        "import_url": "http://127.0.0.1:8787/api/import",
+        "import_token": "dev-import-token",
+    })
+
+    assert r.status_code == 200
+    assert r.json()["summary"] == {"total": 1, "ok": 0, "missing": 0, "fail": 1}
+    assert r.json()["results"][0]["status"] == "no_rt"
+    assert len(pushed.calls) == 0

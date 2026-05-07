@@ -1096,11 +1096,17 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
 
         if pay_status == "succeeded" and push_server and _is_plus_plan(card_cfg or {}):
             try:
+                push_account = reg_acc or _find_latest_registered_account_for_email(reg.get("email", ""))
+                _rt, push_account, rt_status = _ensure_account_refresh_token_for_server_push(
+                    reg.get("email", ""),
+                    card_cfg or {},
+                    push_account,
+                )
                 record["server_push"] = _push_plus_account_to_server(
                     reg.get("email", ""),
                     card_cfg or {},
-                    account=reg_acc or _find_latest_registered_account_for_email(reg.get("email", "")),
-                )
+                    account=push_account,
+                ) if _rt else rt_status
             except Exception as e:
                 print(f"[push-server] 推送异常: {e}")
                 record["server_push"] = "error"
@@ -1479,11 +1485,17 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
                         record["invite_permission"] = "error"
                 if pay_result.get("status") == "succeeded" and push_server and _is_plus_plan(card_cfg or {}):
                     try:
+                        push_account = _find_latest_registered_account_for_email(acc["email"])
+                        _rt, push_account, rt_status = _ensure_account_refresh_token_for_server_push(
+                            acc["email"],
+                            card_cfg or {},
+                            push_account,
+                        )
                         record["server_push"] = _push_plus_account_to_server(
                             acc["email"],
                             card_cfg or {},
-                            account=_find_latest_registered_account_for_email(acc["email"]),
-                        )
+                            account=push_account,
+                        ) if _rt else rt_status
                     except Exception as e:
                         print(f"[push-server] 推送异常: {e}")
                         record["server_push"] = "error"
@@ -1740,11 +1752,17 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
                 record["sub2api_import"] = "error"
         if status == "succeeded" and push_server and _is_plus_plan(card_cfg or {}):
             try:
+                push_account = account or _find_latest_registered_account_for_email(pay_email)
+                _rt, push_account, rt_status = _ensure_account_refresh_token_for_server_push(
+                    pay_email,
+                    card_cfg or {},
+                    push_account,
+                )
                 record["server_push"] = _push_plus_account_to_server(
                     pay_email,
                     card_cfg or {},
-                    account=account or _find_latest_registered_account_for_email(pay_email),
-                )
+                    account=push_account,
+                ) if _rt else rt_status
             except Exception as e:
                 print(f"[push-server] 推送异常: {e}")
                 record["server_push"] = "error"
@@ -3061,6 +3079,58 @@ def _find_latest_refresh_token_for_email(email, session_id=""):
     return ""
 
 
+def _ensure_account_refresh_token_for_server_push(email: str, card_cfg: dict, account: dict) -> tuple[str, dict, str]:
+    email = _norm_email(email or account.get("email"))
+    account = dict(account or {})
+    rt = str(account.get("refresh_token") or "").strip() or _find_latest_refresh_token_for_email(email)
+    if rt:
+        account["refresh_token"] = rt
+        return rt, account, "ok"
+
+    if _should_skip_oauth_account(email):
+        oauth = _get_account_oauth_status(email) or {}
+        reason = str(oauth.get("fail_reason") or oauth.get("status") or "oauth_cooldown")
+        print(f"[push-server] {email} RT 冷却/已处理，跳过自动推送: {reason}")
+        return "", account, "rt_cooldown"
+
+    mail_cfg = (card_cfg or {}).get("mail") or {}
+    proxy_url = str((card_cfg or {}).get("proxy") or "")
+    cpa_cfg = (card_cfg or {}).get("cpa") or {}
+    sub2api_cfg = (card_cfg or {}).get("sub2api") or {}
+    client_id = str(cpa_cfg.get("oauth_client_id") or sub2api_cfg.get("oauth_client_id") or "").strip()
+    if client_id and not os.environ.get("OAUTH_CODEX_CLIENT_ID"):
+        os.environ["OAUTH_CODEX_CLIENT_ID"] = client_id
+
+    password = account.get("password") or _password_from_email(email)
+    rt, fail = _exchange_rt_with_classification(email, password, mail_cfg, proxy_url)
+    if not rt:
+        status = "dead" if fail == "account_dead" else "transient_failed"
+        _set_account_oauth_status(email, status, fail)
+        if fail == "add_phone_blocked":
+            print(f"[push-server] {email} 获取 RT 遇到 add_phone，进入 RT 冷却，跳过自动推送")
+            return "", account, "rt_cooldown"
+        print(f"[push-server] {email} 获取 RT 失败: {fail}，跳过自动推送")
+        return "", account, "no_rt"
+
+    account["refresh_token"] = rt
+    try:
+        if account.get("id"):
+            get_db().update_registered_account_refresh_token(int(account["id"]), rt)
+        get_db().add_card_result({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "status": "succeeded",
+            "chatgpt_email": email,
+            "email": email,
+            "session_id": str(account.get("device_id") or ""),
+            "channel": "auto_server_push_rt",
+            "refresh_token": rt,
+        })
+    except Exception as e:
+        print(f"[push-server] {email} 保存 RT 失败: {e}")
+    _set_account_oauth_status(email, "succeeded")
+    return rt, account, "ok"
+
+
 def _augment_card_result_last_match(email, session_id, extra_fields):
     """倒序找到首条匹配 email(+session_id) 的支付记录并补字段。"""
     try:
@@ -3524,11 +3594,17 @@ def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | 
     if not cfg["url"] or not cfg["token"]:
         print("[push-server] missing import server url/token, skipped")
         return "skipped"
+    if not str(account.get("refresh_token") or "").strip():
+        print(f"[push-server] {email} 无 refresh_token，跳过")
+        return "no_rt"
 
     item = {
         "email": email,
         "password": str(account.get("password") or ""),
         "enabled": True,
+        "id_token": str(account.get("id_token") or "").strip(),
+        "access_token": str(account.get("access_token") or "").strip(),
+        "refresh_token": str(account.get("refresh_token") or "").strip(),
         "extra": json.dumps(_cpa_extra_for_server_import(account, email), ensure_ascii=False, separators=(",", ":")),
     }
     payload = {"type": "accounts", "items": [item]}

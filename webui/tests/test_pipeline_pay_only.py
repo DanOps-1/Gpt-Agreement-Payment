@@ -239,8 +239,49 @@ def test_push_plus_account_to_server_posts_account_import_payload(tmp_path, monk
     assert item["email"] == "retry@example.com"
     assert item["password"] == "pw"
     assert item["enabled"] is True
+    assert item["access_token"] == "at"
+    assert item["id_token"] == "id"
+    assert item["refresh_token"] == "rt"
     assert json.loads(item["extra"])["refresh_token"] == "rt"
     assert get_db().get_registered_account(aid)["server_pushed_at"] > 0
+
+
+def test_auto_server_push_skips_when_rt_hits_add_phone_cooldown(tmp_path, monkeypatch):
+    db = _reset_db(tmp_path, monkeypatch)
+    card_config = tmp_path / "config.paypal.json"
+    db.add_registered_account({
+        "email": "retry@example.com",
+        "password": "pw",
+        "session_token": "sess",
+        "access_token": "at",
+    })
+    card_config.write_text(json.dumps({
+        "fresh_checkout": {"plan": {"plan_name": "chatgptplusplan"}},
+        "mail": {},
+        "account_import_server": {"url": "http://127.0.0.1:8787/api/import", "token": "dev-import-token"},
+    }), encoding="utf-8")
+
+    push_calls = []
+    monkeypatch.setattr(pipeline, "pay", lambda *args, **kwargs: {
+        "status": "succeeded",
+        "raw": {"session_id": "cs_test", "chatgpt_email": "retry@example.com"},
+    })
+    monkeypatch.setattr(pipeline, "_exchange_rt_with_classification", lambda *args, **kwargs: ("", "add_phone_blocked"))
+    monkeypatch.setattr(
+        pipeline,
+        "_push_plus_account_to_server",
+        lambda *args, **kwargs: push_calls.append((args, kwargs)) or "ok",
+    )
+
+    result = pipeline.pay_only(str(card_config), use_gopay=True, push_server=True)
+
+    assert result["status"] == "succeeded"
+    assert not push_calls
+    rows = get_db().iter_pipeline_results()
+    assert rows[-1]["server_push"] == "rt_cooldown"
+    oauth = get_db().load_oauth_status_map()["retry@example.com"]
+    assert oauth["status"] == "transient_failed"
+    assert oauth["fail_reason"] == "add_phone_blocked"
 
 
 def test_cpa_import_falls_back_to_access_token_without_refresh_token(tmp_path, monkeypatch):
