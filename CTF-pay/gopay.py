@@ -112,6 +112,37 @@ def _looks_transient_request_error(exc: Exception) -> bool:
     return any(word in name or word in text for word in transient_words)
 
 
+def _safe_headers_for_log(headers: Any) -> dict[str, str]:
+    out: dict[str, str] = {}
+    sensitive = ("authorization", "cookie", "set-cookie", "x-api-key")
+    interesting_prefixes = (
+        "retry-after",
+        "x-ratelimit",
+        "ratelimit",
+        "cf-",
+        "server",
+        "date",
+        "content-type",
+        "via",
+        "x-request",
+        "x-correlation",
+        "x-amzn",
+    )
+    try:
+        items = headers.items()
+    except Exception:
+        return out
+    for key, value in items:
+        k = str(key)
+        lk = k.lower()
+        if any(s in lk for s in sensitive):
+            out[k] = "<redacted>"
+            continue
+        if any(lk == p or lk.startswith(p) for p in interesting_prefixes):
+            out[k] = str(value)[:200]
+    return out
+
+
 def _phone_digits(value: Any) -> str:
     return re.sub(r"\D", "", str(value or ""))
 
@@ -628,7 +659,22 @@ class GoPayCharger:
         rate_limit_attempt = 0
         attempt = 0
         while attempt < LINK_RETRY_LIMIT + 1:
-            r = self.ext.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
+            try:
+                r = self.ext.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
+            except Exception as exc:
+                if not _looks_transient_request_error(exc):
+                    raise
+                rate_limit_attempt += 1
+                last_err = f"{type(exc).__name__}: {str(exc)[:160]}"
+                if rate_limit_attempt > LINK_429_RETRY_LIMIT:
+                    raise GoPayError(f"midtrans linking transient exhausted retries: {last_err}") from exc
+                sleep_s = random.uniform(LINK_429_RETRY_SLEEP_MIN_S, LINK_429_RETRY_SLEEP_MAX_S)
+                self.log(
+                    "[gopay] midtrans linking transient error, "
+                    f"{sleep_s:.1f}s 后重试 {rate_limit_attempt}/{LINK_429_RETRY_LIMIT}: {last_err}"
+                )
+                time.sleep(sleep_s)
+                continue
             if r.status_code == 201:
                 data = r.json()
                 m = re.search(r"reference=([a-f0-9-]{36})", data.get("activation_link_url", ""))
@@ -655,6 +701,10 @@ class GoPayCharger:
             if r.status_code == 429:
                 rate_limit_attempt += 1
                 last_err = f"429 {r.text[:120]}"
+                self.log(
+                    "[gopay] midtrans linking 429 headers="
+                    + json.dumps(_safe_headers_for_log(r.headers), ensure_ascii=False, separators=(",", ":"))
+                )
                 if rate_limit_attempt > LINK_429_RETRY_LIMIT:
                     raise GoPayError(f"midtrans linking 429 exhausted retries: {last_err}")
                 sleep_s = random.uniform(LINK_429_RETRY_SLEEP_MIN_S, LINK_429_RETRY_SLEEP_MAX_S)
