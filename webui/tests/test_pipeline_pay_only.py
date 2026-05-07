@@ -375,6 +375,100 @@ def test_worker_card_config_assigns_distinct_gopay_and_proxy(tmp_path):
         pipeline.os.unlink(path1)
 
 
+def test_batch_worker_continues_after_single_pipeline_error(monkeypatch):
+    calls = []
+
+    def fake_pipeline(card_path, **kwargs):
+        calls.append((card_path, kwargs))
+        if len(calls) == 1:
+            raise RuntimeError("register stuck at about-you")
+        return {
+            "registration": {"status": "ok", "email": "next@example.com"},
+            "payment": {"status": "succeeded"},
+        }
+
+    monkeypatch.setattr(pipeline, "pipeline", fake_pipeline)
+
+    results = pipeline._run_batch_worker((
+        0,
+        range(0, 4, 2),
+        "config.paypal.json",
+        {},
+        1,
+        False,
+        pipeline.ProxyPool(),
+        {},
+    ))
+
+    assert len(calls) == 2
+    assert [r["batch_index"] for r in results] == [0, 2]
+    assert results[0]["status"] == "error"
+    assert results[0]["payment"]["status"] == "error"
+    assert "about-you" in results[0]["error"]
+    assert results[1]["payment"]["status"] == "succeeded"
+
+
+def test_batch_worker_scopes_gopay_otp_file_per_task(monkeypatch):
+    calls = []
+
+    def fake_pipeline(card_path, **kwargs):
+        calls.append(kwargs)
+        return {
+            "registration": {"status": "ok", "email": "next@example.com"},
+            "payment": {"status": "succeeded"},
+        }
+
+    monkeypatch.setattr(pipeline, "pipeline", fake_pipeline)
+
+    results = pipeline._run_batch_worker((
+        1,
+        range(1, 5, 2),
+        "config.paypal.json",
+        {"gopay_otp_file": "/tmp/gopay_otp.txt"},
+        2,
+        False,
+        pipeline.ProxyPool(),
+        {},
+    ))
+
+    assert [r["batch_index"] for r in results] == [1, 3]
+    assert [c["gopay_otp_file"] for c in calls] == [
+        "/tmp/gopay_otp_w1_t2.txt",
+        "/tmp/gopay_otp_w1_t4.txt",
+    ]
+    assert [c["log_label"] for c in calls] == ["w1:t2", "w1:t4"]
+
+
+def test_pay_only_worker_scopes_gopay_otp_file_per_task(monkeypatch):
+    calls = []
+
+    def fake_pay_only(card_path, **kwargs):
+        calls.append(kwargs)
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(pipeline, "pay_only", fake_pay_only)
+
+    results = pipeline._run_pay_only_worker((
+        0,
+        range(0, 4, 2),
+        "config.paypal.json",
+        False,
+        True,
+        "/tmp/gopay_otp.txt",
+        False,
+        2,
+        pipeline.ProxyPool(),
+        {},
+    ))
+
+    assert [r["batch_index"] for r in results] == [0, 2]
+    assert [c["gopay_otp_file"] for c in calls] == [
+        "/tmp/gopay_otp_w0_t1.txt",
+        "/tmp/gopay_otp_w0_t3.txt",
+    ]
+    assert [c["log_label"] for c in calls] == ["w0:t1", "w0:t3"]
+
+
 def test_validate_worker_resources_rejects_duplicate_proxy_or_gopay():
     with pytest.raises(RuntimeError, match="GoPay accounts"):
         pipeline._validate_worker_resources(

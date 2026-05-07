@@ -268,7 +268,7 @@ def _detect_gopay_otp_target(line: str) -> tuple[str, str]:
 
 
 def _is_pay_success_line(line: str) -> bool:
-    return bool(re.search(r"\[pay\].*结果:\s*state=succeeded\b", line))
+    return bool(re.search(r"\[pay(?::[^\]]+)?\].*结果:\s*state=succeeded\b", line))
 
 
 def _run_gopay_auto_unbind() -> None:

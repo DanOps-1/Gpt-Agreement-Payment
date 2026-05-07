@@ -820,9 +820,32 @@ def _is_plus_plan(card_cfg: dict) -> bool:
     return "plus" in plan_name or plan_type == "plus"
 
 
+def _scoped_gopay_otp_file(path, worker_id=None, task_index=None):
+    if not path:
+        return path
+    try:
+        raw = str(path)
+        sep = "/" if "/" in raw and "\\" not in raw else os.sep
+        parent, filename = raw.rsplit(sep, 1) if sep in raw else ("", raw)
+        stem, suffix = os.path.splitext(filename)
+        stem = stem or "gopay_otp"
+        suffix = suffix or ".txt"
+        parts = []
+        if worker_id is not None:
+            parts.append(f"w{int(worker_id)}")
+        if task_index is not None:
+            parts.append(f"t{int(task_index) + 1}")
+        if not parts:
+            return raw
+        scoped = f"{stem}_{'_'.join(parts)}{suffix}"
+        return f"{parent}{sep}{scoped}" if parent else scoped
+    except Exception:
+        return path
+
+
 def pay(card_config_path, session_token=None, access_token=None,
         device_id=None, use_paypal=False, use_gopay=False,
-        gopay_otp_file=None, python=None, timeout=600):
+        gopay_otp_file=None, python=None, timeout=600, log_label=""):
     """执行 Stripe 支付流程。
 
     use_paypal / use_gopay 互斥：默认 card 路径，paypal 走 PayPal browser，
@@ -892,7 +915,9 @@ def pay(card_config_path, session_token=None, access_token=None,
         if client_id:
             env["OAUTH_CODEX_CLIENT_ID"] = client_id
 
-    print(f"[pay] 启动支付 (mode={mode_label}) ...")
+    pay_prefix = f"[pay:{log_label}]" if log_label else "[pay]"
+    child_prefix = f"  {pay_prefix}"
+    print(f"{pay_prefix} 启动支付 (mode={mode_label}) ...")
 
     result_json = None
     datadome_slider = False
@@ -907,7 +932,7 @@ def pay(card_config_path, session_token=None, access_token=None,
         deadline = time.time() + timeout
         for line in proc.stdout:
             line = line.rstrip("\n")
-            print(f"  [pay] {line}")
+            print(f"{child_prefix} {line}")
             output_tail.append(line)
             if len(output_tail) > 80:
                 output_tail = output_tail[-80:]
@@ -936,7 +961,7 @@ def pay(card_config_path, session_token=None, access_token=None,
 
     if result_json:
         status = result_json.get("state", "unknown")
-        print(f"[pay] 结果: state={status}")
+        print(f"{pay_prefix} 结果: state={status}")
         return {"status": status, "raw": result_json}
 
     if proc.returncode != 0:
@@ -961,7 +986,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
              use_gopay=False, gopay_otp_file=None,
              timeout_reg=300, timeout_pay=600,
              pool=None, team_client=None, card_cfg=None, proxy_pool=None,
-             push_server=False):
+             push_server=False, log_label=""):
     """全链路: 注册 → 支付 → (可选) gpt-team 导入探测 → 更新域池
     proxy_pool 非空时从 pool 挑代理，同时覆盖 CTF-reg + CTF-pay 两个 config 的 proxy 字段"""
     card_config_path = str(Path(card_config_path).resolve())
@@ -1044,6 +1069,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
                 use_gopay=use_gopay,
                 gopay_otp_file=gopay_otp_file,
                 timeout=timeout_pay,
+                log_label=log_label,
             )
             record["payment"] = {
                 "status": pay_result.get("status", "unknown"),
@@ -1201,6 +1227,7 @@ def _run_one_pay_only(args_tuple):
 
 def _run_batch_worker(args_tuple):
     worker_id, task_indices, card_config_path, kwargs, workers, use_gopay, proxy_pool, card_cfg = args_tuple
+    task_indices = list(task_indices)
     temp_card = None
     results = []
     try:
@@ -1219,19 +1246,41 @@ def _run_batch_worker(args_tuple):
         worker_kwargs["proxy_pool"] = ProxyPool([_picked_proxy]) if _picked_proxy else ProxyPool()
         for idx in task_indices:
             print(f"\n[batch-worker-{worker_id}] start task {idx + 1}")
-            r = pipeline(worker_card_path, **worker_kwargs)
-            r["batch_index"] = idx
-            r["worker_id"] = worker_id
-            if _picked_proxy:
-                r["proxy"] = _picked_proxy
+            try:
+                scoped_kwargs = dict(worker_kwargs)
+                scoped_kwargs["gopay_otp_file"] = _scoped_gopay_otp_file(
+                    worker_kwargs.get("gopay_otp_file"),
+                    worker_id,
+                    idx,
+                )
+                scoped_kwargs["log_label"] = f"w{worker_id}:t{idx + 1}"
+                r = pipeline(worker_card_path, **scoped_kwargs)
+                r["batch_index"] = idx
+                r["worker_id"] = worker_id
+                if _picked_proxy:
+                    r["proxy"] = _picked_proxy
+            except Exception as e:
+                err = str(e)[:200]
+                r = {
+                    "batch_index": idx,
+                    "worker_id": worker_id,
+                    "status": "error",
+                    "error": err,
+                    "registration": {"status": "error", "error": err},
+                    "payment": {"status": "error", "error": err},
+                }
+                print(f"[batch-worker-{worker_id}] task {idx + 1} exception: {e}")
             results.append(r)
     except Exception as e:
-        for idx in task_indices[len(results):]:
+        err = str(e)[:200]
+        for idx in task_indices:
             results.append({
                 "batch_index": idx,
                 "worker_id": worker_id,
                 "status": "error",
-                "error": str(e)[:200],
+                "error": err,
+                "registration": {"status": "error", "error": err},
+                "payment": {"status": "error", "error": err},
             })
     finally:
         if temp_card and os.path.exists(temp_card):
@@ -1258,12 +1307,14 @@ def _run_pay_only_worker(args_tuple):
         for idx in task_indices:
             print(f"\n[pay-only-worker-{worker_id}] start task {idx + 1}")
             try:
+                scoped_otp_file = _scoped_gopay_otp_file(gopay_otp_file, worker_id, idx)
                 r = pay_only(
                     worker_card_path,
                     use_paypal=use_paypal,
                     use_gopay=use_gopay,
-                    gopay_otp_file=gopay_otp_file,
+                    gopay_otp_file=scoped_otp_file,
                     push_server=push_server,
+                    log_label=f"w{worker_id}:t{idx + 1}",
                 )
                 r["batch_index"] = idx
                 r["worker_id"] = worker_id
@@ -1680,7 +1731,7 @@ def _release_pay_only_account_claim(account: dict | None) -> None:
 
 def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
              gopay_otp_file=None, timeout_pay=600, prefer_recent=True,
-             push_server=False):
+             push_server=False, log_label=""):
     """Retry payment only.
 
     Default behavior is now:
@@ -1727,6 +1778,7 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
             use_gopay=use_gopay,
             gopay_otp_file=gopay_otp_file,
             timeout=timeout_pay,
+            log_label=log_label,
         )
         status = result.get("status", "unknown")
         raw = result.get("raw") if isinstance(result.get("raw"), dict) else {}
