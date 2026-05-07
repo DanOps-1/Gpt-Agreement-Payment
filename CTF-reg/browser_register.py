@@ -337,17 +337,31 @@ def browser_register(cfg, mail_provider) -> dict:
                         except Exception:
                             pass
             if "auth.openai.com" not in page.url and not _has_email_input():
+                fallback_urls = []
                 href = _find_signup_href()
                 if href:
-                    logger.info(f"[browser-reg] Sign up 未跳转，使用 href 兜底: {href[:120]}")
+                    fallback_urls.append(href)
+                fallback_urls.extend([
+                    "https://chatgpt.com/auth/signup",
+                    "https://auth.openai.com/create-account",
+                    "https://auth.openai.com/sign-up",
+                ])
+                seen_fallback_urls = set()
+                for href in fallback_urls:
+                    if not href or href in seen_fallback_urls:
+                        continue
+                    seen_fallback_urls.add(href)
+                    logger.info(f"[browser-reg] Sign up 未跳转，使用 URL 兜底: {href[:120]}")
                     try:
                         page.goto(href, wait_until="domcontentloaded", timeout=30000)
                     except Exception as e:
-                        logger.warning(f"[browser-reg] Sign up href goto 异常: {e}")
-                    for _ in range(15):
+                        logger.warning(f"[browser-reg] Sign up fallback goto 异常: {e}")
+                    for _ in range(10):
                         if "auth.openai.com" in page.url or _has_email_input():
                             break
                         time.sleep(1)
+                    if "auth.openai.com" in page.url or _has_email_input():
+                        break
             if "auth.openai.com" not in page.url and not _has_email_input():
                 page.screenshot(path="/tmp/browser_reg_signup_no_auth.png")
                 urls = []
@@ -613,6 +627,19 @@ def browser_register(cfg, mail_provider) -> dict:
                     birthday_meta = visible_metas[1]
                     logger.info(f"[browser-reg] 表单 (legacy age): {len(visible_metas)} inputs")
                     break
+                # 2026-05 变种：about-you 只剩一个可见输入框（通常是 full name）。
+                # 旧逻辑要求 name + birthday 两个框，会一直卡在 about-you。
+                if not bd and len(visible_metas) == 1:
+                    all_inputs_el = page.query_selector_all('input')
+                    full_name_input = all_inputs_el[visible_metas[0]["idx"]]
+                    birthday_input = None
+                    birthday_meta = None
+                    logger.info(
+                        f"[browser-reg] 表单 (name-only): idx={visible_metas[0]['idx']} "
+                        f"type={visible_metas[0]['type']} "
+                        f"placeholder={visible_metas[0]['placeholder'][:30]!r}"
+                    )
+                    break
                 if "chatgpt.com" in page.url and "auth" not in page.url:
                     break
                 if attempt == 5:
@@ -621,7 +648,7 @@ def browser_register(cfg, mail_provider) -> dict:
                                 f"inputs visible={len(visible_metas)}")
                 time.sleep(1)
 
-            if full_name_input and birthday_input:
+            if full_name_input:
                 page.screenshot(path="/tmp/browser_reg_about_you.png")
                 full_name = f"{first_name} {last_name}"
                 # Birthday：26-40 岁之间的 1 月 15 日（足够>18，固定日期便于一致指纹）
@@ -641,25 +668,26 @@ def browser_register(cfg, mail_provider) -> dict:
                     full_name_input.focus(); time.sleep(0.3)
                     page.keyboard.type(full_name, delay=random.randint(30, 80))
                     time.sleep(random.uniform(0.4, 0.9))
-                    birthday_input.focus(); time.sleep(0.3)
-                    # 先清空（预填可能有今日日期）
-                    try:
-                        page.keyboard.press("Control+A")
-                        page.keyboard.press("Delete")
-                    except Exception:
-                        pass
-                    # 对 native date input 用 fill 直接写 ISO；文本框用 keyboard.type
-                    if bd_type == "date":
+                    if birthday_input:
+                        birthday_input.focus(); time.sleep(0.3)
+                        # 先清空（预填可能有今日日期）
                         try:
-                            birthday_input.fill(birthday_str)
+                            page.keyboard.press("Control+A")
+                            page.keyboard.press("Delete")
                         except Exception:
-                            page.keyboard.type(birthday_str, delay=random.randint(30, 70))
-                    else:
-                        # MM/DD/YYYY：为兼容 age 老版，若看起来是 number/age 就只打 age
-                        if _is_birthday(birthday_meta or {}):
-                            page.keyboard.type(birthday_str, delay=random.randint(30, 70))
+                            pass
+                        # 对 native date input 用 fill 直接写 ISO；文本框用 keyboard.type
+                        if bd_type == "date":
+                            try:
+                                birthday_input.fill(birthday_str)
+                            except Exception:
+                                page.keyboard.type(birthday_str, delay=random.randint(30, 70))
                         else:
-                            page.keyboard.type(legacy_age, delay=random.randint(40, 100))
+                            # MM/DD/YYYY：为兼容 age 老版，若看起来是 number/age 就只打 age
+                            if _is_birthday(birthday_meta or {}):
+                                page.keyboard.type(birthday_str, delay=random.randint(30, 70))
+                            else:
+                                page.keyboard.type(legacy_age, delay=random.randint(40, 100))
                     time.sleep(random.uniform(0.4, 0.9))
                     clicked = False
                     for sel in ['button:has-text("Finish")', 'button:has-text("Create")',

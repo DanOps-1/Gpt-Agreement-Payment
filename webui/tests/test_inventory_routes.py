@@ -305,3 +305,38 @@ def test_server_push_skips_when_backfill_hits_add_phone(client, monkeypatch):
     assert r.json()["results"][0]["status"] == "no_rt"
     assert r.json()["results"][0]["error"] == "add_phone_blocked"
     assert len(pushed.calls) == 0
+
+
+@respx.mock
+def test_server_push_failure_is_logged(client, monkeypatch):
+    _login(client)
+    db = get_db()
+    db.clear_runtime_data()
+    db.add_registered_account({
+        "email": "NoRt@Example.com",
+        "password": "pw-123",
+        "access_token": "at-token",
+    })
+    aid = db.iter_registered_accounts()[0]["id"]
+    from webui.backend.routes import inventory
+    from webui.backend import runner
+
+    monkeypatch.setattr(inventory, "_load_pay_cfg", lambda: {"mail": {}})
+    monkeypatch.setattr(
+        inventory._pipeline_module(),
+        "_exchange_rt_with_classification",
+        lambda *args, **kwargs: ("", "add_phone_blocked"),
+    )
+
+    captured = []
+    monkeypatch.setattr(runner, "_append_log", lambda line: captured.append(line))
+
+    r = client.post("/api/inventory/accounts/server-push", json={
+        "ids": [aid],
+        "import_url": "http://127.0.0.1:8787/api/import",
+        "import_token": "dev-import-token",
+    })
+
+    assert r.status_code == 200
+    assert any("[inventory:server-push] failed=1" in line for line in captured)
+    assert any("email=nort@example.com" in line and "add_phone_blocked" in line for line in captured)

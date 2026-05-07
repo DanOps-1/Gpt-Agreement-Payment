@@ -634,7 +634,7 @@ class RegistrationError(RuntimeError):
     pass
 
 
-def register(cardw_config_path, proxy=None, python=None, timeout=600, browser: bool = True):
+def register(cardw_config_path, proxy=None, python=None, timeout=600, browser: bool = True, log_label: str = ""):
     """注册一个新 ChatGPT 账号。
 
     browser=True 时走 Camoufox 真浏览器注册流程（Turnstile 真实执行，避免账号被风控）。
@@ -688,8 +688,11 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
 
         pass
 
+    reg_prefix = f"[register:{log_label}]" if log_label else "[register]"
+    child_prefix = f"  [reg:{log_label}]" if log_label else "  [reg]"
+
     cmd = [python, "-c", script, auth_bundle_dir, cardw_config_path]
-    print(f"[register] 注册新账号 (config={os.path.basename(cardw_config_path)}) ...")
+    print(f"{reg_prefix} 注册新账号 (config={os.path.basename(cardw_config_path)}) ...")
 
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -704,7 +707,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
         for line in proc.stdout:
             line = line.rstrip("\n")
             lines.append(line)
-            print(f"  [reg] {line}")
+            print(f"{child_prefix} {line}")
             if line.startswith("LOCALAUTH_RESULT_JSON="):
                 payload = line.split("=", 1)[1]
                 result_json = json.loads(payload)
@@ -722,7 +725,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
         raise RegistrationError("注册完成但未获取到凭证")
 
     email = result_json.get("email", "?")
-    print(f"[register] 注册成功: {email}")
+    print(f"{reg_prefix} 注册成功: {email}")
     try:
         entry = dict(result_json)
         entry["ts"] = datetime.now(timezone.utc).isoformat()
@@ -1046,7 +1049,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
         print(f"[pipeline] Step 1/2: 注册 ChatGPT 账号")
         print(f"{'='*60}")
         try:
-            reg = register(effective_cardw, timeout=timeout_reg)
+            reg = register(effective_cardw, timeout=timeout_reg, log_label=log_label)
             record["registration"] = {"status": "ok", "email": reg.get("email", "")}
         except RegistrationError as e:
             record["registration"] = {"status": "error", "error": str(e)[:200]}
@@ -1349,7 +1352,7 @@ def _register_one(args_tuple):
             picked_domain = pool.pick_and_mark_used()
             temp_cardw = _rewrite_cardw_with_domain(cardw_config_path, picked_domain)
             effective = temp_cardw
-        r = register(effective)
+        r = register(effective, log_label=f"reg{idx + 1}")
         return {"index": idx, "status": "ok", "picked_domain": picked_domain, **r}
     except Exception as e:
         return {"index": idx, "status": "error", "picked_domain": picked_domain, "error": str(e)[:200]}

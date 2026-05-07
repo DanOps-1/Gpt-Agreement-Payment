@@ -204,6 +204,29 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     return [*skipped, *pushed]
 
 
+def _log_server_push_failures(results: list[dict]) -> None:
+    failures = [r for r in results if r.get("status") != "ok"]
+    if not failures:
+        return
+    runner._append_log(f"[inventory:server-push] failed={len(failures)}")
+    for item in failures:
+        aid = item.get("id") or ""
+        email = str(item.get("email") or "").strip().lower() or "-"
+        status = str(item.get("status") or "unknown")
+        http_status = item.get("http_status")
+        error = str(item.get("error") or item.get("reason") or "").strip()
+        parts = [
+            f"id={aid}",
+            f"email={email}",
+            f"status={status}",
+        ]
+        if http_status:
+            parts.append(f"http={http_status}")
+        if error:
+            parts.append(f"error={error[:300]}")
+        runner._append_log("[inventory:server-push] " + " ".join(parts))
+
+
 def _pipeline_module():
     repo_root = Path(__file__).resolve().parents[3]
     if str(repo_root) not in sys.path:
@@ -490,6 +513,7 @@ def server_push(req: ServerPushRequest, user: str = CurrentUser):
         "missing": sum(1 for r in results if r.get("status") == "missing"),
         "fail": sum(1 for r in results if r.get("status") not in ("ok", "missing")),
     }
+    _log_server_push_failures(results)
     return {"results": results, "summary": summary}
 
 
