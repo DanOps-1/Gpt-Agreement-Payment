@@ -278,7 +278,7 @@ const managerBackfillIds = computed(() => {
 const managerServerPushIds = computed(() => {
   const selected = new Set(managerSelectedIds.value);
   return managerFilteredAccounts.value
-    .filter(a => selected.has(a.id))
+    .filter(a => selected.has(a.id) && a.has_refresh_token)
     .map(a => a.id);
 });
 
@@ -425,7 +425,7 @@ async function backfillManagerSelectedRt() {
 
 async function pushManagerSelectedToServer() {
   const ids = managerServerPushIds.value;
-  if (!ids.length) { message.warning("请选择要推送至导入服务器的账号"); return; }
+  if (!ids.length) { message.warning("请选择有RT的账号推送至导入服务器"); return; }
   if (!manager.value.importUrl.trim()) { message.warning("请填写导入接口 URL"); return; }
   if (!manager.value.importToken.trim()) { message.warning("请填写 Bearer token"); return; }
   if (!(await saveAccountImportServerConfig({ quiet: true }))) return;

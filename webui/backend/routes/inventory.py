@@ -565,20 +565,6 @@ def server_push(req: ServerPushRequest, user: str = CurrentUser):
     for aid in req.ids:
         acc = db.get_registered_account(int(aid))
         if acc:
-            if not str(acc.get("refresh_token") or "").strip():
-                pipeline = _pipeline_module()
-                pay_cfg = _load_pay_cfg()
-                backfill = _do_backfill_rt(acc, pay_cfg, pipeline)
-                if backfill.get("status") == "succeeded":
-                    acc = db.get_registered_account(int(aid))
-                else:
-                    results.append({
-                        "id": aid,
-                        "email": str(acc.get("email") or "").strip().lower(),
-                        "status": "no_rt",
-                        "error": str(backfill.get("reason") or backfill.get("status") or "refresh_token missing"),
-                    })
-                    continue
             accounts.append(acc)
     if accounts:
         with httpx.Client(timeout=30.0, trust_env=False) as client:
