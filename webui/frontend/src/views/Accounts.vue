@@ -131,6 +131,27 @@
       <button class="text-button" type="button" @click="accessCheck = null">关闭</button>
     </section>
 
+    <section v-if="serverPushResult" class="rt-result-band">
+      <div>
+        <strong>服务器推送结果</strong>
+        <span>
+          total={{ serverPushResult.summary.total || 0 }}
+          ok={{ serverPushResult.summary.ok || 0 }}
+          fail={{ serverPushResult.summary.fail || 0 }}
+          missing={{ serverPushResult.summary.missing || 0 }}
+        </span>
+        <div v-if="serverPushFailures.length" class="result-list-inline result-list-errors">
+          <span v-for="item in serverPushFailures.slice(0, 20)" :key="String(item.id || item.email)">
+            {{ item.email || ("id=" + item.id) }}
+            {{ item.status || "fail" }}
+            <template v-if="item.http_status"> http={{ item.http_status }}</template>
+            {{ item.error || item.reason || "" }}
+          </span>
+        </div>
+      </div>
+      <button class="text-button" type="button" @click="serverPushResult = null">关闭</button>
+    </section>
+
     <section class="table-wrap">
       <table class="account-table">
         <thead>
@@ -248,6 +269,11 @@ interface AccessCheckResult {
   summary: Record<string, any>;
 }
 
+interface ServerPushResult {
+  results: Array<Record<string, any>>;
+  summary: Record<string, number>;
+}
+
 interface UsageBadge {
   label: string;
   kind: "ok" | "warn" | "error";
@@ -261,6 +287,7 @@ const inventory = ref<InventoryResponse>({ accounts: [], counts: {} });
 const managerSelectedIds = ref<Set<number>>(new Set());
 const rtCheck = ref<RtCheckResult | null>(null);
 const accessCheck = ref<AccessCheckResult | null>(null);
+const serverPushResult = ref<ServerPushResult | null>(null);
 const accessUsageById = ref<Record<number, Record<string, any>>>({});
 const manager = ref({
   busy: false,
@@ -333,6 +360,9 @@ const planSummary = computed(() => {
     .map(([k, v]) => `${k}:${v}`)
     .join(" ");
 });
+const serverPushFailures = computed(() =>
+  (serverPushResult.value?.results || []).filter(item => item.status !== "ok")
+);
 
 watch(
   () => [manager.value.rtFilter, manager.value.planFilter],
@@ -514,9 +544,19 @@ async function pushManagerSelectedToServer() {
       import_url: manager.value.importUrl.trim(),
       import_token: manager.value.importToken.trim(),
     });
+    serverPushResult.value = r.data || null;
     const s = r.data?.summary || {};
-    message.success(`导入服务器推送完成：ok=${s.ok || 0} fail=${s.fail || 0} missing=${s.missing || 0}`);
-    managerSelectedIds.value = new Set();
+    const failures = (r.data?.results || []).filter((item: any) => item.status !== "ok");
+    const firstFailure = failures[0];
+    const firstError = firstFailure
+      ? `${firstFailure.email || ("id=" + firstFailure.id)} ${firstFailure.status || "fail"} ${firstFailure.http_status ? "http=" + firstFailure.http_status + " " : ""}${firstFailure.error || firstFailure.reason || ""}`.trim()
+      : "";
+    if (failures.length) {
+      message.error(`服务器推送失败 ${failures.length} 个：${firstError}`);
+    } else {
+      message.success(`导入服务器推送完成：ok=${s.ok || 0} fail=${s.fail || 0} missing=${s.missing || 0}`);
+      managerSelectedIds.value = new Set();
+    }
     await refreshInventory();
   } catch (e: any) {
     message.error(`导入服务器推送失败：${e?.response?.data?.detail || e?.message || e}`);
