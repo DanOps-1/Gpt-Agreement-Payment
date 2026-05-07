@@ -227,8 +227,11 @@
             <div class="account-manager-actions">
               <label class="inventory-toolbar-check">
                 <input type="checkbox" :checked="managerAllSelected" @change="toggleManagerSelectAll" />
-                <span>全选本页 ({{ managerSelectedFilteredCount }} / {{ managerFilteredAccounts.length }})</span>
+                <span>选择本页 ({{ managerSelectedPageCount }} / {{ pagedManagerAccounts.length }})</span>
               </label>
+              <TermBtn variant="ghost" :disabled="managerFilteredAccounts.length === 0" @click="selectAllManagerFiltered">
+                全部选择 ({{ managerSelectedFilteredCount }} / {{ managerFilteredAccounts.length }})
+              </TermBtn>
               <div class="account-manager-filters">
                 <label class="manager-filter manager-filter--wide">
                   <span>导入接口</span>
@@ -812,6 +815,13 @@ const managerSelectedFilteredIds = computed(() => {
     .filter(id => selected.has(id));
 });
 const managerSelectedFilteredCount = computed(() => managerSelectedFilteredIds.value.length);
+const managerSelectedPageCount = computed(() => {
+  const selected = new Set(managerSelectedIds.value);
+  return pagedManagerAccounts.value
+    .map(a => a.id)
+    .filter(id => selected.has(id))
+    .length;
+});
 const managerBackfillIds = computed(() => {
   const selected = new Set(managerSelectedIds.value);
   return managerFilteredAccounts.value
@@ -829,9 +839,7 @@ function openAccountManager() {
   accountManager.value.page = 1;
   accountManager.value.rtFilter = "all";
   accountManager.value.planFilter = "all";
-  managerSelectedIds.value = new Set(
-    inventory.value.accounts.filter(a => !a.downloaded).map(a => a.id).filter(Boolean)
-  );
+  managerSelectedIds.value = new Set();
 }
 function closeAccountManager() {
   accountManager.value.open = false;
@@ -878,6 +886,13 @@ function toggleManagerSelectAll() {
     pagedManagerAccounts.value.forEach(a => next.add(a.id));
     managerSelectedIds.value = next;
   }
+}
+function selectAllManagerFiltered() {
+  const next = new Set(managerSelectedIds.value);
+  managerFilteredAccounts.value.forEach(a => {
+    if (a.id) next.add(a.id);
+  });
+  managerSelectedIds.value = next;
 }
 async function downloadManagerSelected() {
   const ids = managerSelectedFilteredIds.value;
