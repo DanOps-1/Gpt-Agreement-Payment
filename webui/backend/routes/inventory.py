@@ -376,6 +376,85 @@ def get_accounts(user: str = CurrentUser):
     return build_accounts_inventory()
 
 
+@router.post("/accounts/rt-check")
+def check_account_rt(req: IdsRequest, user: str = CurrentUser):
+    """Inspect the stored RT/backfill state for selected accounts."""
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="ids 不能为空")
+    if len(req.ids) > 500:
+        raise HTTPException(status_code=400, detail="单次最多 500 个")
+
+    inventory = build_accounts_inventory()
+    accounts_by_id = {
+        int(a["id"]): a
+        for a in inventory.get("accounts", [])
+        if a.get("id") is not None
+    }
+    results: list[dict] = []
+    for raw_id in req.ids:
+        aid = int(raw_id)
+        acc = accounts_by_id.get(aid)
+        if not acc:
+            results.append({
+                "id": aid,
+                "email": "",
+                "status": "missing",
+                "rt_state": "missing",
+                "has_refresh_token": False,
+                "can_backfill_rt": False,
+                "message": "account not found",
+            })
+            continue
+        rt_state = str(acc.get("rt_state") or "missing")
+        has_rt = bool(acc.get("has_refresh_token"))
+        cooldown = int(acc.get("oauth_cooldown_remaining_s") or 0)
+        reason = str(acc.get("oauth_fail_reason") or "")
+        if has_rt:
+            message = "refresh_token exists"
+        elif rt_state == "cooldown":
+            message = f"RT backfill cooldown: {cooldown}s"
+        elif reason:
+            message = reason
+        elif rt_state == "retryable":
+            message = "retryable"
+        elif rt_state == "dead":
+            message = "marked dead"
+        else:
+            message = "refresh_token missing"
+        results.append({
+            "id": aid,
+            "email": acc.get("email") or "",
+            "status": rt_state,
+            "rt_state": rt_state,
+            "has_refresh_token": has_rt,
+            "can_backfill_rt": bool(acc.get("can_backfill_rt")),
+            "oauth_status": acc.get("oauth_status") or "",
+            "oauth_fail_reason": reason,
+            "oauth_updated_at": acc.get("oauth_updated_at") or "",
+            "oauth_cooldown_remaining_s": cooldown,
+            "message": message,
+        })
+
+    summary = {
+        "total": len(results),
+        "has_rt": sum(1 for r in results if r.get("has_refresh_token")),
+        "missing": sum(1 for r in results if r.get("rt_state") == "missing"),
+        "retryable": sum(1 for r in results if r.get("rt_state") == "retryable"),
+        "cooldown": sum(1 for r in results if r.get("rt_state") == "cooldown"),
+        "dead": sum(1 for r in results if r.get("rt_state") == "dead"),
+        "oauth_succeeded": sum(1 for r in results if r.get("rt_state") == "oauth_succeeded"),
+        "not_found": sum(1 for r in results if not r.get("email")),
+    }
+    runner._append_log(
+        "[inventory:rt-check] "
+        f"total={summary['total']} has_rt={summary['has_rt']} "
+        f"missing={summary['missing']} retryable={summary['retryable']} "
+        f"cooldown={summary['cooldown']} dead={summary['dead']} "
+        f"not_found={summary['not_found']}"
+    )
+    return {"results": results, "summary": summary}
+
+
 @router.post("/accounts/check")
 def check_accounts(req: CheckRequest, user: str = CurrentUser):
     """Probe each account's session via OpenAI's /api/auth/session.

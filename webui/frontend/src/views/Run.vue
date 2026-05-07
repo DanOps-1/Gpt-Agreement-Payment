@@ -835,11 +835,7 @@ const managerServerPushIds = computed(() => {
     .map(a => a.id);
 });
 function openAccountManager() {
-  accountManager.value.open = true;
-  accountManager.value.page = 1;
-  accountManager.value.rtFilter = "all";
-  accountManager.value.planFilter = "all";
-  managerSelectedIds.value = new Set();
+  router.push("/accounts");
 }
 function closeAccountManager() {
   accountManager.value.open = false;
