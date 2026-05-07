@@ -86,7 +86,30 @@ LINK_RETRY_SLEEP_S = 12.0  # Midtrans 需要冷却 ~10s 才会让 406 → 201（
 LINK_429_RETRY_LIMIT = 30
 LINK_429_RETRY_SLEEP_MIN_S = 2.0
 LINK_429_RETRY_SLEEP_MAX_S = 3.0
+TRANSIENT_REQUEST_RETRY_LIMIT = 3
+TRANSIENT_REQUEST_RETRY_MIN_S = 1.0
+TRANSIENT_REQUEST_RETRY_MAX_S = 2.5
 DEFAULT_OTP_REGEX = r"(?<!\d)(\d{6})(?!\d)"
+
+
+def _looks_transient_request_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    name = type(exc).__name__.lower()
+    transient_words = (
+        "curlerror",
+        "sslerror",
+        "connectionerror",
+        "connect error",
+        "connection reset",
+        "connection aborted",
+        "connection refused",
+        "timed out",
+        "timeout",
+        "temporarily unavailable",
+        "remote end closed",
+        "invalid library",
+    )
+    return any(word in name or word in text for word in transient_words)
 
 
 def _phone_digits(value: Any) -> str:
@@ -309,6 +332,27 @@ class GoPayCharger:
             except Exception:
                 pass
 
+    def _request_ext(self, method: str, url: str, *, retry_label: str = "", **kwargs: Any):
+        last_exc: Exception | None = None
+        for attempt in range(1, TRANSIENT_REQUEST_RETRY_LIMIT + 1):
+            try:
+                return getattr(self.ext, method.lower())(url, **kwargs)
+            except Exception as exc:
+                if not _looks_transient_request_error(exc) or attempt >= TRANSIENT_REQUEST_RETRY_LIMIT:
+                    raise
+                last_exc = exc
+                sleep_s = random.uniform(TRANSIENT_REQUEST_RETRY_MIN_S, TRANSIENT_REQUEST_RETRY_MAX_S)
+                label = retry_label or url.split("?", 1)[0]
+                self.log(
+                    f"[gopay] transient request error at {label}: {type(exc).__name__}: "
+                    f"{str(exc)[:160]} - retry {attempt}/{TRANSIENT_REQUEST_RETRY_LIMIT - 1} "
+                    f"after {sleep_s:.1f}s"
+                )
+                time.sleep(sleep_s)
+        if last_exc:
+            raise last_exc
+        raise GoPayError(f"request retry exhausted: {method} {url}")
+
     # ───── Step 1-4: ChatGPT/Stripe checkout ─────
 
     def _chatgpt_create_checkout(self) -> str:
@@ -492,10 +536,12 @@ class GoPayCharger:
             ),
         }
         while time.time() < deadline:
-            r = self.ext.get(
+            r = self._request_ext(
+                "get",
                 f"https://api.stripe.com/v1/payment_pages/{cs_id}",
                 params=params,
                 timeout=DEFAULT_TIMEOUT,
+                retry_label="stripe payment_pages get",
             )
             if r.status_code == 200:
                 payload = r.json() or {}
@@ -522,7 +568,13 @@ class GoPayCharger:
         """GET pm-redirects.stripe.com/authorize/... → 302 to midtrans.
         Extract snap_token from the Location header.
         """
-        r = self.ext.get(pm_url, allow_redirects=False, timeout=DEFAULT_TIMEOUT)
+        r = self._request_ext(
+            "get",
+            pm_url,
+            allow_redirects=False,
+            timeout=DEFAULT_TIMEOUT,
+            retry_label="stripe pm-redirect authorize",
+        )
         if r.status_code not in (301, 302, 303, 307, 308):
             raise GoPayError(f"pm-redirects: expected redirect, got {r.status_code}")
         loc = r.headers.get("Location", "")
@@ -533,7 +585,8 @@ class GoPayCharger:
 
     def _midtrans_load_transaction(self, snap_token: str):
         """Optional: load transaction page so any session cookies get set."""
-        r = self.ext.get(
+        r = self._request_ext(
+            "get",
             f"https://app.midtrans.com/snap/v1/transactions/{snap_token}",
             headers={
                 "x-source": "snap",
@@ -541,6 +594,7 @@ class GoPayCharger:
                 "x-source-version": "2.3.0",
             },
             timeout=DEFAULT_TIMEOUT,
+            retry_label="midtrans load transaction",
         )
         r.raise_for_status()
         body = r.json()
@@ -744,12 +798,21 @@ class GoPayCharger:
     def _gopay_payment_validate(self, charge_ref: str):
         # midtrans 创建 charge 后 GoPay 后端要数秒才能 fetch；轮询直到 ready
         for i in range(8):
-            r = self.ext.get(
-                f"https://gwa.gopayapi.com/v1/payment/validate?reference_id={charge_ref}",
-                headers={"Origin": "https://merchants-gws-app.gopayapi.com",
-                         "Referer": "https://merchants-gws-app.gopayapi.com/"},
-                timeout=DEFAULT_TIMEOUT,
-            )
+            try:
+                r = self._request_ext(
+                    "get",
+                    f"https://gwa.gopayapi.com/v1/payment/validate?reference_id={charge_ref}",
+                    headers={"Origin": "https://merchants-gws-app.gopayapi.com",
+                             "Referer": "https://merchants-gws-app.gopayapi.com/"},
+                    timeout=DEFAULT_TIMEOUT,
+                    retry_label="gopay payment validate",
+                )
+            except Exception as exc:
+                if not _looks_transient_request_error(exc):
+                    raise
+                self.log(f"[gopay] payment/validate transient error after retries: {type(exc).__name__}: {str(exc)[:160]}")
+                time.sleep(1.5)
+                continue
             if r.status_code == 200 and r.json().get("success"):
                 return
             time.sleep(1.5)
