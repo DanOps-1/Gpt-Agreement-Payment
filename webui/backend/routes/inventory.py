@@ -494,6 +494,7 @@ def check_oauth_usage(req: CheckRequest, user: str = CurrentUser):
         "invalid": sum(1 for r in results if r.get("status") in ("invalid", "expired", "forbidden")),
         "quota_limited": sum(1 for r in results if r.get("status") == "quota_limited"),
         "no_access_token": sum(1 for r in results if r.get("status") == "no_access_token"),
+        "proxy_required": sum(1 for r in results if r.get("status") == "proxy_required"),
         "unknown": sum(1 for r in results if r.get("status") == "unknown"),
         "missing": sum(1 for r in results if r.get("status") == "missing"),
     }
@@ -506,7 +507,7 @@ def check_oauth_usage(req: CheckRequest, user: str = CurrentUser):
         "[inventory:oauth-usage-check] "
         f"total={summary['total']} valid={summary['valid']} ok={summary['ok']} "
         f"quota_limited={summary['quota_limited']} invalid={summary['invalid']} "
-        f"no_access_token={summary['no_access_token']} unknown={summary['unknown']} "
+        f"no_access_token={summary['no_access_token']} proxy_required={summary['proxy_required']} unknown={summary['unknown']} "
         f"plans={json.dumps(plans, ensure_ascii=False, separators=(',', ':'))}"
     )
     return {"results": results, "summary": summary}

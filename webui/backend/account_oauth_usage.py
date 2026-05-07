@@ -6,11 +6,13 @@ import json
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Iterable, Optional
 
 import httpx
 
 from .db import get_db
+from . import settings as s
 
 
 _USER_AGENT = "codex_cli_rs/0.118.0 (Windows 10.0; x86_64) CodexApp"
@@ -27,7 +29,63 @@ def _gost_alive(port: int = 18898) -> bool:
 
 
 def _client(timeout: float, proxy: Optional[str]) -> httpx.Client:
-    return httpx.Client(timeout=timeout, follow_redirects=False, proxy=proxy)
+    return httpx.Client(timeout=timeout, follow_redirects=False, proxy=proxy, trust_env=False)
+
+
+def _proxy_url_from_cfg(proxy_cfg: object) -> str:
+    if not proxy_cfg:
+        return ""
+    if isinstance(proxy_cfg, str):
+        return proxy_cfg.strip()
+    if not isinstance(proxy_cfg, dict):
+        return ""
+    host = str(proxy_cfg.get("host") or proxy_cfg.get("server") or "").strip()
+    if not host:
+        return ""
+    scheme = str(proxy_cfg.get("type") or proxy_cfg.get("scheme") or "http").strip() or "http"
+    port = proxy_cfg.get("port")
+    user = str(proxy_cfg.get("user") or proxy_cfg.get("username") or "").strip()
+    pwd = str(proxy_cfg.get("pass") or proxy_cfg.get("password") or "").strip()
+    auth = ""
+    if user:
+        from urllib.parse import quote
+        auth = quote(user, safe="") + (":" + quote(pwd, safe="") if pwd else "") + "@"
+    return f"{scheme}://{auth}{host}" + (f":{port}" if port else "")
+
+
+def _configured_proxy() -> tuple[str, str]:
+    """Return (proxy_url, source). The check path must not silently go direct."""
+    try:
+        cfg_path = Path(s.PAY_CONFIG_PATH)
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        cfg = {}
+
+    webshare = cfg.get("webshare") if isinstance(cfg.get("webshare"), dict) else {}
+    if webshare and webshare.get("enabled", False):
+        port = int(webshare.get("gost_listen_port") or 18898)
+        if _gost_alive(port):
+            return f"socks5://127.0.0.1:{port}", f"webshare:gost:{port}"
+        return "", f"webshare:gost:{port}:not_listening"
+
+    proxy = _proxy_url_from_cfg(cfg.get("proxy")) if isinstance(cfg, dict) else ""
+    if proxy:
+        if proxy.startswith("socks5://"):
+            proxy = "socks5h://" + proxy[len("socks5://"):]
+        return proxy, "pay_config.proxy"
+
+    proxies_cfg = cfg.get("proxies") if isinstance(cfg.get("proxies"), dict) else {}
+    proxy_list = proxies_cfg.get("list") if isinstance(proxies_cfg.get("list"), list) else []
+    if proxies_cfg.get("enabled") and proxy_list:
+        proxy = _proxy_url_from_cfg(proxy_list[0])
+        if proxy:
+            if proxy.startswith("socks5://"):
+                proxy = "socks5h://" + proxy[len("socks5://"):]
+            return proxy, "pay_config.proxies.list[0]"
+
+    if _gost_alive(18898):
+        return "socks5://127.0.0.1:18898", "gost:18898"
+    return "", "not_configured"
 
 
 def _headers(access_token: str) -> dict[str, str]:
@@ -135,7 +193,8 @@ def _usage_message(data: object, windows: list[dict]) -> str:
 
 
 def inspect_account_oauth_usage(account: dict, *, timeout_s: float = 10.0,
-                                use_proxy: bool = True) -> dict:
+                                proxy: Optional[str] = None,
+                                proxy_source: str = "") -> dict:
     aid = int(account.get("id") or 0)
     email = str(account.get("email") or "").strip().lower()
     access_token = str(account.get("access_token") or "").strip()
@@ -160,24 +219,23 @@ def inspect_account_oauth_usage(account: dict, *, timeout_s: float = 10.0,
             "message": "access_token jwt expired",
         }
 
-    proxy = "socks5://127.0.0.1:18898" if use_proxy and _gost_alive() else None
     headers = _headers(access_token)
     try:
         with _client(timeout_s, proxy) as c:
             me = c.get(_ME_URL, headers=headers)
     except httpx.TimeoutException:
-        return {"id": aid, "email": email, "status": "unknown", "oauth_valid": False, "plan": plan, "message": "me timeout"}
+        return {"id": aid, "email": email, "status": "unknown", "oauth_valid": False, "plan": plan, "proxy": proxy_source, "message": "me timeout"}
     except (httpx.NetworkError, httpx.ProxyError) as e:
-        return {"id": aid, "email": email, "status": "unknown", "oauth_valid": False, "plan": plan, "message": f"me {type(e).__name__}"}
+        return {"id": aid, "email": email, "status": "unknown", "oauth_valid": False, "plan": plan, "proxy": proxy_source, "message": f"me {type(e).__name__}"}
     except Exception as e:
-        return {"id": aid, "email": email, "status": "unknown", "oauth_valid": False, "plan": plan, "message": f"me {type(e).__name__}: {str(e)[:80]}"}
+        return {"id": aid, "email": email, "status": "unknown", "oauth_valid": False, "plan": plan, "proxy": proxy_source, "message": f"me {type(e).__name__}: {str(e)[:80]}"}
 
     if me.status_code == 401:
-        return {"id": aid, "email": email, "status": "invalid", "oauth_valid": False, "plan": plan, "message": "me http 401"}
+        return {"id": aid, "email": email, "status": "invalid", "oauth_valid": False, "plan": plan, "proxy": proxy_source, "message": "me http 401"}
     if me.status_code == 403:
-        return {"id": aid, "email": email, "status": "forbidden", "oauth_valid": False, "plan": plan, "message": "me http 403"}
+        return {"id": aid, "email": email, "status": "forbidden", "oauth_valid": False, "plan": plan, "proxy": proxy_source, "message": "me http 403"}
     if me.status_code != 200:
-        return {"id": aid, "email": email, "status": "unknown", "oauth_valid": False, "plan": plan, "message": f"me http {me.status_code}"}
+        return {"id": aid, "email": email, "status": "unknown", "oauth_valid": False, "plan": plan, "proxy": proxy_source, "message": f"me http {me.status_code}"}
 
     try:
         data_me = me.json()
@@ -189,14 +247,14 @@ def inspect_account_oauth_usage(account: dict, *, timeout_s: float = 10.0,
         with _client(timeout_s, proxy) as c:
             usage = c.get(_CODEX_USAGE_URL, headers=headers)
     except httpx.TimeoutException:
-        return {"id": aid, "email": email, "status": "valid", "oauth_valid": True, "plan": plan, "message": "oauth valid; usage timeout"}
+        return {"id": aid, "email": email, "status": "valid", "oauth_valid": True, "plan": plan, "proxy": proxy_source, "message": "oauth valid; usage timeout"}
     except (httpx.NetworkError, httpx.ProxyError) as e:
-        return {"id": aid, "email": email, "status": "valid", "oauth_valid": True, "plan": plan, "message": f"oauth valid; usage {type(e).__name__}"}
+        return {"id": aid, "email": email, "status": "valid", "oauth_valid": True, "plan": plan, "proxy": proxy_source, "message": f"oauth valid; usage {type(e).__name__}"}
     except Exception as e:
-        return {"id": aid, "email": email, "status": "valid", "oauth_valid": True, "plan": plan, "message": f"oauth valid; usage {type(e).__name__}: {str(e)[:80]}"}
+        return {"id": aid, "email": email, "status": "valid", "oauth_valid": True, "plan": plan, "proxy": proxy_source, "message": f"oauth valid; usage {type(e).__name__}: {str(e)[:80]}"}
 
     if usage.status_code == 401:
-        return {"id": aid, "email": email, "status": "invalid", "oauth_valid": False, "plan": plan, "message": "usage http 401"}
+        return {"id": aid, "email": email, "status": "invalid", "oauth_valid": False, "plan": plan, "proxy": proxy_source, "message": "usage http 401"}
     if usage.status_code == 429:
         try:
             body = usage.json()
@@ -209,6 +267,7 @@ def inspect_account_oauth_usage(account: dict, *, timeout_s: float = 10.0,
             "status": "quota_limited",
             "oauth_valid": True,
             "plan": plan,
+            "proxy": proxy_source,
             "message": str((error or {}).get("message") or "usage limit reached")[:300],
             "resets_at": (error or {}).get("resets_at"),
             "resets_in_seconds": (error or {}).get("resets_in_seconds"),
@@ -220,6 +279,7 @@ def inspect_account_oauth_usage(account: dict, *, timeout_s: float = 10.0,
             "status": "valid",
             "oauth_valid": True,
             "plan": plan,
+            "proxy": proxy_source,
             "message": f"oauth valid; usage http {usage.status_code}",
         }
 
@@ -236,17 +296,31 @@ def inspect_account_oauth_usage(account: dict, *, timeout_s: float = 10.0,
         "status": "ok",
         "oauth_valid": True,
         "plan": plan,
+        "proxy": proxy_source,
         "message": _usage_message(data, windows),
         "usage_windows": windows,
     }
 
 
 def inspect_accounts_oauth_usage(account_ids: Iterable[int], *, max_workers: int = 3,
-                                 timeout_s: float = 10.0, use_proxy: bool = True) -> list[dict]:
+                                 timeout_s: float = 10.0, require_proxy: bool = True) -> list[dict]:
     ids = [int(i) for i in account_ids if str(i).strip().lstrip("-").isdigit()]
     if not ids:
         return []
     db = get_db()
+    proxy, proxy_source = _configured_proxy()
+    if require_proxy and not proxy:
+        return [
+            {
+                "id": aid,
+                "email": (db.get_registered_account(aid).get("email") or "") if db.get_registered_account(aid) else "",
+                "status": "proxy_required",
+                "oauth_valid": False,
+                "proxy": proxy_source,
+                "message": "proxy is required for OAuth usage check",
+            }
+            for aid in ids
+        ]
     workers = max(1, min(int(max_workers), len(ids), 8))
     results: list[dict] = []
 
@@ -254,7 +328,12 @@ def inspect_accounts_oauth_usage(account_ids: Iterable[int], *, max_workers: int
         account = db.get_registered_account(aid)
         if not account:
             return {"id": aid, "email": "", "status": "missing", "oauth_valid": False, "message": "account not found"}
-        result = inspect_account_oauth_usage(account, timeout_s=timeout_s, use_proxy=use_proxy)
+        result = inspect_account_oauth_usage(
+            account,
+            timeout_s=timeout_s,
+            proxy=proxy,
+            proxy_source=proxy_source,
+        )
         status = "valid" if result.get("oauth_valid") else "invalid"
         if result.get("status") in ("unknown", "valid"):
             status = "unknown" if not result.get("oauth_valid") else "valid"

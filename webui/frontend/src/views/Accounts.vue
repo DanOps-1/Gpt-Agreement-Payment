@@ -120,6 +120,7 @@
           quota={{ accessCheck.summary.quota_limited || 0 }}
           invalid={{ accessCheck.summary.invalid || 0 }}
           no_at={{ accessCheck.summary.no_access_token || 0 }}
+          proxy_required={{ accessCheck.summary.proxy_required || 0 }}
         </span>
         <span v-if="planSummary" class="result-extra">plan: {{ planSummary }}</span>
         <div class="result-list-inline">
@@ -430,7 +431,7 @@ async function detectSelectedAccessToken() {
     });
     accessCheck.value = r.data || null;
     const s = r.data?.summary || {};
-    message.success(`AccessToken检测完成：valid=${s.valid || 0} ok=${s.ok || 0} quota=${s.quota_limited || 0} invalid=${s.invalid || 0} no_at=${s.no_access_token || 0}`);
+    message.success(`AccessToken检测完成：valid=${s.valid || 0} ok=${s.ok || 0} quota=${s.quota_limited || 0} invalid=${s.invalid || 0} no_at=${s.no_access_token || 0} proxy_required=${s.proxy_required || 0}`);
     await refreshInventory();
   } catch (e: any) {
     message.error(`AccessToken检测失败：${e?.response?.data?.detail || e?.message || e}`);
