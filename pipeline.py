@@ -1574,6 +1574,10 @@ def _norm_email(value: str) -> str:
     return str(value or "").strip().lower()
 
 
+_PAY_ONLY_CLAIM_LOCK = threading.Lock()
+_PAY_ONLY_IN_FLIGHT_EMAILS: set[str] = set()
+
+
 def _paid_or_consumed_emails() -> set[str]:
     """Emails that should not be retried by --pay-only.
 
@@ -1609,13 +1613,14 @@ def _paid_or_consumed_emails() -> set[str]:
     return consumed
 
 
-def _select_recent_registered_account_for_pay_only() -> dict | None:
+def _select_recent_registered_account_for_pay_only(exclude_emails=None) -> dict | None:
     """Pick the newest registered account that has not already succeeded.
 
     This makes `--pay-only` useful for the common case where registration
     completed but payment was blocked by captcha/OTP/DataDome/etc.  The selected
     account is returned with its original session/access/device credentials.
     """
+    exclude = {_norm_email(e) for e in (exclude_emails or set()) if _norm_email(e)}
     accounts = _load_registered_accounts()
     if not accounts:
         return None
@@ -1629,6 +1634,8 @@ def _select_recent_registered_account_for_pay_only() -> dict | None:
         if not email or email in seen:
             continue
         seen.add(email)
+        if email in exclude:
+            continue
         if email in consumed:
             continue
         if not (acc.get("session_token") or acc.get("access_token")):
@@ -1637,6 +1644,26 @@ def _select_recent_registered_account_for_pay_only() -> dict | None:
         selected["email"] = email
         return selected
     return None
+
+
+def _claim_recent_registered_account_for_pay_only() -> dict | None:
+    with _PAY_ONLY_CLAIM_LOCK:
+        account = _select_recent_registered_account_for_pay_only(_PAY_ONLY_IN_FLIGHT_EMAILS)
+        if account:
+            email = _norm_email(account.get("email"))
+            if email:
+                _PAY_ONLY_IN_FLIGHT_EMAILS.add(email)
+        return account
+
+
+def _release_pay_only_account_claim(account: dict | None) -> None:
+    if not account:
+        return
+    email = _norm_email(account.get("email"))
+    if not email:
+        return
+    with _PAY_ONLY_CLAIM_LOCK:
+        _PAY_ONLY_IN_FLIGHT_EMAILS.discard(email)
 
 
 def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
@@ -1653,7 +1680,7 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
     This preserves the old config-token path while preventing freshly
     registered-but-unpaid accounts from being wasted.
     """
-    account = _select_recent_registered_account_for_pay_only() if prefer_recent else None
+    account = _claim_recent_registered_account_for_pay_only() if prefer_recent else None
     email = _norm_email(account.get("email")) if account else ""
     try:
         card_cfg = _read_card_cfg(card_config_path)
@@ -1733,6 +1760,8 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
             )
         _append_result(record)
         raise
+    finally:
+        _release_pay_only_account_claim(account)
 
 
 # ──────────────────────────────────────────────

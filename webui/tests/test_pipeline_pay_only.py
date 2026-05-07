@@ -77,6 +77,33 @@ def test_pay_only_treats_already_paid_error_as_consumed(tmp_path, monkeypatch):
     assert selected["email"] == "older@example.com"
 
 
+def test_pay_only_claim_skips_in_flight_email(tmp_path, monkeypatch):
+    db = _reset_db(tmp_path, monkeypatch)
+    pipeline._PAY_ONLY_IN_FLIGHT_EMAILS.clear()
+
+    db.add_registered_account({"email": "older@example.com", "session_token": "sess-older", "access_token": ""})
+    db.add_registered_account({"email": "latest@example.com", "session_token": "sess-latest", "access_token": ""})
+
+    first = pipeline._claim_recent_registered_account_for_pay_only()
+    second = pipeline._claim_recent_registered_account_for_pay_only()
+
+    try:
+        assert first is not None
+        assert second is not None
+        assert first["email"] == "latest@example.com"
+        assert second["email"] == "older@example.com"
+    finally:
+        pipeline._release_pay_only_account_claim(first)
+        pipeline._release_pay_only_account_claim(second)
+
+    again = pipeline._claim_recent_registered_account_for_pay_only()
+    try:
+        assert again is not None
+        assert again["email"] == "latest@example.com"
+    finally:
+        pipeline._release_pay_only_account_claim(again)
+
+
 def test_pay_only_success_imports_cpa_with_plus_tag(tmp_path, monkeypatch):
     db = _reset_db(tmp_path, monkeypatch)
     card_config = tmp_path / "config.paypal.json"
