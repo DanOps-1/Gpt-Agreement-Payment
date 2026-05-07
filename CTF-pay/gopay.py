@@ -143,6 +143,23 @@ def _safe_headers_for_log(headers: Any) -> dict[str, str]:
     return out
 
 
+def _safe_all_headers_for_log(headers: Any) -> dict[str, str]:
+    out: dict[str, str] = {}
+    sensitive = ("authorization", "cookie", "set-cookie", "x-api-key")
+    try:
+        items = headers.items()
+    except Exception:
+        return out
+    for key, value in items:
+        k = str(key)
+        lk = k.lower()
+        if any(s in lk for s in sensitive):
+            out[k] = "<redacted>"
+        else:
+            out[k] = str(value)[:300]
+    return out
+
+
 def _phone_digits(value: Any) -> str:
     return re.sub(r"\D", "", str(value or ""))
 
@@ -655,6 +672,8 @@ class GoPayCharger:
             "Origin": "https://app.midtrans.com",
             "Referer": f"https://app.midtrans.com/snap/v4/redirection/{snap_token}",
         }
+        effective_headers = dict(getattr(self.ext, "headers", {}) or {})
+        effective_headers.update(headers)
         last_err: Optional[str] = None
         rate_limit_attempt = 0
         attempt = 0
@@ -702,8 +721,12 @@ class GoPayCharger:
                 rate_limit_attempt += 1
                 last_err = f"429 {r.text[:120]}"
                 self.log(
-                    "[gopay] midtrans linking 429 headers="
-                    + json.dumps(_safe_headers_for_log(r.headers), ensure_ascii=False, separators=(",", ":"))
+                    "[gopay] midtrans linking 429 request_headers="
+                    + json.dumps(_safe_all_headers_for_log(effective_headers), ensure_ascii=False, separators=(",", ":"))
+                )
+                self.log(
+                    "[gopay] midtrans linking 429 response_headers="
+                    + json.dumps(_safe_all_headers_for_log(r.headers), ensure_ascii=False, separators=(",", ":"))
                 )
                 if rate_limit_attempt > LINK_429_RETRY_LIMIT:
                     raise GoPayError(f"midtrans linking 429 exhausted retries: {last_err}")
