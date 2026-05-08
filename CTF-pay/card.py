@@ -8509,6 +8509,10 @@ def run(
                             session_id=session_id,
                         )
                         init_ctx["gopay_result"] = gopay_result
+                        if isinstance(gopay_result, dict) and gopay_result.get("state") == "qr_ready":
+                            init_ctx["gopay_qr_result"] = gopay_result
+                            _log("      [gopay-qr] 二维码已生成，跳过支付结果 poll")
+                            break
                         _log("      GoPay 授权 + 扣款完成，继续 poll 结果 ...")
                     else:
                         success = _handle_paypal_redirect(
@@ -8631,6 +8635,11 @@ def run(
                                         session_id=session_id,
                                     )
                                     init_ctx["gopay_result"] = gopay_result
+                                    if isinstance(gopay_result, dict) and gopay_result.get("state") == "qr_ready":
+                                        init_ctx["gopay_qr_result"] = gopay_result
+                                        _log("      [gopay-qr] 二维码已生成，跳过支付结果 poll")
+                                        got_redirect = True
+                                        break
                                     got_redirect = True
                                     break
                                 success = _handle_paypal_redirect(
@@ -8768,6 +8777,11 @@ def run(
         _log(f"{'='*60}\n")
         _log(f"\n日志已保存到: {LOG_FILE}")
         return terminal_result
+
+    gopay_qr_result = init_ctx.get("gopay_qr_result")
+    if isinstance(gopay_qr_result, dict):
+        _log(f"\n日志已保存到: {LOG_FILE}")
+        return gopay_qr_result
 
     # Step 6
     with _http_session_stage_proxy(http, stage_proxy_cfg, "poll"):

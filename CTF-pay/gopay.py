@@ -1209,6 +1209,7 @@ class GoPayCharger:
         artifact = self._save_qr_artifact(qr_info)
         payload = str(qr_info.get("payload") or "")
         kind = str(qr_info.get("payload_type") or "")
+        charge_mode = str(qr_info.get("charge_mode") or "")
         if artifact:
             self.log(f"[gopay-qr] 二维码已生成: {artifact}")
             print(f"GOPAY_QR_FILE={artifact}", flush=True)
@@ -1217,12 +1218,13 @@ class GoPayCharger:
         elif payload:
             print(f"GOPAY_QR_URL={payload}", flush=True)
         if cs_id:
-            self.log(f"[gopay-qr] 请扫码完成支付，最多等待 {int(self.qr_wait_timeout)}s ...")
+            self.log(f"[gopay-qr] 已发起 {charge_mode or 'qris'} charge，请扫码完成支付，最多等待 {int(self.qr_wait_timeout)}s ...")
             result = self._chatgpt_verify(cs_id, timeout_s=self.qr_wait_timeout)
             result.update({
                 "snap_token": snap_token,
                 "qr_payload_type": kind,
                 "qr_artifact": artifact,
+                "qr_charge_mode": charge_mode,
             })
             return result
         return {
@@ -1230,6 +1232,7 @@ class GoPayCharger:
             "snap_token": snap_token,
             "qr_payload_type": kind,
             "qr_artifact": artifact,
+            "qr_charge_mode": charge_mode,
         }
 
     def _run_midtrans_and_gopay(self, snap_token: str, cs_id: str) -> dict:

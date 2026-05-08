@@ -356,6 +356,41 @@ def test_qr_payment_mode_does_not_require_gopay_account():
     assert charger.qr_wait_timeout == 120
 
 
+def test_qr_payment_uses_qris_charge(monkeypatch):
+    logs: list[str] = []
+    charger = gopay.GoPayCharger(
+        requests.Session(),
+        {
+            "qr_payment": True,
+            "country_code": "62",
+            "phone_number": "81234567890",
+            "pin": "123456",
+        },
+        otp_provider=lambda: "000000",
+        log=logs.append,
+    )
+
+    monkeypatch.setattr(charger, "_midtrans_load_transaction", lambda snap_token: None)
+    monkeypatch.setattr(
+        charger,
+        "_midtrans_create_qr_charge",
+        lambda snap_token: {
+            "payload": "000201010212QRISDATA",
+            "payload_type": "qr_string",
+            "charge_mode": "qris",
+            "snap_token": snap_token,
+        },
+    )
+    monkeypatch.setattr(charger, "_save_qr_artifact", lambda qr_info: "output/gopay_qr/test.png")
+
+    result = charger._run_midtrans_qr(SNAP_TOKEN, "")
+
+    assert result["state"] == "qr_ready"
+    assert result["qr_charge_mode"] == "qris"
+    assert result["qr_payload_type"] == "qr_string"
+    assert any("二维码已生成" in line for line in logs)
+
+
 def test_extract_qr_payload_from_midtrans_actions():
     charger = build_charger()
 

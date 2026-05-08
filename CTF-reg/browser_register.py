@@ -713,7 +713,7 @@ def browser_register(cfg, mail_provider) -> dict:
             arrived = False
             last_url = ""
             stagnant_url_since = 0
-            for i in range(120):
+            for i in range(15):
                 time.sleep(1)
                 cur = page.url
                 if cur != last_url:
@@ -756,7 +756,7 @@ def browser_register(cfg, mail_provider) -> dict:
                         stagnant_url_since = i
                 if (
                     "auth.openai.com/api/accounts/authorize" in cur
-                    and i - stagnant_url_since >= 15
+                    and i - stagnant_url_since >= 5
                 ):
                     has_continue = False
                     for sel in ['button:has-text("Continue")', 'button:has-text("Next")',
@@ -770,12 +770,12 @@ def browser_register(cfg, mail_provider) -> dict:
                             pass
                     if not has_continue:
                         logger.warning(
-                            f"[browser-reg] authorize URL 15s no change and no continue button, fail fast: {cur[:120]}"
+                            f"[browser-reg] authorize URL 5s no change and no continue button, fail fast: {cur[:120]}"
                         )
                         break
             if not arrived:
                 page.screenshot(path="/tmp/browser_reg_no_chatgpt.png")
-                raise RuntimeError(f"未跳转回 chatgpt.com，当前: {page.url[:120]}")
+                raise RuntimeError(f"未在 15s 内拿到 chatgpt.com session，当前: {page.url[:120]}")
 
             # [8] 等 JS 初始化完成，取 access_token
             time.sleep(5)
