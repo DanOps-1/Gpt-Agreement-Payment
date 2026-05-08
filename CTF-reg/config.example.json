@@ -2,7 +2,14 @@
   "mail": {
     "_comment": "OTP 走 Cloudflare Email Worker → KV（见 scripts/setup_cf_email_worker.py）；CF 凭证存 SQLite runtime_meta[secrets]，不在这里",
     "catch_all_domain": "example.com",
-    "catch_all_domains": ["example.com"]
+    "catch_all_domains": ["example.com"],
+    "provider": "cf",
+    "_outlook_comment": "如需改用 Outlook：provider=outlook，并提供 outlook_accounts_path；每行格式 邮箱----密码----client_id----refresh_token",
+    "outlook_source": "",
+    "outlook_accounts_path": "",
+    "outlook_accounts": [],
+    "outlook_poll_interval_s": 3,
+    "outlook_folder": "Inbox"
   },
   "card": {
     "number": "",

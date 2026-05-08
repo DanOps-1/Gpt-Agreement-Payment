@@ -67,6 +67,42 @@
       </label>
     </section>
 
+    <section class="outlook-band">
+      <div class="outlook-head">
+        <div>
+          <strong>Outlook 邮箱池</strong>
+          <span>
+            total={{ outlookPool.total || 0 }}
+            available={{ outlookPool.available || 0 }}
+            reserved={{ outlookPool.reserved || 0 }}
+            used={{ outlookPool.used || 0 }}
+            failed={{ outlookPool.failed || 0 }}
+          </span>
+        </div>
+        <TermBtn variant="ghost" :loading="outlookPool.loading" @click="loadOutlookPoolStats">刷新</TermBtn>
+      </div>
+      <textarea
+        v-model="outlookPool.text"
+        rows="4"
+        placeholder="每行一个：邮箱----密码----client_id----refresh_token"
+      />
+      <div class="outlook-actions">
+        <label class="select-page">
+          <input type="checkbox" v-model="outlookPool.enable" />
+          <span>导入后启用 Outlook 注册邮件</span>
+        </label>
+        <div class="outlook-buttons">
+          <label class="file-btn">
+            读取文件
+            <input type="file" accept=".txt,.csv,text/plain" @change="loadOutlookPoolFile" />
+          </label>
+          <TermBtn :loading="outlookPool.importing" :disabled="!outlookPool.text.trim()" @click="importOutlookPool">
+            导入到数据库
+          </TermBtn>
+        </div>
+      </div>
+    </section>
+
     <section class="action-band">
       <label class="select-page">
         <input type="checkbox" :checked="managerAllSelected" @change="toggleManagerSelectAll" />
@@ -289,6 +325,17 @@ const rtCheck = ref<RtCheckResult | null>(null);
 const accessCheck = ref<AccessCheckResult | null>(null);
 const serverPushResult = ref<ServerPushResult | null>(null);
 const accessUsageById = ref<Record<number, Record<string, any>>>({});
+const outlookPool = ref({
+  text: "",
+  enable: true,
+  loading: false,
+  importing: false,
+  total: 0,
+  available: 0,
+  reserved: 0,
+  used: 0,
+  failed: 0,
+});
 const manager = ref({
   busy: false,
   savingConfig: false,
@@ -375,8 +422,59 @@ watch(managerPageCount, (count) => {
 });
 
 onMounted(async () => {
-  await Promise.all([refreshInventory(), loadAccountImportServerConfig()]);
+  await Promise.all([refreshInventory(), loadAccountImportServerConfig(), loadOutlookPoolStats()]);
 });
+
+async function loadOutlookPoolStats() {
+  outlookPool.value.loading = true;
+  try {
+    const r = await api.get("/config/outlook-mail-pool");
+    Object.assign(outlookPool.value, {
+      total: r.data?.total || 0,
+      available: r.data?.available || 0,
+      reserved: r.data?.reserved || 0,
+      used: r.data?.used || 0,
+      failed: r.data?.failed || 0,
+    });
+  } catch (e: any) {
+    message.error(`加载 Outlook 邮箱池失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    outlookPool.value.loading = false;
+  }
+}
+
+async function loadOutlookPoolFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    outlookPool.value.text = await file.text();
+    message.success(`已读取文件：${file.name}`);
+  } catch (e: any) {
+    message.error(`读取 Outlook 邮箱文件失败：${e?.message || e}`);
+  } finally {
+    input.value = "";
+  }
+}
+
+async function importOutlookPool() {
+  if (!outlookPool.value.text.trim()) { message.warning("请粘贴 Outlook 账号内容"); return; }
+  outlookPool.value.importing = true;
+  try {
+    const r = await api.post("/config/outlook-mail-pool/import", {
+      text: outlookPool.value.text,
+      enable: outlookPool.value.enable,
+    });
+    const s = r.data?.result || {};
+    message.success(`Outlook 邮箱池已导入：parsed=${s.parsed || 0} available=${s.available || 0} total=${s.total || 0}`);
+    outlookPool.value.text = "";
+    await loadOutlookPoolStats();
+  } catch (e: any) {
+    message.error(`导入 Outlook 邮箱池失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    outlookPool.value.importing = false;
+  }
+}
 
 async function refreshInventory() {
   loading.value = true;
@@ -690,6 +788,7 @@ function quotaBadgeLabel(prefix: string, quota: any): string {
 .accounts-topbar,
 .summary-band,
 .control-band,
+.outlook-band,
 .action-band,
 .rt-result-band,
 .pager {
@@ -774,7 +873,8 @@ h1 {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   box-sizing: border-box;
   background: var(--bg-base);
@@ -787,8 +887,67 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: var(--accent);
+}
+
+textarea {
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.outlook-band {
+  margin-top: 14px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.outlook-head,
+.outlook-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.outlook-head strong {
+  margin-right: 12px;
+}
+
+.outlook-head span {
+  color: var(--fg-tertiary);
+  font-size: 12px;
+  word-spacing: 8px;
+}
+
+.outlook-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.file-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-base);
+  color: var(--fg-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.file-btn input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .action-band {

@@ -222,7 +222,22 @@ def _check_config_files(checks: list[dict], req: dict) -> tuple[dict, dict, Path
     return pay_cfg, reg_cfg, reg_path
 
 
-def _check_cloudflare_kv(checks: list[dict], req: dict) -> None:
+def _reg_mail_provider(reg_cfg: dict) -> str:
+    mail = reg_cfg.get("mail") if isinstance(reg_cfg.get("mail"), dict) else {}
+    return _text(mail.get("provider")).lower() or "cf"
+
+
+def _check_cloudflare_kv(checks: list[dict], req: dict, reg_cfg: dict) -> None:
+    if _requires_email_otp(req) and _reg_mail_provider(reg_cfg) == "outlook":
+        _check(
+            checks,
+            "cloudflare_kv_secrets",
+            "ok",
+            "Outlook 邮箱池已启用，跳过 Cloudflare KV OTP 检查",
+            details="mail.provider=outlook",
+            blocking=False,
+        )
+        return
     presence = _effective_cloudflare_secret_presence()
     missing = [name for name, ok in presence.items() if not ok]
     if not missing:
@@ -261,6 +276,74 @@ def _check_registration_config(checks: list[dict], req: dict, reg_cfg: dict) -> 
     if not _requires_registration(req):
         return
     mail = reg_cfg.get("mail") if isinstance(reg_cfg.get("mail"), dict) else {}
+    provider = _text(mail.get("provider")).lower() or "cf"
+    if provider == "outlook":
+        source = _text(mail.get("outlook_source")).lower()
+        if source == "db":
+            try:
+                stats = get_db().outlook_mail_pool_stats()
+            except Exception as e:
+                _check(
+                    checks,
+                    "outlook_mail_pool",
+                    "fail",
+                    "Outlook 邮箱池数据库不可用",
+                    details=str(e),
+                    action="在账号管理页重新导入 Outlook 邮箱池",
+                )
+                stats = {}
+            if stats:
+                available = int(stats.get("available") or 0)
+                total = int(stats.get("total") or 0)
+                if available > 0:
+                    _check(
+                        checks,
+                        "outlook_mail_pool",
+                        "ok",
+                        f"Outlook 邮箱池可用：available={available} total={total}",
+                        blocking=False,
+                    )
+                else:
+                    _check(
+                        checks,
+                        "outlook_mail_pool",
+                        "fail",
+                        "Outlook 邮箱池没有可用账号",
+                        missing=["outlook_mail_accounts.status=available"],
+                        details=f"total={total} reserved={stats.get('reserved', 0)} used={stats.get('used', 0)} failed={stats.get('failed', 0)}",
+                        action="在账号管理页继续导入 Outlook 邮箱，或重置失败账号状态",
+                    )
+        else:
+            has_inline = isinstance(mail.get("outlook_accounts"), list) and bool(mail.get("outlook_accounts"))
+            has_path = not _is_missing(mail.get("outlook_accounts_path"), allow_example=True)
+            if has_inline or has_path:
+                _check(
+                    checks,
+                    "outlook_mail_pool",
+                    "ok",
+                    "Outlook 邮箱账号源已配置",
+                    blocking=False,
+                )
+            else:
+                _check(
+                    checks,
+                    "outlook_mail_pool",
+                    "fail",
+                    "Outlook 邮箱账号源未配置",
+                    missing=["mail.outlook_source=db 或 mail.outlook_accounts_path"],
+                    action="在账号管理页导入 Outlook 邮箱池",
+                )
+        captcha_key = _text(_get(reg_cfg, "captcha.client_key"))
+        if not captcha_key:
+            _check(
+                checks,
+                "captcha",
+                "warn",
+                "注册 captcha client_key 未配置；遇到验证码时可能失败",
+                missing=["captcha.client_key"],
+                blocking=False,
+            )
+        return
     domains = mail.get("catch_all_domains")
     has_domain = False
     if isinstance(domains, list):
@@ -518,7 +601,7 @@ def build_config_health(req: dict | None = None) -> dict:
 
     pay_cfg, reg_cfg, reg_path = _check_config_files(checks, req)
     if pay_cfg:
-        _check_cloudflare_kv(checks, req)
+        _check_cloudflare_kv(checks, req, reg_cfg)
         _check_registration_config(checks, req, reg_cfg)
         _check_payment_config(checks, req, pay_cfg)
         _check_pay_only_inventory(checks, req, pay_cfg)

@@ -1,10 +1,12 @@
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from ..auth import CurrentUser
 from ..config_health import build_config_health
 from ..config_writer import write_configs
+from ..db import get_db
 from .. import settings as s
 from .. import gopay_auto_unbind
 
@@ -37,6 +39,11 @@ class AccountImportServerRequest(BaseModel):
     url: str = "http://127.0.0.1:8787/api/import"
     token: str = "dev-import-token"
     timeout_s: float = 30
+
+
+class OutlookMailPoolImportRequest(BaseModel):
+    text: str = ""
+    enable: bool = True
 
 
 class GoPayAutoUnbindFetchRequest(BaseModel):
@@ -109,6 +116,70 @@ def save_account_import_server(req: AccountImportServerRequest, user: str = Curr
     }
     _save_pay_config(data)
     return {"ok": True, "path": str(s.PAY_CONFIG_PATH), "account_import_server": data["account_import_server"]}
+
+
+def _resolve_reg_config_path() -> Path:
+    pay_cfg = _load_pay_config()
+    raw = ""
+    try:
+        raw = str(
+            (((pay_cfg.get("fresh_checkout") or {}).get("auth") or {}).get("auto_register") or {}).get("config_path")
+            or ""
+        ).strip()
+    except Exception:
+        raw = ""
+    if not raw:
+        return s.REG_CONFIG_PATH
+    path = Path(raw)
+    return path if path.is_absolute() else (s.ROOT / path)
+
+
+def _load_reg_config() -> tuple[dict, Path]:
+    path = _resolve_reg_config_path()
+    if not path.exists():
+        return {}, path
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}, path
+    return (data if isinstance(data, dict) else {}), path
+
+
+def _save_reg_config(data: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+@router.get("/outlook-mail-pool")
+def outlook_mail_pool_stats(user: str = CurrentUser):
+    return {"ok": True, **get_db().outlook_mail_pool_stats(), "path": str(s.DB_PATH)}
+
+
+@router.post("/outlook-mail-pool/import")
+def import_outlook_mail_pool(req: OutlookMailPoolImportRequest, user: str = CurrentUser):
+    lines = [line.strip() for line in (req.text or "").splitlines() if line.strip()]
+    if not lines:
+        raise HTTPException(status_code=400, detail="Outlook 账号内容为空")
+    result = get_db().import_outlook_mail_accounts(lines)
+    reg_path = _resolve_reg_config_path()
+    if req.enable:
+        cfg, reg_path = _load_reg_config()
+        mail = cfg.setdefault("mail", {})
+        if not isinstance(mail, dict):
+            mail = {}
+            cfg["mail"] = mail
+        mail["provider"] = "outlook"
+        mail["outlook_source"] = "db"
+        mail["outlook_poll_interval_s"] = float(mail.get("outlook_poll_interval_s") or 3)
+        mail["outlook_folder"] = str(mail.get("outlook_folder") or "Inbox")
+        _save_reg_config(cfg, reg_path)
+    return {
+        "ok": True,
+        "enabled": bool(req.enable),
+        "result": result,
+        "path": str(s.DB_PATH),
+        "reg_config_path": str(reg_path),
+    }
 
 
 @router.post("/gopay/auto-unbind")

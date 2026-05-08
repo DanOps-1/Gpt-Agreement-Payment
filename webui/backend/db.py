@@ -133,6 +133,22 @@ CREATE TABLE IF NOT EXISTS oauth_status (
   ts TEXT NOT NULL,
   fail_reason TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS outlook_mail_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  password TEXT DEFAULT '',
+  client_id TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'available',
+  reserved_at REAL DEFAULT 0,
+  used_at REAL DEFAULT 0,
+  last_error TEXT DEFAULT '',
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_outlook_mail_accounts_status_id
+  ON outlook_mail_accounts(status, id);
 """
 
 
@@ -194,6 +210,26 @@ class Database:
             c.execute("ALTER TABLE pipeline_results ADD COLUMN sub2api_import TEXT DEFAULT ''")
         if "server_push" not in existing_pipeline:
             c.execute("ALTER TABLE pipeline_results ADD COLUMN server_push TEXT DEFAULT ''")
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS outlook_mail_accounts (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+              password TEXT DEFAULT '',
+              client_id TEXT NOT NULL,
+              refresh_token TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'available',
+              reserved_at REAL DEFAULT 0,
+              used_at REAL DEFAULT 0,
+              last_error TEXT DEFAULT '',
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL
+            )
+            """
+        )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_outlook_mail_accounts_status_id ON outlook_mail_accounts(status, id)"
+        )
 
     # ──────────────────────────────────────────
     # Runtime data store. SQLite is the only source of truth for runtime data.
@@ -687,6 +723,80 @@ class Database:
             }
             for row in rows
         }
+
+    def import_outlook_mail_accounts(self, lines: list[str]) -> dict:
+        now = time.time()
+
+        def parse(line: str) -> tuple[str, str, str, str] | None:
+            parts = [p.strip() for p in _text(line).strip().split("----", 3)]
+            if len(parts) != 4 or not parts[0] or not parts[2] or not parts[3]:
+                return None
+            return (_email(parts[0]), parts[1], parts[2], parts[3])
+
+        parsed = [x for x in (parse(line) for line in lines) if x]
+        unique_emails = {email for email, *_ in parsed}
+        with self._conn() as c:
+            existing_emails = set()
+            if unique_emails:
+                placeholders = ",".join("?" for _ in unique_emails)
+                rows = c.execute(
+                    f"SELECT email FROM outlook_mail_accounts WHERE email IN ({placeholders})",
+                    tuple(unique_emails),
+                ).fetchall()
+                existing_emails = {_email(row["email"]) for row in rows}
+            imported = updated = 0
+            for email, password, client_id, refresh_token in parsed:
+                cur = c.execute(
+                    """
+                    INSERT INTO outlook_mail_accounts(
+                      email, password, client_id, refresh_token, status,
+                      reserved_at, used_at, last_error, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 'available', 0, 0, '', ?, ?)
+                    ON CONFLICT(email) DO UPDATE SET
+                      password=excluded.password,
+                      client_id=excluded.client_id,
+                      refresh_token=excluded.refresh_token,
+                      status='available',
+                      reserved_at=0,
+                      used_at=0,
+                      last_error='',
+                      updated_at=excluded.updated_at
+                    """,
+                    (email, password, client_id, refresh_token, now, now),
+                )
+                if cur.rowcount:
+                    if email in existing_emails:
+                        updated += 1
+                    else:
+                        imported += 1
+                        existing_emails.add(email)
+            total = c.execute("SELECT COUNT(*) FROM outlook_mail_accounts").fetchone()[0]
+            available = c.execute("SELECT COUNT(*) FROM outlook_mail_accounts WHERE status='available'").fetchone()[0]
+            reserved = c.execute("SELECT COUNT(*) FROM outlook_mail_accounts WHERE status='reserved'").fetchone()[0]
+            used = c.execute("SELECT COUNT(*) FROM outlook_mail_accounts WHERE status='used'").fetchone()[0]
+            failed = c.execute("SELECT COUNT(*) FROM outlook_mail_accounts WHERE status='failed'").fetchone()[0]
+        return {
+            "parsed": len(parsed),
+            "imported": imported,
+            "imported_or_updated": imported + updated,
+            "updated": updated,
+            "total": total,
+            "available": available,
+            "reserved": reserved,
+            "used": used,
+            "failed": failed,
+        }
+
+    def outlook_mail_pool_stats(self) -> dict:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT status, COUNT(*) n FROM outlook_mail_accounts GROUP BY status"
+            ).fetchall()
+            total = c.execute("SELECT COUNT(*) FROM outlook_mail_accounts").fetchone()[0]
+        stats = {"total": int(total), "available": 0, "reserved": 0, "used": 0, "failed": 0}
+        for row in rows:
+            stats[str(row["status"])] = int(row["n"])
+        return stats
 
     def user_count(self) -> int:
         with self._conn() as c:

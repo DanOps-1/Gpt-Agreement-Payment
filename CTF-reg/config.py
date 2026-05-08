@@ -21,6 +21,12 @@ class MailConfig:
     的 cloudflare 段或环境变量，不在 MailConfig 里。
     """
     catch_all_domain: str = ""
+    provider: str = "cf"
+    outlook_accounts_path: str = ""
+    outlook_accounts: list = field(default_factory=list)
+    outlook_source: str = ""
+    outlook_poll_interval_s: float = 3.0
+    outlook_folder: str = "Inbox"
     # 域名池：pipeline 运行时从中挑一个作为 catch_all_domain（轮换 + 根据 invite 探测结果烧掉）
     catch_all_domains: list = field(default_factory=list)
     # Cloudflare 按需开通子域（被 pipeline 读取使用，CTF-reg 自身不处理）
