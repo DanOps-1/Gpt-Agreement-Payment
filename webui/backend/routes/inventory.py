@@ -151,6 +151,42 @@ def _account_import_item(account: dict, uuid: str) -> dict:
     return _server_push_payload(account, uuid)
 
 
+def _mask_secret(value: str, *, keep: int = 4) -> str:
+    value = str(value or "")
+    if not value:
+        return ""
+    if len(value) <= keep * 2:
+        return "*" * len(value)
+    return f"{value[:keep]}...{value[-keep:]}"
+
+
+def _response_error_message(body: object, text: str) -> str:
+    if isinstance(body, dict):
+        for key in ("message", "detail", "error", "reason"):
+            value = body.get(key)
+            if value:
+                return str(value)
+        return json.dumps(body, ensure_ascii=False, separators=(",", ":"))[:1000]
+    return str(text or "")[:1000]
+
+
+def _log_account_import_response(*, url: str, token: str, item_count: int, resp: httpx.Response, body: object, text: str) -> None:
+    ok = 200 <= resp.status_code < 300
+    if isinstance(body, dict) and body.get("success") is False:
+        ok = False
+    if ok:
+        return
+    try:
+        body_text = json.dumps(body, ensure_ascii=False, separators=(",", ":")) if body is not None else str(text or "")
+    except Exception:
+        body_text = str(text or "")
+    runner._append_log(
+        "[inventory:server-push] response "
+        f"url={url} uuid={_mask_secret(token)} items={item_count} "
+        f"http={resp.status_code} body={body_text[:2000]}"
+    )
+
+
 def _hydrate_account_refresh_token(account: dict) -> dict:
     """Keep manual server-push aligned with the inventory RT indicator.
 
@@ -223,7 +259,15 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     ok = 200 <= resp.status_code < 300
     if isinstance(body, dict) and body.get("success") is False:
         ok = False
-    error = "" if ok else ((body or {}).get("message") if isinstance(body, dict) else text)
+    _log_account_import_response(
+        url=url,
+        token=token,
+        item_count=len(items),
+        resp=resp,
+        body=body,
+        text=text,
+    )
+    error = "" if ok else _response_error_message(body, text)
     pushed = [
         {
             "id": acc.get("id"),

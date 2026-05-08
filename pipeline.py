@@ -3871,6 +3871,25 @@ def _email_data_for_server_import(account: dict, email: str) -> str:
     ])
 
 
+def _mask_server_import_token(value: str, keep: int = 4) -> str:
+    value = str(value or "")
+    if not value:
+        return ""
+    if len(value) <= keep * 2:
+        return "*" * len(value)
+    return f"{value[:keep]}...{value[-keep:]}"
+
+
+def _server_import_error_message(body, text: str) -> str:
+    if isinstance(body, dict):
+        for key in ("message", "detail", "error", "reason"):
+            value = body.get(key)
+            if value:
+                return str(value)
+        return json.dumps(body, ensure_ascii=False, separators=(",", ":"))[:1000]
+    return str(text or "")[:1000]
+
+
 def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | None = None) -> str:
     import httpx
 
@@ -3922,7 +3941,16 @@ def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | 
         if isinstance(body, dict) and body.get("success") is False:
             ok = False
         if not ok:
-            print(f"[push-server] {email} push failed http={resp.status_code} body={text}")
+            try:
+                body_text = json.dumps(body, ensure_ascii=False, separators=(",", ":")) if body is not None else text
+            except Exception:
+                body_text = text
+            msg = _server_import_error_message(body, text)
+            print(
+                f"[push-server] {email} push failed "
+                f"url={cfg['url']} uuid={_mask_server_import_token(cfg['token'])} "
+                f"http={resp.status_code} error={msg} body={body_text[:2000]}"
+            )
             return "fail_upload"
         print(f"[push-server] {email} pushed to account import server {cfg['url']}")
         try:
