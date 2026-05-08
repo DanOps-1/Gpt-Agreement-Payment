@@ -1,8 +1,10 @@
 import json
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import requests
 from ..auth import CurrentUser
 from ..config_health import build_config_health
 from ..config_writer import write_configs
@@ -43,6 +45,12 @@ class AccountImportServerRequest(BaseModel):
 
 class OutlookMailPoolImportRequest(BaseModel):
     text: str = ""
+
+
+class OutlookLatestMailRequest(BaseModel):
+    line: str = ""
+    folder: str = "Inbox"
+    top: int = 5
 
 
 class GoPayAutoUnbindFetchRequest(BaseModel):
@@ -166,6 +174,89 @@ def import_outlook_mail_pool(req: OutlookMailPoolImportRequest, user: str = Curr
         "result": result,
         "path": str(s.DB_PATH),
         "reg_config_path": str(reg_path),
+    }
+
+
+def _parse_outlook_line(line: str) -> tuple[str, str, str, str]:
+    parts = [p.strip() for p in str(line or "").strip().split("----", 3)]
+    if len(parts) != 4 or not parts[0] or not parts[2] or not parts[3]:
+        raise HTTPException(status_code=400, detail="格式错误：邮箱----密码----client_id----refresh_token")
+    return parts[0].lower(), parts[1], parts[2], parts[3]
+
+
+def _extract_otp(text: str) -> str:
+    m = re.search(r"(?<!\d)(\d{6})(?!\d)", text or "")
+    return m.group(1) if m else ""
+
+
+@router.post("/outlook-mail/latest")
+def read_outlook_latest_mail(req: OutlookLatestMailRequest, user: str = CurrentUser):
+    email, _password, client_id, refresh_token = _parse_outlook_line(req.line)
+    folder = (req.folder or "Inbox").strip() or "Inbox"
+    top = min(max(int(req.top or 5), 1), 20)
+    try:
+        token_resp = requests.post(
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+            data={
+                "client_id": client_id,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "scope": "https://graph.microsoft.com/Mail.Read offline_access",
+            },
+            timeout=20,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Outlook token 请求失败: {e}") from e
+    if token_resp.status_code != 200:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Outlook refresh_token 失败: http={token_resp.status_code} {token_resp.text[:240]}",
+        )
+    token_data = token_resp.json()
+    access_token = str(token_data.get("access_token") or "")
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Outlook token 响应未返回 access_token")
+    try:
+        mail_resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder}/messages",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={
+                "$top": str(top),
+                "$select": "subject,bodyPreview,receivedDateTime,from",
+                "$orderby": "receivedDateTime desc",
+            },
+            timeout=20,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Graph 读取邮件失败: {e}") from e
+    if mail_resp.status_code != 200:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Graph 读取邮件失败: http={mail_resp.status_code} {mail_resp.text[:300]}",
+        )
+    messages = []
+    for msg in mail_resp.json().get("value") or []:
+        from_addr = ""
+        try:
+            from_addr = str(((msg.get("from") or {}).get("emailAddress") or {}).get("address") or "")
+        except Exception:
+            from_addr = ""
+        subject = str(msg.get("subject") or "")
+        preview = str(msg.get("bodyPreview") or "")
+        messages.append({
+            "receivedDateTime": str(msg.get("receivedDateTime") or ""),
+            "from": from_addr,
+            "subject": subject,
+            "otp": _extract_otp(f"{subject}\n{preview}"),
+            "preview": preview[:500],
+        })
+    return {
+        "ok": True,
+        "email": email,
+        "scope": token_data.get("scope") or "",
+        "count": len(messages),
+        "latest": messages[0] if messages else None,
+        "messages": messages,
     }
 
 

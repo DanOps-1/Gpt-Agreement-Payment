@@ -67,6 +67,35 @@
       </label>
     </section>
 
+    <section class="mail-tool-band">
+      <div class="mail-tool-head">
+        <div>
+          <strong>Outlook 最新邮件</strong>
+          <span>粘贴一行：邮箱----密码----client_id----refresh_token</span>
+        </div>
+        <TermBtn :loading="mailTool.loading" :disabled="!mailTool.line.trim()" @click="readLatestOutlookMail">
+          读取最新邮件
+        </TermBtn>
+      </div>
+      <textarea
+        v-model="mailTool.line"
+        rows="2"
+        placeholder="邮箱----密码----client_id----refresh_token"
+      />
+      <div v-if="mailTool.result" class="mail-result">
+        <div class="mail-result-main">
+          <span class="badge badge-ok">count={{ mailTool.result.count || 0 }}</span>
+          <span v-if="mailTool.result.latest?.otp" class="badge badge-plus">OTP {{ mailTool.result.latest.otp }}</span>
+          <strong>{{ mailTool.result.latest?.subject || "无邮件" }}</strong>
+        </div>
+        <div v-if="mailTool.result.latest" class="mail-preview">
+          {{ mailTool.result.latest.receivedDateTime }} · {{ mailTool.result.latest.from }}
+          <br />
+          {{ mailTool.result.latest.preview }}
+        </div>
+      </div>
+    </section>
+
     <section class="action-band">
       <label class="select-page">
         <input type="checkbox" :checked="managerAllSelected" @change="toggleManagerSelectAll" />
@@ -289,6 +318,11 @@ const rtCheck = ref<RtCheckResult | null>(null);
 const accessCheck = ref<AccessCheckResult | null>(null);
 const serverPushResult = ref<ServerPushResult | null>(null);
 const accessUsageById = ref<Record<number, Record<string, any>>>({});
+const mailTool = ref({
+  line: "",
+  loading: false,
+  result: null as Record<string, any> | null,
+});
 const manager = ref({
   busy: false,
   savingConfig: false,
@@ -419,6 +453,28 @@ async function saveAccountImportServerConfig(options?: { quiet?: boolean }) {
     return false;
   } finally {
     manager.value.savingConfig = false;
+  }
+}
+
+async function readLatestOutlookMail() {
+  if (!mailTool.value.line.trim()) {
+    message.warning("请粘贴 Outlook 邮箱账号行");
+    return;
+  }
+  mailTool.value.loading = true;
+  mailTool.value.result = null;
+  try {
+    const r = await api.post("/config/outlook-mail/latest", {
+      line: mailTool.value.line.trim(),
+      top: 5,
+    });
+    mailTool.value.result = r.data || null;
+    const otp = r.data?.latest?.otp;
+    message.success(otp ? `读取成功，OTP=${otp}` : "读取成功，最新邮件没有识别到 OTP");
+  } catch (e: any) {
+    message.error(`读取 Outlook 邮件失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    mailTool.value.loading = false;
   }
 }
 
@@ -690,6 +746,7 @@ function quotaBadgeLabel(prefix: string, quota: any): string {
 .accounts-topbar,
 .summary-band,
 .control-band,
+.mail-tool-band,
 .action-band,
 .rt-result-band,
 .pager {
@@ -774,7 +831,8 @@ h1 {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   box-sizing: border-box;
   background: var(--bg-base);
@@ -787,8 +845,61 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: var(--accent);
+}
+
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-base);
+  color: var(--fg-primary);
+  border: 1px solid var(--border-strong);
+  padding: 9px 10px;
+  font: inherit;
+  border-radius: 0;
+  outline: none;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.mail-tool-band {
+  margin-top: 14px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.mail-tool-head,
+.mail-result-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mail-tool-head strong {
+  margin-right: 12px;
+}
+
+.mail-tool-head span,
+.mail-preview {
+  color: var(--fg-tertiary);
+  font-size: 12px;
+}
+
+.mail-result {
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.mail-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .action-band {
