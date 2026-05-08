@@ -2318,6 +2318,8 @@ class AuthFlow:
         elif not self.result.is_valid():
             raise RuntimeError("注册完成但未获取有效凭证")
 
+        if hasattr(mail_provider, "mark_current_mailbox_used"):
+            mail_provider.mark_current_mailbox_used()
         logger.info("注册流程完成!")
         return self.result
 

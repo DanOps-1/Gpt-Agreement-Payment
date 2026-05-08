@@ -335,6 +335,11 @@ class MailProvider:
                     (now, str(error or "")[:500], self._current_outlook_db_id),
                 )
 
+    def mark_current_mailbox_used(self) -> None:
+        """Mark the reserved Outlook mailbox as consumed after registration succeeds."""
+        if self.provider == "outlook":
+            self._mark_outlook_db_account("used")
+
     def create_mailbox(self) -> str:
         """生成 random@catch_all 邮箱地址（也可复用 _reuse_email）。
 
@@ -473,7 +478,6 @@ class MailProvider:
                     code = _extract_otp6(text)
                     if code:
                         logger.info(f"[mail] Outlook 收到 OTP={code} key={email_addr}")
-                        self._mark_outlook_db_account("used")
                         return code
             except Exception as e:
                 last_error = f"{type(e).__name__}: {str(e)[:160]}"

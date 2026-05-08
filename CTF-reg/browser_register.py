@@ -934,6 +934,8 @@ def browser_register(cfg, mail_provider) -> dict:
                     f"缺少凭证: access_token={bool(result['access_token'])} "
                     f"session_token={bool(result['session_token'])}"
                 )
+            if hasattr(mail_provider, "mark_current_mailbox_used"):
+                mail_provider.mark_current_mailbox_used()
     finally:
         try:
             shutil.rmtree(tmp_profile, ignore_errors=True)
