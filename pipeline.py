@@ -1016,8 +1016,8 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
     if proxy_pool is None:
         proxy_pool = _build_proxy_pool_from_card_cfg(card_cfg)
 
-    # Proxy list is a pool, not "register line + payment line".
-    # Each task picks one pool entry; Webshare refreshes the underlying IP before payment.
+    # Manual proxy list uses two stage entries: first for registration, second for payment.
+    # Webshare uses the same local relay URL, but refreshes the upstream country per stage.
     reg_proxy = pay_proxy = ""
     if proxy_pool and proxy_pool.proxies:
         reg_proxy, pay_proxy = proxy_pool.pick_two_stage()
@@ -1056,6 +1056,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
         print(f"\n{'='*60}")
         print(f"[pipeline] Step 1/2: 注册 ChatGPT 账号")
         print(f"{'='*60}")
+        _refresh_proxy_before_register(card_cfg or {}, team_client=team_client)
         try:
             reg = register(effective_cardw, timeout=timeout_reg, log_label=log_label)
             record["registration"] = {"status": "ok", "email": reg.get("email", "")}
@@ -1352,11 +1353,17 @@ def _run_pay_only_worker(args_tuple):
 def _register_one(args_tuple):
     """单个注册任务。args_tuple = (idx, cardw_config_path, pool_or_None)
     pool 非空时为每个 worker 独立 pick 域 + 改写临时 cardw config。"""
-    if len(args_tuple) == 3:
+    if len(args_tuple) == 5:
+        idx, cardw_config_path, pool, card_cfg, team_client = args_tuple
+    elif len(args_tuple) == 3:
         idx, cardw_config_path, pool = args_tuple
+        card_cfg = {}
+        team_client = None
     else:
         idx, cardw_config_path = args_tuple
         pool = None
+        card_cfg = {}
+        team_client = None
     picked_domain = ""
     temp_cardw = None
     effective = cardw_config_path
@@ -1365,6 +1372,7 @@ def _register_one(args_tuple):
             picked_domain = pool.pick_and_mark_used()
             temp_cardw = _rewrite_cardw_with_domain(cardw_config_path, picked_domain)
             effective = temp_cardw
+        _refresh_proxy_before_register(card_cfg or {}, team_client=team_client)
         r = register(effective, log_label=f"reg{idx + 1}")
         return {"index": idx, "status": "ok", "picked_domain": picked_domain, **r}
     except Exception as e:
@@ -1500,7 +1508,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
         cardw_cfg = cardw_path
 
         print(f"\n[batch] === 阶段 1: 并行注册 ({workers} workers × {count} 账号) ===")
-        reg_tasks = [(i, cardw_cfg, pool) for i in range(count)]
+        reg_tasks = [(i, cardw_cfg, pool, card_cfg, team_client) for i in range(count)]
         accounts = [None] * count
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(_register_one, t): t[0] for t in reg_tasks}
@@ -1785,9 +1793,25 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         "domain": email.split("@", 1)[1] if "@" in email else "",
         "proxy": "",
     }
+    pay_card_config_path = card_config_path
+    pay_proxy = ""
+    temp_pay_card = None
     try:
+        proxy_pool = _build_proxy_pool_from_card_cfg(card_cfg or {})
+        if proxy_pool and proxy_pool.proxies:
+            _reg_proxy, pay_proxy = proxy_pool.pick_two_stage()
+            if pay_proxy:
+                pay_card_config_path = _rewrite_card_with_proxy(card_config_path, pay_proxy)
+                temp_pay_card = pay_card_config_path
+                record["proxy"] = pay_proxy
+                record["payment_proxy"] = pay_proxy
+                print(f"[pay-only] payment_proxy={pay_proxy}")
+    except Exception as e:
+        print(f"[pay-only] payment proxy override failed, use config proxy: {e}")
+    try:
+        _refresh_proxy_before_payment(card_cfg or {})
         result = pay(
-            card_config_path,
+            pay_card_config_path,
             session_token=account.get("session_token") if account else None,
             access_token=account.get("access_token") if account else None,
             device_id=account.get("device_id", "") if account else None,
@@ -1848,6 +1872,9 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         _append_result(record)
         raise
     finally:
+        if temp_pay_card and os.path.exists(temp_pay_card):
+            try: os.unlink(temp_pay_card)
+            except Exception: pass
         _release_pay_only_account_claim(account)
 
 
@@ -2922,7 +2949,7 @@ def _ensure_gost_alive(card_cfg: dict, team_client=None) -> bool:
     return True
 
 
-def _rotate_webshare_ip(card_cfg: dict, team_client=None, prev_ip: str = "") -> dict:
+def _rotate_webshare_ip(card_cfg: dict, team_client=None, prev_ip: str = "", country: str = "") -> dict:
     """整合：refresh → 轮询新 IP → 换 gost → 同步 team 全局代理。返回新 proxy dict。"""
     ws_cfg = (card_cfg or {}).get("webshare") or {}
     if not ws_cfg.get("enabled"):
@@ -2947,7 +2974,7 @@ def _rotate_webshare_ip(card_cfg: dict, team_client=None, prev_ip: str = "") -> 
     except Exception as e:
         print(f"[Webshare] 查询额度异常（继续 refresh）: {e}")
 
-    lock_country = str(ws_cfg.get("lock_country", "")).strip().upper()
+    lock_country = str(country or ws_cfg.get("lock_country", "")).strip().upper()
     if lock_country:
         print(f"[Webshare] refresh pool，锁国家={lock_country}（prev_ip={prev_ip or '?'}）")
     else:
@@ -2975,23 +3002,53 @@ def _rotate_webshare_ip(card_cfg: dict, team_client=None, prev_ip: str = "") -> 
     return new_px
 
 
-def _refresh_proxy_before_payment(card_cfg: dict, team_client=None) -> dict:
+def _refresh_webshare_stage_proxy(card_cfg: dict, team_client=None, *, stage: str, country: str = "") -> dict:
     ws_cfg = (card_cfg or {}).get("webshare") or {}
     if not ws_cfg.get("enabled"):
         return {}
-    if ws_cfg.get("refresh_between_stages", True) is False:
+    if stage == "payment" and ws_cfg.get("refresh_between_stages", True) is False:
         return {}
-    print("[ProxyPool] Webshare refresh before payment stage ...")
+    if stage == "register" and ws_cfg.get("refresh_before_register", True) is False:
+        return {}
+    if not country:
+        country = str(
+            ws_cfg.get(f"{stage}_country")
+            or ws_cfg.get("lock_country")
+            or ""
+        ).strip()
+    label = stage or "stage"
+    suffix = f" country={country.upper()}" if country else ""
+    print(f"[ProxyPool] Webshare refresh before {label} stage{suffix} ...")
     try:
         _ensure_gost_alive(card_cfg, team_client)
-        px = _rotate_webshare_ip(card_cfg, team_client=team_client, prev_ip="")
-        print(f"[ProxyPool] payment proxy IP ready: {px.get('proxy_address', '?')}")
+        px = _rotate_webshare_ip(card_cfg, team_client=team_client, prev_ip="", country=country)
+        print(f"[ProxyPool] {label} proxy IP ready: {px.get('proxy_address', '?')}")
         return px
     except WebshareQuotaExhausted as e:
         print(f"[ProxyPool] Webshare quota exhausted, keep current proxy: {e}")
     except Exception as e:
         print(f"[ProxyPool] Webshare refresh failed, keep current proxy: {e}")
     return {}
+
+
+def _refresh_proxy_before_register(card_cfg: dict, team_client=None) -> dict:
+    ws_cfg = (card_cfg or {}).get("webshare") or {}
+    return _refresh_webshare_stage_proxy(
+        card_cfg,
+        team_client=team_client,
+        stage="register",
+        country=str(ws_cfg.get("register_country") or ws_cfg.get("lock_country") or "US"),
+    )
+
+
+def _refresh_proxy_before_payment(card_cfg: dict, team_client=None) -> dict:
+    ws_cfg = (card_cfg or {}).get("webshare") or {}
+    return _refresh_webshare_stage_proxy(
+        card_cfg,
+        team_client=team_client,
+        stage="payment",
+        country=str(ws_cfg.get("payment_country") or "JP"),
+    )
 
 
 class ProxyPool:
@@ -3013,8 +3070,11 @@ class ProxyPool:
         return self.proxies[0]
 
     def pick_two_stage(self) -> tuple[str, str]:
-        proxy = self.pick()
-        return proxy, proxy
+        if not self.proxies:
+            return "", ""
+        if len(self.proxies) == 1:
+            return self.proxies[0], self.proxies[0]
+        return self.proxies[0], self.proxies[1]
 
     def pick_for_worker(self, worker_id: int) -> str:
         if not self.proxies:
@@ -3029,8 +3089,7 @@ class ProxyPool:
         return self.proxies[0]
 
     def pick_two_stage_for_worker(self, worker_id: int) -> tuple[str, str]:
-        proxy = self.pick_for_worker(worker_id)
-        return proxy, proxy
+        return self.pick_two_stage()
 
     def mark_fail(self, proxy):
         # TODO: 实现失败标记 + 冷却

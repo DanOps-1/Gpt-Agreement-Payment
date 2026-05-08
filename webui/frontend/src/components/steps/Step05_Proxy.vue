@@ -30,7 +30,8 @@
 
       <div class="form-stack">
         <TermField v-model="form.api_key" label="Webshare API Key · api_key" type="password" />
-        <TermField v-model="form.lock_country" label="锁出口国 · lock_country" placeholder="US (锁出口国)" />
+        <TermField v-model="form.register_country" label="注册出口国 · register_country" placeholder="US" />
+        <TermField v-model="form.payment_country" label="支付出口国 · payment_country" placeholder="JP" />
       </div>
 
       <div class="step-actions">
@@ -47,6 +48,14 @@
         <TermField v-model.number="form.no_rotation_cooldown_s" label="配额冷却秒数 · no_rotation_cooldown_s" type="number" placeholder="10800 (配额耗尽冷却秒数)" />
         <TermField v-model.number="form.gost_listen_port" label="gost 中继端口 · gost_listen_port" type="number" placeholder="18898 (本地 gost 中继端口)" />
         <label class="toggle-row">
+          <input type="checkbox" v-model="form.refresh_before_register" />
+          <span>注册开始前获取一次代理 (refresh_before_register)</span>
+        </label>
+        <label class="toggle-row">
+          <input type="checkbox" v-model="form.refresh_between_stages" />
+          <span>支付开始前重新获取代理 (refresh_between_stages)</span>
+        </label>
+        <label class="toggle-row">
           <input type="checkbox" v-model="form.sync_team_proxy" />
           <span>换 IP 后同步 gpt-team 全局代理 (sync_team_proxy)</span>
         </label>
@@ -59,7 +68,7 @@
         <textarea
           v-model="proxyText"
           class="tf-textarea"
-          placeholder="每行一个代理池入口&#10;并发 worker 会按行分配；支付前 Webshare 会刷新出口 IP"
+          placeholder="第一行注册代理&#10;第二行支付代理"
           rows="3"
         ></textarea>
       </label>
@@ -94,13 +103,17 @@ const form = ref({
   urls: (init.urls ?? (init.url ? String(init.url).split("\n") : [])) as string[],
   expected_country: init.expected_country ?? "US",
   api_key: init.api_key ?? "",
-  lock_country: init.lock_country ?? "US",
+  lock_country: init.lock_country ?? init.register_country ?? "US",
+  register_country: init.register_country ?? init.lock_country ?? "US",
+  payment_country: init.payment_country ?? "JP",
   // webshare 高级（默认值跟 pipeline.py 一致）
   refresh_threshold: init.refresh_threshold ?? 2,
   zone_rotate_after_ip_rotations: init.zone_rotate_after_ip_rotations ?? 2,
   zone_rotate_on_reg_fails: init.zone_rotate_on_reg_fails ?? 3,
   no_rotation_cooldown_s: init.no_rotation_cooldown_s ?? 10800,
   gost_listen_port: init.gost_listen_port ?? 18898,
+  refresh_before_register: init.refresh_before_register ?? true,
+  refresh_between_stages: init.refresh_between_stages ?? true,
   sync_team_proxy: init.sync_team_proxy ?? true,
 });
 const proxyText = computed({
@@ -139,7 +152,11 @@ async function testWebshare() {
   await store.saveToServer();
   loading.value = true;
   try {
-    result.value = await store.runPreflight("webshare", { api_key: form.value.api_key });
+    result.value = await store.runPreflight("webshare", {
+      api_key: form.value.api_key,
+      register_country: form.value.register_country,
+      payment_country: form.value.payment_country,
+    });
   } finally { loading.value = false; }
 }
 

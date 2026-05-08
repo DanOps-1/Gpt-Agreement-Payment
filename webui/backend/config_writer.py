@@ -150,7 +150,11 @@ def _project_pay(answers: dict) -> dict:
             out["webshare"] = {
                 "enabled": True,
                 "api_key": proxy["api_key"],
-                "lock_country": proxy.get("lock_country", "US"),
+                "lock_country": proxy.get("register_country") or proxy.get("lock_country", "US"),
+                "register_country": proxy.get("register_country") or proxy.get("lock_country", "US"),
+                "payment_country": proxy.get("payment_country", "JP"),
+                "refresh_before_register": proxy.get("refresh_before_register", True),
+                "refresh_between_stages": proxy.get("refresh_between_stages", True),
                 "refresh_threshold": proxy.get("refresh_threshold", 2),
                 "zone_rotate_after_ip_rotations": proxy.get("zone_rotate_after_ip_rotations", 2),
                 "zone_rotate_on_reg_fails": proxy.get("zone_rotate_on_reg_fails", 3),
@@ -177,7 +181,7 @@ def _project_pay(answers: dict) -> dict:
             if len(proxy_list) > 1:
                 out["proxies"] = {
                     "enabled": True,
-                    "rotation": "worker",
+                    "rotation": "two_stage",
                     "list": proxy_list,
                 }
     return out
@@ -239,7 +243,7 @@ def _project_reg(answers: dict) -> dict:
             if len(proxy_list) > 1:
                 out["proxies"] = {
                     "enabled": True,
-                    "rotation": "worker",
+                    "rotation": "two_stage",
                     "list": proxy_list,
                 }
     return out
