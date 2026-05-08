@@ -3887,8 +3887,20 @@ def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | 
         print("[push-server] missing import server url/token, skipped")
         return "skipped"
     if not str(account.get("refresh_token") or "").strip():
-        print(f"[push-server] {email} 无 refresh_token，跳过")
-        return "no_rt"
+        try:
+            rt = get_db().latest_refresh_token_for_email(email)
+        except Exception:
+            rt = ""
+        if rt:
+            account["refresh_token"] = rt
+            try:
+                if account.get("id"):
+                    get_db().update_registered_account_refresh_token(int(account["id"]), rt)
+            except Exception:
+                pass
+        else:
+            print(f"[push-server] {email} 无 refresh_token，跳过")
+            return "no_rt"
 
     item = {
         "uuid": cfg["token"],

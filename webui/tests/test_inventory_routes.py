@@ -231,6 +231,43 @@ def test_server_push_posts_account_import_payload(client):
 
 
 @respx.mock
+def test_server_push_uses_latest_card_result_rt_when_registered_row_is_empty(client):
+    _login(client)
+    db = get_db()
+    db.clear_runtime_data()
+    db.add_registered_account({
+        "email": "CardRt@Example.com",
+        "password": "pw-123",
+        "access_token": "at-token",
+        "id_token": "id-token",
+    })
+    aid = db.iter_registered_accounts()[0]["id"]
+    db.add_card_result({
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "status": "succeeded",
+        "chatgpt_email": "cardrt@example.com",
+        "session_id": "cs_test",
+        "channel": "manual_rt",
+        "refresh_token": "rt-from-card-result",
+    })
+    pushed = respx.post("https://mail.shfjkqhk.site/api/email-data").mock(
+        return_value=Response(200, json={"success": True})
+    )
+
+    r = client.post("/api/inventory/accounts/server-push", json={
+        "ids": [aid],
+        "import_url": "https://mail.shfjkqhk.site/api/email-data",
+        "import_token": "sakuya1.2.3.",
+    })
+
+    assert r.status_code == 200
+    assert r.json()["summary"] == {"total": 1, "ok": 1, "missing": 0, "fail": 0}
+    body = json.loads(pushed.calls.last.request.content.decode())
+    assert body["items"][0]["email_data"] == "cardrt@example.com----pw-123----at-token----rt-from-card-result"
+    assert get_db().get_registered_account(aid)["refresh_token"] == "rt-from-card-result"
+
+
+@respx.mock
 def test_server_push_backfills_rt_before_import(client, monkeypatch):
     _login(client)
     db = get_db()

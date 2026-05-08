@@ -241,6 +241,58 @@ def test_push_plus_account_to_server_posts_account_import_payload(tmp_path, monk
     assert get_db().get_registered_account(aid)["server_pushed_at"] > 0
 
 
+def test_push_plus_account_to_server_uses_card_result_rt_fallback(tmp_path, monkeypatch):
+    db = _reset_db(tmp_path, monkeypatch)
+    db.add_registered_account({
+        "email": "retry@example.com",
+        "password": "pw",
+        "access_token": "at",
+        "id_token": "id",
+    })
+    aid = db.iter_registered_accounts()[0]["id"]
+    db.add_card_result({
+        "ts": "2026-05-09T00:00:00Z",
+        "status": "succeeded",
+        "chatgpt_email": "retry@example.com",
+        "session_id": "cs_test",
+        "channel": "card",
+        "refresh_token": "rt-from-card",
+    })
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"ok":true}'
+
+        def json(self):
+            return {"ok": True}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, json=None, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return FakeResponse()
+
+    monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(Client=FakeClient))
+
+    result = pipeline._push_plus_account_to_server(
+        "retry@example.com",
+        {"account_import_server": {"url": "https://mail.shfjkqhk.site/api/email-data", "token": "sakuya1.2.3."}},
+    )
+
+    assert result == "ok"
+    assert calls[-1]["json"]["email_data"] == "retry@example.com----pw----at----rt-from-card"
+    assert get_db().get_registered_account(aid)["refresh_token"] == "rt-from-card"
+
+
 def test_auto_server_push_skips_when_rt_hits_add_phone_cooldown(tmp_path, monkeypatch):
     db = _reset_db(tmp_path, monkeypatch)
     card_config = tmp_path / "config.paypal.json"

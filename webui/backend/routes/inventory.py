@@ -151,6 +151,35 @@ def _account_import_item(account: dict, uuid: str) -> dict:
     return _server_push_payload(account, uuid)
 
 
+def _hydrate_account_refresh_token(account: dict) -> dict:
+    """Keep manual server-push aligned with the inventory RT indicator.
+
+    The account list treats an email as having RT when either the registered row
+    or the latest card_result has one.  Server-push needs the actual value, so
+    copy the latest card_result RT back into the selected registered row before
+    deciding whether it is pushable.
+    """
+    out = dict(account or {})
+    if str(out.get("refresh_token") or "").strip():
+        return out
+    email = str(out.get("email") or "").strip().lower()
+    if not email:
+        return out
+    try:
+        rt = get_db().latest_refresh_token_for_email(email)
+    except Exception:
+        rt = ""
+    if not rt:
+        return out
+    out["refresh_token"] = rt
+    try:
+        if out.get("id"):
+            get_db().update_registered_account_refresh_token(int(out["id"]), rt)
+    except Exception:
+        pass
+    return out
+
+
 def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, accounts: list[dict]) -> list[dict]:
     url = str(req.import_url or "").strip()
     token = str(req.import_token or "").strip()
@@ -159,6 +188,7 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     if not token:
         raise HTTPException(status_code=400, detail="账号导入服务器卡密/uuid 不能为空")
 
+    accounts = [_hydrate_account_refresh_token(acc) for acc in accounts]
     ready_accounts = [acc for acc in accounts if str(acc.get("refresh_token") or "").strip()]
     skipped = [
         {
