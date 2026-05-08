@@ -87,6 +87,8 @@ LINK_429_RETRY_LIMIT = 30
 LINK_429_PROXY_SWITCH_EVERY = 10
 LINK_429_RETRY_SLEEP_MIN_S = 2.0
 LINK_429_RETRY_SLEEP_MAX_S = 3.0
+CHARGE_RETRY_LIMIT = 4
+CHARGE_RETRY_SLEEP_S = 2.0
 TRANSIENT_REQUEST_RETRY_LIMIT = 3
 TRANSIENT_REQUEST_RETRY_MIN_S = 1.0
 TRANSIENT_REQUEST_RETRY_MAX_S = 2.5
@@ -891,20 +893,56 @@ class GoPayCharger:
             "Origin": "https://app.midtrans.com",
             "Referer": f"https://app.midtrans.com/snap/v4/redirection/{snap_token}",
         }
-        r = self.ext.post(
-            url,
-            json={"payment_type": "gopay", "tokenization": "true", "promo_details": None},
-            headers=headers, timeout=DEFAULT_TIMEOUT,
-        )
-        r.raise_for_status()
-        data = r.json()
-        link = data.get("gopay_verification_link_url", "")
-        m = re.search(r"reference=([A-Za-z0-9]+)", link)
-        if not m:
-            raise GoPayError(f"midtrans charge: no reference in {link!r}")
-        charge_ref = m.group(1)
-        self.log(f"[gopay] midtrans charge ref={charge_ref}")
-        return charge_ref
+        body = {"payment_type": "gopay", "tokenization": "true", "promo_details": None}
+        last_detail = ""
+        for attempt in range(1, CHARGE_RETRY_LIMIT + 1):
+            try:
+                r = self.ext.post(
+                    url,
+                    json=body,
+                    headers=headers, timeout=DEFAULT_TIMEOUT,
+                )
+            except Exception as exc:
+                if not _looks_transient_request_error(exc) or attempt >= CHARGE_RETRY_LIMIT:
+                    raise
+                last_detail = f"{type(exc).__name__}: {str(exc)[:200]}"
+                self.log(
+                    "[gopay] midtrans charge transient error, "
+                    f"{CHARGE_RETRY_SLEEP_S:.1f}s 后重试 {attempt}/{CHARGE_RETRY_LIMIT}: {last_detail}"
+                )
+                time.sleep(CHARGE_RETRY_SLEEP_S)
+                continue
+
+            raw_text = (r.text or "")[:1000]
+            try:
+                data = r.json()
+            except Exception:
+                data = {}
+            headers_log = json.dumps(_safe_headers_for_log(r.headers), ensure_ascii=False, separators=(",", ":"))
+            keys_log = ",".join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__
+            link = data.get("gopay_verification_link_url", "") if isinstance(data, dict) else ""
+            self.log(
+                "[gopay] midtrans charge response "
+                f"attempt={attempt}/{CHARGE_RETRY_LIMIT} status={r.status_code} "
+                f"headers={headers_log} keys={keys_log} link={link!r} body={raw_text!r}"
+            )
+            r.raise_for_status()
+
+            m = re.search(r"reference=([A-Za-z0-9_-]+)", link or "")
+            if m:
+                charge_ref = m.group(1)
+                self.log(f"[gopay] midtrans charge ref={charge_ref}")
+                return charge_ref
+
+            last_detail = f"status={r.status_code} keys={keys_log} link={link!r} body={raw_text[:300]!r}"
+            if attempt < CHARGE_RETRY_LIMIT:
+                self.log(
+                    "[gopay] midtrans charge no reference, "
+                    f"{CHARGE_RETRY_SLEEP_S:.1f}s 后重试 {attempt}/{CHARGE_RETRY_LIMIT}"
+                )
+                time.sleep(CHARGE_RETRY_SLEEP_S)
+                continue
+        raise GoPayError(f"midtrans charge: no reference after retries: {last_detail}")
 
     # ───── Step 14: GoPay charge processing ─────
 
