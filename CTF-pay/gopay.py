@@ -302,6 +302,20 @@ def is_qr_payment_enabled(gopay_cfg: dict) -> bool:
     )
 
 
+def _looks_like_payment_return_url(value: str) -> bool:
+    lowered = str(value or "").strip().lower()
+    if not lowered:
+        return False
+    if "pm-redirects.stripe.com/return/" in lowered:
+        return True
+    if "finish_redirect_url" in lowered:
+        return True
+    return bool(
+        "transaction_status=" in lowered
+        and ("status_code=" in lowered or "/return/" in lowered)
+    )
+
+
 def pick_gopay_account_config(
     gopay_cfg: dict,
     *,
@@ -946,7 +960,10 @@ class GoPayCharger:
         ):
             value = data.get(key)
             if isinstance(value, str) and value.strip():
-                return value.strip(), "qr_string" if "string" in key or key in ("qris", "qr_content") else "qr_image_url"
+                value = value.strip()
+                if _looks_like_payment_return_url(value):
+                    continue
+                return value, "qr_string" if "string" in key or key in ("qris", "qr_content") else "qr_image_url"
 
         actions = data.get("actions")
         if isinstance(actions, list):
@@ -955,20 +972,25 @@ class GoPayCharger:
                     continue
                 name = str(action.get("name") or "").lower()
                 url = str(action.get("url") or "").strip()
+                if _looks_like_payment_return_url(url):
+                    continue
                 if url and ("qr" in name or "qris" in url.lower() or "qr-code" in url.lower()):
                     return url, "qr_image_url"
 
         for key in (
             "deeplink_redirect_url",
+            "deeplink_url",
             "gopay_deeplink_url",
             "redirect_url",
             "payment_url",
             "gopay_web_url",
-            "finish_redirect_url",
         ):
             value = data.get(key)
             if isinstance(value, str) and value.strip():
-                return value.strip(), "payment_url"
+                value = value.strip()
+                if _looks_like_payment_return_url(value):
+                    continue
+                return value, "payment_url"
         return "", ""
 
     def _midtrans_create_qr_charge(self, snap_token: str) -> dict:

@@ -378,6 +378,20 @@ def test_extract_qr_payload_from_qr_string():
     assert kind == "qr_string"
 
 
+def test_extract_qr_payload_ignores_stripe_return_url():
+    charger = build_charger()
+
+    payload, kind = charger._extract_qr_payload({
+        "finish_redirect_url": (
+            "https://pm-redirects.stripe.com/return/acct_1HOrSwC6h1nxGoI3/"
+            "sa_nonce_UTrPoXcSieL6w9f0lQjXMEHccRvUEaF?order_id=setatt_x&status_code=500"
+        ),
+    })
+
+    assert payload == ""
+    assert kind == ""
+
+
 def test_midtrans_linking_429_retries_past_406_limit(monkeypatch):
     sleeps: list[float] = []
     monkeypatch.setattr(gopay.time, "sleep", lambda s: sleeps.append(float(s)))
