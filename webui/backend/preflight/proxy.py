@@ -21,6 +21,7 @@ class ProxyInput(BaseModel):
     urls: list[str] | None = None
     register_urls: list[str] | None = None
     payment_urls: list[str] | None = None
+    gopay_urls: list[str] | None = None
     expected_country: str | None = None
     register_expected_country: str | None = None
     payment_expected_country: str | None = None
@@ -153,15 +154,21 @@ def check(body: dict) -> PreflightResult:
         for x in (cfg.payment_urls or [])
         if str(x).strip()
     ]
+    gopay_list = [
+        _normalize_manual_proxy_url(str(x).strip())
+        for x in (cfg.gopay_urls or [])
+        if str(x).strip()
+    ]
     proxy_list = [
         _normalize_manual_proxy_url(str(x).strip())
         for x in (cfg.urls or ([cfg.url] if cfg.url else []))
         if str(x).strip()
     ]
-    if register_list or payment_list:
+    if register_list or payment_list or gopay_list:
         checks: list[CheckResult] = []
         reg_proxy = (register_list or proxy_list or payment_list)[0] if (register_list or proxy_list or payment_list) else ""
         pay_proxy = (payment_list or proxy_list or register_list)[0] if (payment_list or proxy_list or register_list) else ""
+        gopay_proxy = (gopay_list or payment_list or proxy_list or register_list)[0] if (gopay_list or payment_list or proxy_list or register_list) else ""
         if reg_proxy:
             checks.extend(_check_one_proxy(
                 reg_proxy,
@@ -173,6 +180,12 @@ def check(body: dict) -> PreflightResult:
                 pay_proxy,
                 cfg.payment_expected_country or cfg.expected_country,
                 "payment_",
+            ))
+        if gopay_proxy:
+            checks.extend(_check_one_proxy(
+                gopay_proxy,
+                cfg.payment_expected_country or cfg.expected_country,
+                "gopay_",
             ))
         return aggregate(checks)
 

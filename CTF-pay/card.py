@@ -154,6 +154,35 @@ def _build_proxy_url_from_cfg(proxy_cfg) -> str:
     return f"http://{host}:{port}"
 
 
+def _normalize_proxy_url(proxy_url: str) -> str:
+    proxy_url = str(proxy_url or "").strip()
+    if not proxy_url:
+        return ""
+    if "://" in proxy_url:
+        return proxy_url
+    return f"http://{proxy_url}"
+
+
+def _proxy_lines_from_value(value) -> list[str]:
+    if isinstance(value, str):
+        raw = re.split(r"[\r\n,]+", value)
+    elif isinstance(value, (list, tuple, set)):
+        raw = value
+    else:
+        raw = []
+    return [_normalize_proxy_url(str(x).strip()) for x in raw if str(x).strip()]
+
+
+def _pick_gopay_proxy(cfg: dict) -> str:
+    proxies_cfg = (cfg or {}).get("proxies")
+    if not isinstance(proxies_cfg, dict):
+        return ""
+    choices = _proxy_lines_from_value(proxies_cfg.get("gopay_list") or proxies_cfg.get("gopay_urls"))
+    if not choices:
+        return ""
+    return random.choice(choices)
+
+
 def _apply_proxy_to_http_session(session_obj, proxy_url: str):
     try:
         session_obj.trust_env = False
@@ -4445,6 +4474,10 @@ def _drive_gopay_from_redirect(
     auth_cfg = (cfg.get("fresh_checkout") or {}).get("auth") or {}
     cs_session = _gopay._build_chatgpt_session(auth_cfg)
     proxy = (cfg.get("proxy") or "").strip() or None
+    gopay_proxy = _pick_gopay_proxy(cfg)
+    if gopay_proxy:
+        proxy = gopay_proxy
+        _log(f"      [gopay] 切换 GoPay 代理 → {gopay_proxy}")
     gopay_cfg = _gopay.pick_gopay_account_config(cfg.get("gopay") or {}, log=_log)
 
     if otp_file:

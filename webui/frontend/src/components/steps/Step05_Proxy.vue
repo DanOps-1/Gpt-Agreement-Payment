@@ -81,6 +81,15 @@
           rows="3"
         ></textarea>
       </label>
+      <label class="tf">
+        <span class="tf-tag">GoPay代理 URL</span>
+        <textarea
+          v-model="gopayProxyText"
+          class="tf-textarea"
+          placeholder="每行一个 GoPay 代理，进入 GoPay 支付前随机一行，默认按 http:// 拼接"
+          rows="3"
+        ></textarea>
+      </label>
       <TermField v-model="form.expected_country" label="期望国家 · expected_country" placeholder="US" />
       <div class="form-stack">
         <TermField v-model="form.register_expected_country" label="注册期望国家 · register_expected_country" placeholder="US" />
@@ -118,6 +127,8 @@ const form = ref({
   register_urls: (init.register_urls ?? []) as string[],
   payment_url: init.payment_url ?? "",
   payment_urls: (init.payment_urls ?? []) as string[],
+  gopay_url: init.gopay_url ?? "",
+  gopay_urls: (init.gopay_urls ?? []) as string[],
   expected_country: init.expected_country ?? "US",
   register_expected_country: init.register_expected_country ?? init.expected_country ?? "US",
   payment_expected_country: init.payment_expected_country ?? "JP",
@@ -163,6 +174,17 @@ const paymentProxyText = computed({
     form.value.url = form.value.register_url || form.value.payment_url || "";
   },
 });
+const gopayProxyText = computed({
+  get: () => {
+    const lines = form.value.gopay_urls?.length ? form.value.gopay_urls : (form.value.gopay_url ? [form.value.gopay_url] : []);
+    return lines.join("\n");
+  },
+  set: (v: string) => {
+    const lines = v.split("\n").map((s) => s.trim()).filter(Boolean);
+    form.value.gopay_urls = lines;
+    form.value.gopay_url = lines[0] || "";
+  },
+});
 const loading = ref(false);
 const result = ref<PreflightResult | null>(null);
 const showAdvanced = ref(false);
@@ -184,6 +206,7 @@ async function testProxy() {
       urls: form.value.urls,
       register_urls: form.value.register_urls,
       payment_urls: form.value.payment_urls,
+      gopay_urls: form.value.gopay_urls,
       expected_country: form.value.expected_country,
       register_expected_country: form.value.register_expected_country,
       payment_expected_country: form.value.payment_expected_country,

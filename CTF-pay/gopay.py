@@ -158,15 +158,27 @@ def _safe_all_headers_for_log(headers: Any) -> dict[str, str]:
     return out
 
 
+def _normalize_proxy_url(proxy: str) -> str:
+    proxy = str(proxy or "").strip()
+    if not proxy:
+        return ""
+    if "://" in proxy:
+        return proxy
+    return f"http://{proxy}"
+
+
 def _proxy_list_from_cfg(cfg: Optional[dict], primary_proxy: Optional[str] = None) -> list[str]:
     out: list[str] = []
     if primary_proxy:
-        out.append(str(primary_proxy).strip())
+        out.append(_normalize_proxy_url(str(primary_proxy).strip()))
     cfg = cfg or {}
     candidates: list[Any] = []
     proxies_cfg = cfg.get("proxies")
     if isinstance(proxies_cfg, dict):
-        candidates.append(proxies_cfg.get("list"))
+        gopay_candidates = proxies_cfg.get("gopay_list") or proxies_cfg.get("gopay_urls")
+        candidates.append(gopay_candidates)
+        if not gopay_candidates:
+            candidates.append(proxies_cfg.get("list"))
     candidates.append(cfg.get("proxy_pool"))
     candidates.append(cfg.get("proxy_list"))
     candidates.append(cfg.get("proxies"))
@@ -178,6 +190,7 @@ def _proxy_list_from_cfg(cfg: Optional[dict], primary_proxy: Optional[str] = Non
         else:
             parts = []
         for proxy in parts:
+            proxy = _normalize_proxy_url(proxy)
             if proxy and proxy not in out:
                 out.append(proxy)
     return out

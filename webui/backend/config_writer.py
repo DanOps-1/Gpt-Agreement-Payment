@@ -167,8 +167,16 @@ def _project_pay(answers: dict) -> dict:
             out["proxy"] = f"socks5://127.0.0.1:{gost_port}"
         elif mode == "none":
             out["proxy"] = ""
-        elif proxy.get("url") or proxy.get("register_url") or proxy.get("payment_url") or proxy.get("register_urls") or proxy.get("payment_urls"):
-            register_list, payment_list, legacy_list = _manual_proxy_lists(proxy)
+        elif (
+            proxy.get("url")
+            or proxy.get("register_url")
+            or proxy.get("payment_url")
+            or proxy.get("gopay_url")
+            or proxy.get("register_urls")
+            or proxy.get("payment_urls")
+            or proxy.get("gopay_urls")
+        ):
+            register_list, payment_list, gopay_list, legacy_list = _manual_proxy_lists(proxy)
             primary_proxy = (payment_list or register_list or legacy_list)[0]
             out["proxy"] = primary_proxy
             out["proxies"] = {
@@ -177,6 +185,7 @@ def _project_pay(answers: dict) -> dict:
                 "list": legacy_list or register_list or payment_list,
                 "register_list": register_list,
                 "payment_list": payment_list,
+                "gopay_list": gopay_list,
                 "register_expected_country": proxy.get("register_expected_country") or proxy.get("expected_country", "US"),
                 "payment_expected_country": proxy.get("payment_expected_country", "JP"),
             }
@@ -225,8 +234,16 @@ def _project_reg(answers: dict) -> dict:
             out["proxy"] = f"socks5://127.0.0.1:{gost_port}"
         elif mode == "none":
             out["proxy"] = ""
-        elif proxy.get("url") or proxy.get("register_url") or proxy.get("payment_url") or proxy.get("register_urls") or proxy.get("payment_urls"):
-            register_list, payment_list, legacy_list = _manual_proxy_lists(proxy)
+        elif (
+            proxy.get("url")
+            or proxy.get("register_url")
+            or proxy.get("payment_url")
+            or proxy.get("gopay_url")
+            or proxy.get("register_urls")
+            or proxy.get("payment_urls")
+            or proxy.get("gopay_urls")
+        ):
+            register_list, payment_list, gopay_list, legacy_list = _manual_proxy_lists(proxy)
             primary_proxy = (register_list or payment_list or legacy_list)[0]
             out["proxy"] = primary_proxy
             out["proxies"] = {
@@ -235,6 +252,7 @@ def _project_reg(answers: dict) -> dict:
                 "list": legacy_list or register_list or payment_list,
                 "register_list": register_list,
                 "payment_list": payment_list,
+                "gopay_list": gopay_list,
                 "register_expected_country": proxy.get("register_expected_country") or proxy.get("expected_country", "US"),
                 "payment_expected_country": proxy.get("payment_expected_country", "JP"),
             }
@@ -332,9 +350,10 @@ def _normalize_manual_proxy_url(proxy_url: str) -> str:
     return f"http://{proxy_url}"
 
 
-def _manual_proxy_lists(proxy: dict) -> tuple[list[str], list[str], list[str]]:
+def _manual_proxy_lists(proxy: dict) -> tuple[list[str], list[str], list[str], list[str]]:
     register_list = _proxy_lines(proxy.get("register_urls") or proxy.get("register_url"))
     payment_list = _proxy_lines(proxy.get("payment_urls") or proxy.get("payment_url"))
+    gopay_list = _proxy_lines(proxy.get("gopay_urls") or proxy.get("gopay_url"))
     legacy_list = _proxy_lines(
         proxy.get("urls")
         if isinstance(proxy.get("urls"), list)
@@ -346,4 +365,4 @@ def _manual_proxy_lists(proxy: dict) -> tuple[list[str], list[str], list[str]]:
         payment_list = legacy_list[1:]
     elif not payment_list and legacy_list:
         payment_list = legacy_list[:1]
-    return register_list, payment_list, legacy_list
+    return register_list, payment_list, gopay_list, legacy_list

@@ -3112,10 +3112,11 @@ class ProxyPool:
     """代理轮换池（stub）。未来扩展：健康检查、失败标记、LRU 轮换。
     当前行为：有 list 则返回第一个（保持稳定），无 list 返回空字符串（走配置默认代理）。"""
 
-    def __init__(self, proxies=None, rotation="static", state_file=None, register_proxies=None, payment_proxies=None):
+    def __init__(self, proxies=None, rotation="static", state_file=None, register_proxies=None, payment_proxies=None, gopay_proxies=None):
         self.proxies = [p for p in (proxies or []) if p and str(p).strip()]
         self.register_proxies = [p for p in (register_proxies or []) if p and str(p).strip()]
         self.payment_proxies = [p for p in (payment_proxies or []) if p and str(p).strip()]
+        self.gopay_proxies = [p for p in (gopay_proxies or []) if p and str(p).strip()]
         self.rotation = rotation  # static / random / lru
         self.state_file = state_file
         self._lock = threading.Lock()
@@ -3169,6 +3170,7 @@ def _build_proxy_pool_from_card_cfg(card_cfg) -> "ProxyPool":
         proxies=pp.get("list", []),
         register_proxies=pp.get("register_list", []),
         payment_proxies=pp.get("payment_list", []),
+        gopay_proxies=pp.get("gopay_list", []),
         rotation=pp.get("rotation", "static"),
     )
 
