@@ -297,20 +297,16 @@ class MailProvider:
                 """
                 SELECT id, email, password, client_id, refresh_token
                 FROM outlook_mail_accounts
-                WHERE status IN ('available', 'failed')
+                WHERE status='available'
                    OR (status='reserved' AND reserved_at <= ?)
-                ORDER BY CASE status
-                    WHEN 'available' THEN 0
-                    WHEN 'failed' THEN 1
-                    ELSE 2
-                END, id ASC
+                ORDER BY CASE status WHEN 'available' THEN 0 ELSE 1 END, id ASC
                 LIMIT 1
                 """,
                 (stale_reserved_before,),
             ).fetchone()
             if not row:
                 c.execute("COMMIT")
-                raise RuntimeError("Outlook 邮箱池已耗尽：没有可复用账号（used 或仍在 reserved 冷却中）")
+                raise RuntimeError("Outlook 邮箱池已耗尽：没有可复用账号（available 或已过期 reserved）")
             c.execute(
                 """
                 UPDATE outlook_mail_accounts

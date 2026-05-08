@@ -770,7 +770,11 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
                 _terminate_process_tree(proc)
                 failed_email = _extract_registered_email_from_logs(lines)
                 if failed_email:
-                    _release_outlook_mail_account(failed_email, "registration_timeout")
+                    should_fail, fail_reason = _should_fail_outlook_mail_on_registration_error(lines)
+                    if should_fail:
+                        _mark_outlook_mail_account_failed(failed_email, fail_reason or "registration_timeout")
+                    else:
+                        _release_outlook_mail_account(failed_email, "registration_timeout")
                 raise RegistrationError("注册超时")
     finally:
         proc.wait()
@@ -779,13 +783,21 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
         last_lines = "\n".join(lines[-5:])
         failed_email = _extract_registered_email_from_logs(lines)
         if failed_email:
-            _release_outlook_mail_account(failed_email, "registration_failed")
+            should_fail, fail_reason = _should_fail_outlook_mail_on_registration_error(lines)
+            if should_fail:
+                _mark_outlook_mail_account_failed(failed_email, fail_reason or "registration_failed")
+            else:
+                _release_outlook_mail_account(failed_email, "registration_failed")
         raise RegistrationError(f"注册失败 (exit={proc.returncode}): {last_lines}")
 
     if result_json is None:
         failed_email = _extract_registered_email_from_logs(lines)
         if failed_email:
-            _release_outlook_mail_account(failed_email, "registration_no_credentials")
+            should_fail, fail_reason = _should_fail_outlook_mail_on_registration_error(lines)
+            if should_fail:
+                _mark_outlook_mail_account_failed(failed_email, fail_reason or "registration_no_credentials")
+            else:
+                _release_outlook_mail_account(failed_email, "registration_no_credentials")
         raise RegistrationError("注册完成但未获取到凭证")
 
     email = result_json.get("email", "?")
@@ -1736,6 +1748,28 @@ def _release_outlook_mail_account(email: str, reason: str) -> None:
             print(f"[mail] Outlook 邮箱释放为可复用: {target} ({reason})")
     except Exception as e:
         print(f"[mail] Outlook 邮箱释放失败: {target}: {e}")
+
+
+def _mark_outlook_mail_account_failed(email: str, reason: str) -> None:
+    target = _norm_email(email)
+    if not target:
+        return
+    try:
+        if get_db().fail_outlook_mail_account(target, reason):
+            print(f"[mail] Outlook 邮箱标记失败: {target} ({reason})")
+    except Exception as e:
+        print(f"[mail] Outlook 邮箱标记失败异常: {target}: {e}")
+
+
+def _should_fail_outlook_mail_on_registration_error(lines) -> tuple[bool, str]:
+    text = "\n".join(str(x or "") for x in (lines or [])[-80:]).lower()
+    if "缺少凭证" in text or "missing credentials" in text:
+        return True, "registration_missing_credentials"
+    if "session_token=false" in text:
+        return True, "registration_missing_session_token"
+    if "skip_signup_codex_rt=1" in text and "已知 100% 失败" in text:
+        return True, "registration_signup_codex_rt_skipped"
+    return False, ""
 
 
 def _extract_registered_email_from_logs(lines) -> str:

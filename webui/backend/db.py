@@ -830,6 +830,22 @@ class Database:
             )
         return bool(cur.rowcount)
 
+    def fail_outlook_mail_account(self, email: str, reason: str = "") -> bool:
+        target = _email(email)
+        if not target:
+            return False
+        now = time.time()
+        with self._conn() as c:
+            cur = c.execute(
+                """
+                UPDATE outlook_mail_accounts
+                SET status='failed', reserved_at=0, updated_at=?, last_error=?
+                WHERE email=? AND status!='used'
+                """,
+                (now, _text(reason)[:500], target),
+            )
+        return bool(cur.rowcount)
+
     def user_count(self) -> int:
         with self._conn() as c:
             return c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
