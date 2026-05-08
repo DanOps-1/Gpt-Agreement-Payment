@@ -153,18 +153,6 @@ def _safe_headers_for_log(headers: Any) -> dict[str, str]:
     return out
 
 
-def _safe_all_headers_for_log(headers: Any) -> dict[str, str]:
-    out: dict[str, str] = {}
-    try:
-        items = headers.items()
-    except Exception:
-        return out
-    for key, value in items:
-        k = str(key)
-        out[k] = str(value)[:1000]
-    return out
-
-
 def _normalize_proxy_url(proxy: str) -> str:
     proxy = str(proxy or "").strip()
     if not proxy:
@@ -739,8 +727,6 @@ class GoPayCharger:
             "Origin": "https://app.midtrans.com",
             "Referer": f"https://app.midtrans.com/snap/v4/redirection/{snap_token}",
         }
-        effective_headers = dict(getattr(self.ext, "headers", {}) or {})
-        effective_headers.update(headers)
         last_err: Optional[str] = None
         rate_limit_attempt = 0
         attempt = 0
@@ -791,19 +777,11 @@ class GoPayCharger:
             if r.status_code == 429:
                 rate_limit_attempt += 1
                 last_err = f"429 {r.text[:120]}"
-                self.log(
-                    "[gopay] midtrans linking 429 request_headers="
-                    + json.dumps(_safe_all_headers_for_log(effective_headers), ensure_ascii=False, separators=(",", ":"))
-                )
                 if rate_limit_attempt > LINK_429_RETRY_LIMIT:
                     raise GoPayError(f"midtrans linking 429 exhausted retries: {last_err}")
                 if rate_limit_attempt % LINK_429_PROXY_SWITCH_EVERY == 0:
                     self._switch_proxy_after_429()
                 sleep_s = random.uniform(LINK_429_RETRY_SLEEP_MIN_S, LINK_429_RETRY_SLEEP_MAX_S)
-                self.log(
-                    "[gopay] midtrans linking 429 rate limited, "
-                    f"{sleep_s:.1f}s 后重试 {rate_limit_attempt}/{LINK_429_RETRY_LIMIT}"
-                )
                 time.sleep(sleep_s)
                 continue
             raise GoPayError(

@@ -50,6 +50,13 @@ def build_charger(otp_value: str = "123456", pin: str = "654321") -> gopay.GoPay
     return gopay.GoPayCharger(cs_session, cfg, otp_provider=lambda: otp_value, log=lambda _m: None)
 
 
+def build_logged_charger(logs: list[str], otp_value: str = "123456", pin: str = "654321") -> gopay.GoPayCharger:
+    cs_session = requests.Session()
+    cs_session.headers["Cookie"] = "__Secure-next-auth.session-token=fake"
+    cfg = {"country_code": "86", "phone_number": "00000000000", "pin": pin}
+    return gopay.GoPayCharger(cs_session, cfg, otp_provider=lambda: otp_value, log=logs.append)
+
+
 # ────────────────── full happy path ──────────────────
 
 
@@ -287,6 +294,41 @@ def test_midtrans_linking_429_retries_then_success(monkeypatch):
 
 
 # ────────────────── OTP cancel ──────────────────
+
+
+def test_midtrans_linking_first_429_retries_without_realtime_429_log(monkeypatch):
+    sleeps: list[float] = []
+    logs: list[str] = []
+    monkeypatch.setattr(gopay.time, "sleep", lambda s: sleeps.append(float(s)))
+    monkeypatch.setattr(gopay.random, "uniform", lambda a, b: 2.5)
+
+    class Resp:
+        def __init__(self, status_code: int, text: str = "", body: dict | None = None):
+            self.status_code = status_code
+            self.text = text
+            self._body = body or {}
+
+        def json(self):
+            return self._body
+
+    class Ext:
+        def __init__(self):
+            self.calls = 0
+
+        def post(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return Resp(429, text="too many requests")
+            return Resp(201, body={"activation_link_url": f"https://x.test/?reference={LINK_REF}"})
+
+    charger = build_logged_charger(logs)
+    ext = Ext()
+    charger.ext = ext
+
+    assert charger._midtrans_init_linking(SNAP_TOKEN) == LINK_REF
+    assert ext.calls == 2
+    assert sleeps == [2.5]
+    assert not [line for line in logs if "429" in line or "request_headers" in line or "rate limited" in line]
 
 
 def test_midtrans_linking_429_retries_past_406_limit(monkeypatch):
