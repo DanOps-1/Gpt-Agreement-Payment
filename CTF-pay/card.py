@@ -135,6 +135,35 @@ def _sync_outlook_mail_payment_state(email: str, paid: bool, reason: str = "") -
     except Exception as e:
         _log(f"      [mail] 同步 Outlook 邮箱状态失败: {e}")
 
+def _run_gopay_auto_unbind_for_selected_account(cfg: dict) -> None:
+    try:
+        gp = (cfg or {}).get("gopay") or {}
+        if not isinstance(gp, dict):
+            return
+        auto = gp.get("auto_unbind") if isinstance(gp.get("auto_unbind"), dict) else {}
+        if not auto or not str(auto.get("raw_request") or "").strip():
+            return
+        label = str(gp.get("_selected_account_label") or gp.get("label") or gp.get("name") or "default")
+        _log(f"      [gopay] 自动解绑开始 account={label}")
+        from webui.backend import gopay_auto_unbind
+        result = gopay_auto_unbind.run_from_gopay_config(gp, log=lambda m: _log(f"      {m}"))
+        if result.get("skipped"):
+            _log(f"      [gopay] 自动解绑跳过: {result.get('reason', 'unknown')}")
+        elif result.get("ok"):
+            _log(
+                "      [gopay] 自动解绑成功 "
+                f"status={result.get('unlink_status_code')} url={result.get('unlink_url')}"
+            )
+        else:
+            _log(
+                "      [gopay] 自动解绑失败 "
+                f"reason={result.get('reason', 'unknown')} "
+                f"linkedapps_status={result.get('linkedapps_status_code')} "
+                f"unlink_status={result.get('unlink_status_code')}"
+            )
+    except Exception as e:
+        _log(f"      [gopay] 自动解绑异常: {e}")
+
 
 def _describe_challenge_artifact(name: str, value: str) -> str:
     value = str(value or "")
@@ -4523,6 +4552,7 @@ def _drive_gopay_from_redirect(
         or None
     )
     gopay_cfg = _gopay.pick_gopay_account_config(cfg.get("gopay") or {}, log=_log)
+    cfg["gopay"] = gopay_cfg
 
     if otp_file:
         provider = _gopay.file_watch_otp_provider(_Path(otp_file), timeout=300.0)
@@ -8842,6 +8872,9 @@ def run(
                 _log(f"      [RT] 缺少条件，跳过 (password={bool(_password)} mail_cfg={bool(_mail_cfg)})")
         except Exception as e:
             _log(f"      [RT] 获取异常: {e}")
+
+    if use_gopay and result_state == "succeeded":
+        _run_gopay_auto_unbind_for_selected_account(cfg)
 
     _record_result(
         status=result_state,

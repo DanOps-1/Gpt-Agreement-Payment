@@ -44,7 +44,10 @@ _otp_pending_since: Optional[float] = None
 _otp_pending_phone: str = ""
 _otp_pending_country_code: str = ""
 _otp_file_is_temp: bool = False
-_RUN_GOPAY_AUTO_UNBIND_ENABLED = True
+# card.py runs GoPay auto-unbind with the exact selected account config.  The
+# runner only sees shared stdout, so doing it here would use the global config
+# and can unlink the wrong wallet when multiple GoPay accounts are configured.
+_RUN_GOPAY_AUTO_UNBIND_ENABLED = False
 
 
 def _append_log(line: str) -> None:

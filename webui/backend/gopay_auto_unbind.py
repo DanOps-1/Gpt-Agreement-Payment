@@ -356,14 +356,7 @@ def _unlink_candidates(entry: dict[str, Any]) -> list[dict[str, Any]]:
     return candidates
 
 
-def _load_auto_unbind_config(config_path: Path) -> tuple[str, str, str, dict[str, Any] | None]:
-    try:
-        cfg = json.loads(config_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return "", "", "", {"ok": False, "skipped": True, "reason": "config_not_found"}
-    except Exception as e:
-        return "", "", "", {"ok": False, "skipped": True, "reason": f"config_read_failed: {e}"}
-    gp = cfg.get("gopay") if isinstance(cfg, dict) else {}
+def _load_auto_unbind_from_gopay(gp: dict[str, Any]) -> tuple[str, str, str, dict[str, Any] | None]:
     auto = gp.get("auto_unbind") if isinstance(gp, dict) else {}
     if not isinstance(auto, dict):
         return "", "", "", {"ok": False, "skipped": True, "reason": "auto_unbind_not_configured"}
@@ -373,6 +366,17 @@ def _load_auto_unbind_config(config_path: Path) -> tuple[str, str, str, dict[str
     if not raw_request.strip():
         return base_url, raw_request, unlink_raw_request, {"ok": False, "skipped": True, "reason": "raw_request_empty"}
     return base_url, raw_request, unlink_raw_request, None
+
+
+def _load_auto_unbind_config(config_path: Path) -> tuple[str, str, str, dict[str, Any] | None]:
+    try:
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "", "", "", {"ok": False, "skipped": True, "reason": "config_not_found"}
+    except Exception as e:
+        return "", "", "", {"ok": False, "skipped": True, "reason": f"config_read_failed: {e}"}
+    gp = cfg.get("gopay") if isinstance(cfg, dict) else {}
+    return _load_auto_unbind_from_gopay(gp if isinstance(gp, dict) else {})
 
 
 def fetch_linkedapps_from_config(config_path: Path, timeout: float = 20.0) -> dict[str, Any]:
@@ -506,8 +510,8 @@ def unlink_entry_from_config(
     }
 
 
-def run_from_config(config_path: Path, log=lambda _m: None) -> dict[str, Any]:
-    base_url, raw_request, unlink_raw_request, error = _load_auto_unbind_config(config_path)
+def run_from_gopay_config(gopay_cfg: dict[str, Any], log=lambda _m: None) -> dict[str, Any]:
+    base_url, raw_request, unlink_raw_request, error = _load_auto_unbind_from_gopay(gopay_cfg or {})
     if error:
         return error
 
@@ -641,3 +645,14 @@ def run_from_config(config_path: Path, log=lambda _m: None) -> dict[str, Any]:
         "unlink_body": last_patch.get("body") if last_patch else "",
         "verify_status_code": last_verify.get("status_code") if last_verify else None,
     }
+
+
+def run_from_config(config_path: Path, log=lambda _m: None) -> dict[str, Any]:
+    try:
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"ok": False, "skipped": True, "reason": "config_not_found"}
+    except Exception as e:
+        return {"ok": False, "skipped": True, "reason": f"config_read_failed: {e}"}
+    gp = cfg.get("gopay") if isinstance(cfg, dict) else {}
+    return run_from_gopay_config(gp if isinstance(gp, dict) else {}, log=log)

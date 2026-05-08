@@ -42,6 +42,9 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
         }
         if item.get("midtrans_client_id") or gp.get("midtrans_client_id"):
             account["midtrans_client_id"] = str(item.get("midtrans_client_id") or gp.get("midtrans_client_id"))
+        auto_unbind = _gopay_auto_unbind_from_value(item, fallback=gp)
+        if auto_unbind:
+            account["auto_unbind"] = auto_unbind
         if all(account.get(k) for k in ("country_code", "phone_number", "pin")):
             accounts.append(account)
 
@@ -57,8 +60,42 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
         }
         if gp.get("midtrans_client_id"):
             account["midtrans_client_id"] = str(gp["midtrans_client_id"])
+        auto_unbind = _gopay_auto_unbind_from_value(gp)
+        if auto_unbind:
+            account["auto_unbind"] = auto_unbind
         return [account]
     return []
+
+
+def _gopay_auto_unbind_from_value(value: dict, fallback: dict | None = None) -> dict:
+    fallback = fallback or {}
+    src = value.get("auto_unbind") if isinstance(value.get("auto_unbind"), dict) else {}
+    auto_unbind_base_url = str(
+        src.get("base_url")
+        or value.get("auto_unbind_base_url")
+        or fallback.get("auto_unbind_base_url")
+        or ""
+    ).strip()
+    raw_unbind_request = str(
+        src.get("raw_request")
+        or value.get("auto_unbind_raw_request")
+        or fallback.get("auto_unbind_raw_request")
+        or ""
+    )
+    unlink_raw_request = str(
+        src.get("unlink_raw_request")
+        or value.get("auto_unbind_unlink_raw_request")
+        or fallback.get("auto_unbind_unlink_raw_request")
+        or ""
+    )
+    auto_unbind = {}
+    if auto_unbind_base_url:
+        auto_unbind["base_url"] = auto_unbind_base_url
+    if raw_unbind_request.strip():
+        auto_unbind["raw_request"] = raw_unbind_request
+    if unlink_raw_request.strip():
+        auto_unbind["unlink_raw_request"] = unlink_raw_request
+    return auto_unbind
 
 
 def _project_pay(answers: dict) -> dict:
@@ -104,16 +141,7 @@ def _project_pay(answers: dict) -> dict:
                 "timeout": int(gp.get("otp_timeout") or 300),
                 "interval": 1,
             }
-            raw_unbind_request = str(gp.get("auto_unbind_raw_request") or "")
-            unlink_raw_request = str(gp.get("auto_unbind_unlink_raw_request") or "")
-            auto_unbind_base_url = str(gp.get("auto_unbind_base_url") or "").strip()
-            auto_unbind = {}
-            if auto_unbind_base_url:
-                auto_unbind["base_url"] = auto_unbind_base_url
-            if raw_unbind_request.strip():
-                auto_unbind["raw_request"] = raw_unbind_request
-            if unlink_raw_request.strip():
-                auto_unbind["unlink_raw_request"] = unlink_raw_request
+            auto_unbind = _gopay_auto_unbind_from_value(first, fallback=gp)
             if auto_unbind:
                 out["gopay"]["auto_unbind"] = auto_unbind
     if "team_plan" in answers:

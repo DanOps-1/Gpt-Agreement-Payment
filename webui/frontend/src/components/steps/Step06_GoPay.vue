@@ -133,8 +133,13 @@
             <span class="otp-prompt">$</span> GoPay 自动解绑
           </div>
           <p class="otp-desc">
-            保存 linked-apps 原始请求，供现有解绑助手使用。
+            保存当前 GoPay 账号的 linked-apps 原始请求。支付使用哪个账号，就会使用该账号的解绑请求。
           </p>
+          <TermSelect
+            v-model="unbindDialog.accountIndex"
+            label="GoPay 账号"
+            :options="unbindAccountOptions"
+          />
           <TermField
             v-model="unbindDialog.base_url"
             label="基础地址"
@@ -194,6 +199,9 @@ type GoPayAccountForm = {
   phone_number: string;
   pin: string;
   midtrans_client_id?: string;
+  auto_unbind_raw_request?: string;
+  auto_unbind_base_url?: string;
+  auto_unbind_unlink_raw_request?: string;
 };
 
 const store = useWizardStore();
@@ -209,6 +217,9 @@ function newAccount(seed?: Partial<GoPayAccountForm>, index = 0): GoPayAccountFo
     phone_number: seed?.phone_number ?? "",
     pin: seed?.pin ?? "",
     midtrans_client_id: seed?.midtrans_client_id ?? "",
+    auto_unbind_raw_request: seed?.auto_unbind_raw_request ?? "",
+    auto_unbind_base_url: seed?.auto_unbind_base_url ?? "",
+    auto_unbind_unlink_raw_request: seed?.auto_unbind_unlink_raw_request ?? "",
   };
 }
 
@@ -222,6 +233,9 @@ function initialAccounts(): GoPayAccountForm[] {
       phone_number: item.phone_number ?? "",
       pin: item.pin ?? "",
       midtrans_client_id: item.midtrans_client_id ?? init.midtrans_client_id ?? "",
+      auto_unbind_raw_request: item.auto_unbind_raw_request ?? item.auto_unbind?.raw_request ?? (idx === 0 ? init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "" : ""),
+      auto_unbind_base_url: item.auto_unbind_base_url ?? item.auto_unbind?.base_url ?? (idx === 0 ? init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "" : ""),
+      auto_unbind_unlink_raw_request: item.auto_unbind_unlink_raw_request ?? item.auto_unbind?.unlink_raw_request ?? (idx === 0 ? init.auto_unbind_unlink_raw_request ?? init.auto_unbind?.unlink_raw_request ?? "" : ""),
     }, idx));
   if (accounts.length) return accounts;
   return [newAccount({
@@ -230,15 +244,15 @@ function initialAccounts(): GoPayAccountForm[] {
     phone_number: init.phone_number ?? "",
     pin: init.pin ?? "",
     midtrans_client_id: init.midtrans_client_id ?? "",
+    auto_unbind_raw_request: init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "",
+    auto_unbind_base_url: init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "",
+    auto_unbind_unlink_raw_request: init.auto_unbind_unlink_raw_request ?? init.auto_unbind?.unlink_raw_request ?? "",
   }, 0)];
 }
 
 const form = ref({
   accounts: initialAccounts(),
   otp_timeout: init.otp_timeout ?? initOtp.timeout ?? 300,
-  auto_unbind_raw_request: init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "",
-  auto_unbind_base_url: init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "",
-  auto_unbind_unlink_raw_request: init.auto_unbind_unlink_raw_request ?? init.auto_unbind?.unlink_raw_request ?? "",
 });
 
 const status = ref<{
@@ -263,6 +277,7 @@ const otpDialog = ref({
 });
 const unbindDialog = ref({
   open: false,
+  accountIndex: "0",
   value: "",
   base_url: "",
   unlink_raw_request: "",
@@ -295,6 +310,16 @@ const otpAccountOptions = computed(() => form.value.accounts
     };
   })
   .filter(Boolean) as { value: string; label: string; desc: string }[]);
+
+const unbindAccountOptions = computed(() => form.value.accounts.map((account, idx) => {
+  const phone = String(account.phone_number || "").trim();
+  const countryCode = String(account.country_code || "").replace(/^\+/, "") || "62";
+  return {
+    value: String(idx),
+    label: account.label ? `${account.label} (+${countryCode} ${phone || "-"})` : `GoPay #${idx + 1}`,
+    desc: "该账号支付成功后使用这组解绑 header",
+  };
+}));
 
 const selectedOtpAccount = computed(() => {
   const fallback = otpAccountOptions.value[0]?.value || "";
@@ -403,10 +428,13 @@ function maybeResolveOtpTest() {
 }
 
 function openUnbindDialog() {
+  const idx = Number(unbindDialog.value.accountIndex || 0);
+  const account = form.value.accounts[idx] || form.value.accounts[0] || newAccount({}, 0);
   unbindDialog.value.open = true;
-  unbindDialog.value.value = form.value.auto_unbind_raw_request || "";
-  unbindDialog.value.base_url = form.value.auto_unbind_base_url || "";
-  unbindDialog.value.unlink_raw_request = form.value.auto_unbind_unlink_raw_request || "";
+  unbindDialog.value.accountIndex = String(Math.max(0, form.value.accounts.indexOf(account)));
+  unbindDialog.value.value = account.auto_unbind_raw_request || "";
+  unbindDialog.value.base_url = account.auto_unbind_base_url || "";
+  unbindDialog.value.unlink_raw_request = account.auto_unbind_unlink_raw_request || "";
   unbindDialog.value.body = "";
   unbindDialog.value.fetchMeta = "";
   unbindDialog.value.hasData = false;
@@ -418,17 +446,18 @@ function closeUnbindDialog() {
 }
 
 async function saveUnbindRequest() {
-  form.value.auto_unbind_raw_request = unbindDialog.value.value;
-  form.value.auto_unbind_base_url = unbindDialog.value.base_url.trim();
-  form.value.auto_unbind_unlink_raw_request = unbindDialog.value.unlink_raw_request;
+  const idx = Number(unbindDialog.value.accountIndex || 0);
+  const account = form.value.accounts[idx];
+  if (!account) {
+    message.warning("请选择 GoPay 账号");
+    return;
+  }
+  account.auto_unbind_raw_request = unbindDialog.value.value;
+  account.auto_unbind_base_url = unbindDialog.value.base_url.trim();
+  account.auto_unbind_unlink_raw_request = unbindDialog.value.unlink_raw_request;
   store.setAnswer("gopay", buildGopayAnswer());
   try {
     await store.saveToServer();
-    await api.post("/config/gopay/auto-unbind", {
-      raw_request: form.value.auto_unbind_raw_request,
-      base_url: form.value.auto_unbind_base_url,
-      unlink_raw_request: form.value.auto_unbind_unlink_raw_request,
-    });
     closeUnbindDialog();
     message.success("自动解绑请求已保存");
   } catch (e: any) {
@@ -467,13 +496,23 @@ async function fetchUnbindBody() {
 }
 
 function cleanAccount(account: GoPayAccountForm, index: number) {
-  return {
+  const cleaned: any = {
     label: account.label || `account-${index + 1}`,
     country_code: String(account.country_code || "").replace(/^\+/, ""),
     phone_number: String(account.phone_number || ""),
     pin: String(account.pin || ""),
     midtrans_client_id: String(account.midtrans_client_id || ""),
   };
+  if (String(account.auto_unbind_base_url || "").trim()) {
+    cleaned.auto_unbind_base_url = String(account.auto_unbind_base_url || "").trim();
+  }
+  if (String(account.auto_unbind_raw_request || "").trim()) {
+    cleaned.auto_unbind_raw_request = String(account.auto_unbind_raw_request || "");
+  }
+  if (String(account.auto_unbind_unlink_raw_request || "").trim()) {
+    cleaned.auto_unbind_unlink_raw_request = String(account.auto_unbind_unlink_raw_request || "");
+  }
+  return cleaned;
 }
 
 function buildGopayAnswer() {
@@ -486,9 +525,6 @@ function buildGopayAnswer() {
     midtrans_client_id: first.midtrans_client_id,
     accounts,
     otp_timeout: form.value.otp_timeout,
-    auto_unbind_raw_request: form.value.auto_unbind_raw_request,
-    auto_unbind_base_url: form.value.auto_unbind_base_url,
-    auto_unbind_unlink_raw_request: form.value.auto_unbind_unlink_raw_request,
     otp: {
       source: "auto",
       timeout: form.value.otp_timeout,
@@ -511,6 +547,19 @@ watch(otpAccountOptions, (options) => {
     otpDialog.value.accountKey = options[0].value;
   }
 }, { immediate: true });
+
+watch(() => unbindDialog.value.accountIndex, (value) => {
+  if (!unbindDialog.value.open) return;
+  const account = form.value.accounts[Number(value || 0)];
+  if (!account) return;
+  unbindDialog.value.value = account.auto_unbind_raw_request || "";
+  unbindDialog.value.base_url = account.auto_unbind_base_url || "";
+  unbindDialog.value.unlink_raw_request = account.auto_unbind_unlink_raw_request || "";
+  unbindDialog.value.body = "";
+  unbindDialog.value.fetchMeta = "";
+  unbindDialog.value.hasData = false;
+  unbindDialog.value.preview_unlink_url = "";
+});
 
 onMounted(() => {
   refreshStatus();
