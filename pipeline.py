@@ -59,6 +59,57 @@ def _subprocess_tree_kwargs() -> dict:
     return {"start_new_session": True}
 
 
+def _proxy_url_from_cfg_value(proxy_cfg) -> str:
+    if not proxy_cfg:
+        return ""
+    if isinstance(proxy_cfg, str):
+        return proxy_cfg.strip()
+    if not isinstance(proxy_cfg, dict):
+        return ""
+    host = str(proxy_cfg.get("host") or "").strip()
+    if not host:
+        return ""
+    port = str(proxy_cfg.get("port") or "").strip()
+    user = str(proxy_cfg.get("user") or "").strip()
+    pwd = str(proxy_cfg.get("pass") or proxy_cfg.get("password") or "").strip()
+    scheme = str(proxy_cfg.get("scheme") or proxy_cfg.get("type") or "http").strip() or "http"
+    auth = f"{user}:{pwd}@" if user or pwd else ""
+    suffix = f":{port}" if port else ""
+    return f"{scheme}://{auth}{host}{suffix}"
+
+
+def _read_payment_proxy_url(card_config_path: str) -> str:
+    try:
+        with open(card_config_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        return _proxy_url_from_cfg_value((cfg or {}).get("proxy"))
+    except Exception:
+        return ""
+
+
+def _log_payment_exit_ip(card_config_path: str, *, label: str = "Stripe 支付") -> None:
+    proxy_url = _read_payment_proxy_url(card_config_path)
+    display_proxy = proxy_url or "direct"
+    try:
+        import httpx
+
+        http_proxy = proxy_url.replace("socks5://", "socks5h://", 1) if proxy_url.startswith("socks5://") else proxy_url
+        with httpx.Client(proxy=http_proxy or None, timeout=12.0, trust_env=False) as client:
+            ip = client.get("https://api.ipify.org").text.strip()
+        country = ""
+        try:
+            with httpx.Client(timeout=8.0, trust_env=False) as client:
+                geo = client.get(f"http://ip-api.com/json/{ip}").json()
+            cc = str(geo.get("countryCode") or "").strip()
+            cname = str(geo.get("country") or "").strip()
+            country = f" {cc}/{cname}" if cc or cname else ""
+        except Exception:
+            country = ""
+        print(f"[pipeline] {label}出口IP: {ip}{country} proxy={display_proxy}")
+    except Exception as e:
+        print(f"[pipeline] {label}出口IP检测失败: {e} proxy={display_proxy}")
+
+
 def _terminate_process_tree(proc: subprocess.Popen, timeout: float = 5.0) -> None:
     if proc.poll() is not None:
         return
@@ -1072,6 +1123,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
         print(f"\n{'='*60}")
         print(f"[pipeline] Step 2/2: Stripe 支付 ({reg.get('email', '?')})")
         print(f"{'='*60}")
+        _log_payment_exit_ip(effective_card)
         try:
             pay_result = pay(
                 effective_card,
@@ -1535,6 +1587,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
             invite_perm = "-"
             try:
                 _refresh_proxy_before_payment(card_cfg or {}, team_client=team_client)
+                _log_payment_exit_ip(card_config_path, label="Stripe 支付")
                 pay_result = pay(
                     card_config_path,
                     session_token=acc.get("session_token"),
@@ -1810,6 +1863,7 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         print(f"[pay-only] payment proxy override failed, use config proxy: {e}")
     try:
         _refresh_proxy_before_payment(card_cfg or {})
+        _log_payment_exit_ip(pay_card_config_path, label="pay-only 支付")
         result = pay(
             pay_card_config_path,
             session_token=account.get("session_token") if account else None,
