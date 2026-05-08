@@ -4473,7 +4473,7 @@ def _drive_gopay_from_redirect(
     cfg: dict,
     otp_file: str = "",
     session_id: str = "",
-) -> None:
+) -> dict:
     """从 pm-redirects.stripe.com URL 接管 → Midtrans linking → GoPay PIN/OTP → 扣款。
 
     复用 gopay 模块的 GoPayCharger.run_from_redirect。OTP 从 stdin（CLI）或
@@ -4513,6 +4513,7 @@ def _drive_gopay_from_redirect(
     _log(f"      [gopay] 从 redirect 接管 → {redirect_url[:80]}...")
     result = charger.run_from_redirect(redirect_url, cs_id=session_id)
     _log(f"      [gopay] 完成: {result}")
+    return result if isinstance(result, dict) else {"state": "unknown", "raw": result}
 
 
 def create_gopay_payment_method(
@@ -8455,10 +8456,13 @@ def run(
                 if paypal_redirect_url:
                     _log(f"      redirect URL: {paypal_redirect_url[:100]}...")
                     if use_gopay:
-                        _drive_gopay_from_redirect(
+                        gopay_result = _drive_gopay_from_redirect(
                             paypal_redirect_url, cfg, gopay_otp_file,
                             session_id=session_id,
                         )
+                        init_ctx["gopay_result"] = gopay_result
+                        if gopay_result.get("state") == "otp_manual_hold":
+                            return confirm_data
                         _log("      GoPay 授权 + 扣款完成，继续 poll 结果 ...")
                     else:
                         success = _handle_paypal_redirect(
@@ -8576,10 +8580,14 @@ def run(
                             if url:
                                 _log(f"      [manual_approval] 拿到 redirect: {url[:100]}")
                                 if use_gopay:
-                                    _drive_gopay_from_redirect(
+                                    gopay_result = _drive_gopay_from_redirect(
                                         url, cfg, gopay_otp_file,
                                         session_id=session_id,
                                     )
+                                    init_ctx["gopay_result"] = gopay_result
+                                    if gopay_result.get("state") == "otp_manual_hold":
+                                        got_redirect = True
+                                        break
                                     got_redirect = True
                                     break
                                 success = _handle_paypal_redirect(
@@ -8695,7 +8703,12 @@ def run(
                         continue
                 raise
 
-  
+    gopay_result = init_ctx.get("gopay_result")
+    if isinstance(gopay_result, dict) and gopay_result.get("state") == "otp_manual_hold":
+        _log("      [gopay] 已在 OTP 阶段暂停，跳过 poll/RT/推送后续流程")
+        _log(f"\n日志已保存到: {LOG_FILE}")
+        return gopay_result
+
     with _http_session_stage_proxy(http, stage_proxy_cfg, "telemetry_poll"):
         send_telemetry_batch(http, session_id, init_ctx, phase="poll")
 

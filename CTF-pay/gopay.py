@@ -351,6 +351,10 @@ class OTPCancelled(GoPayError):
     pass
 
 
+class GoPayOtpManualHold(GoPayError):
+    pass
+
+
 class GoPayPINRejected(GoPayError):
     pass
 
@@ -390,6 +394,11 @@ class GoPayCharger:
         self.pin = str(gopay_cfg["pin"])
         self.midtrans_client_id = str(
             gopay_cfg.get("midtrans_client_id") or DEFAULT_MIDTRANS_CLIENT_ID
+        )
+        self.stop_at_otp = bool(
+            gopay_cfg.get("stop_at_otp")
+            or gopay_cfg.get("manual_otp_hold")
+            or os.environ.get("GOPAY_STOP_AT_OTP") == "1"
         )
         self.otp_provider = otp_provider
         self.log = log
@@ -1066,6 +1075,27 @@ class GoPayCharger:
         # ── Linking: OTP + first PIN
         self._gopay_validate_reference(reference_id)
         self._gopay_user_consent(reference_id)
+        hold_info = {
+            "state": "otp_manual_hold",
+            "reason": "gopay_otp_sent",
+            "phone": self.phone,
+            "country_code": self.country_code,
+            "snap_token": snap_token,
+            "reference_id": reference_id,
+            "cs_id": cs_id,
+        }
+        if self.stop_at_otp:
+            self.log("[gopay] stop_at_otp enabled, task paused after OTP was sent")
+            self.log(
+                "[gopay] OTP_PAGE_INFO "
+                + json.dumps(hold_info, ensure_ascii=False, separators=(",", ":"))
+            )
+            print(
+                "GOPAY_OTP_MANUAL_HOLD="
+                + json.dumps(hold_info, ensure_ascii=False, separators=(",", ":")),
+                flush=True,
+            )
+            return hold_info
         print(
             f"GOPAY_OTP_TARGET phone={self.phone} country_code={self.country_code}",
             flush=True,
