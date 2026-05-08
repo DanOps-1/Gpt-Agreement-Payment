@@ -82,6 +82,47 @@ def _parse_proxy(proxy_url: str):
     }
 
 
+def _page_text(page) -> str:
+    try:
+        return page.inner_text("body", timeout=3000)
+    except Exception:
+        return ""
+
+
+def _blocking_challenge_reason(page) -> str:
+    title = ""
+    try:
+        title = page.title() or ""
+    except Exception:
+        pass
+    url = getattr(page, "url", "") or ""
+    text = _page_text(page)
+    haystack = "\n".join([title, url, text]).lower()
+
+    if "just a moment" in haystack and ("cloudflare" in haystack or "verifying" in haystack):
+        return "Cloudflare challenge"
+    if "cf-turnstile" in haystack or "turnstile" in haystack:
+        return "Turnstile challenge"
+    if "verify you are human" in haystack or "verifying you are human" in haystack:
+        return "human verification challenge"
+    return ""
+
+
+def _raise_if_blocking_challenge(page, *, stage: str, screenshot_path) -> None:
+    reason = _blocking_challenge_reason(page)
+    if not reason:
+        return
+    try:
+        page.screenshot(path=str(screenshot_path))
+    except Exception:
+        pass
+    raise RuntimeError(
+        f"{reason} detected during {stage}; saved diagnostic screenshot to {screenshot_path}. "
+        "This is a target-site verification page, not a missing form selector. "
+        "Retry later, change network conditions, or complete verification manually if supported."
+    )
+
+
 def browser_register(cfg, mail_provider) -> dict:
     """
     用真实浏览器走注册流程。
@@ -145,11 +186,21 @@ def browser_register(cfg, mail_provider) -> dict:
             # [1] 打开 ChatGPT 首页，点 "Sign up for free"
             logger.info("[browser-reg] 打开 ChatGPT 首页 ...")
             page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=60000)
+            _raise_if_blocking_challenge(
+                page,
+                stage="opening ChatGPT home",
+                screenshot_path="/tmp/browser_reg_cloudflare_challenge.png",
+            )
             # 等 React 渲染完成 + Sign up 按钮可交互
             try:
                 page.wait_for_selector('button[data-testid="signup-button"], a[data-testid="signup-button"]',
                                        state='visible', timeout=20000)
             except Exception:
+                _raise_if_blocking_challenge(
+                    page,
+                    stage="waiting for signup button",
+                    screenshot_path="/tmp/browser_reg_cloudflare_challenge.png",
+                )
                 pass
             time.sleep(3)
 
@@ -211,6 +262,11 @@ def browser_register(cfg, mail_provider) -> dict:
                             pass
             logger.info(f"[browser-reg] 当前 URL: {page.url[:120]}")
             page.screenshot(path="/tmp/browser_reg_before_email.png")
+            _raise_if_blocking_challenge(
+                page,
+                stage="before email form",
+                screenshot_path="/tmp/browser_reg_cloudflare_challenge.png",
+            )
 
             # [2a] 新版 OpenAI（2026-05 起）: 点 Sign up 后不跳 auth.openai.com，
             # 而是在 chatgpt.com 上弹「Log in or sign up」modal，里面是
