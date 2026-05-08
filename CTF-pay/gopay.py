@@ -49,6 +49,13 @@ from typing import Any, Callable, Optional
 
 import requests
 
+try:
+    from pay_trace import install_requests_trace, trace_session
+    install_requests_trace("gopay.py")
+except Exception:
+    def trace_session(session_obj: Any, label: str = "session") -> Any:
+        return session_obj
+
 # Cloudflare 拦 plain requests 的 TLS 指纹（403 + HTML challenge），跟 card.py 一致用 curl_cffi
 # 模拟真 Chrome 指纹。
 try:
@@ -60,8 +67,8 @@ except ImportError:
 def _new_session(impersonate: str = "chrome136") -> Any:
     """Build session with chrome TLS fingerprint when available."""
     if _CurlCffiSession is not None:
-        return _CurlCffiSession(impersonate=impersonate)
-    return requests.Session()
+        return trace_session(_CurlCffiSession(impersonate=impersonate), "gopay.curl_cffi")
+    return trace_session(requests.Session(), "gopay.requests")
 
 
 # ──────────────────────────── constants ───────────────────────────
@@ -351,10 +358,6 @@ class OTPCancelled(GoPayError):
     pass
 
 
-class GoPayOtpManualHold(GoPayError):
-    pass
-
-
 class GoPayPINRejected(GoPayError):
     pass
 
@@ -394,11 +397,6 @@ class GoPayCharger:
         self.pin = str(gopay_cfg["pin"])
         self.midtrans_client_id = str(
             gopay_cfg.get("midtrans_client_id") or DEFAULT_MIDTRANS_CLIENT_ID
-        )
-        self.stop_at_otp = bool(
-            gopay_cfg.get("stop_at_otp")
-            or gopay_cfg.get("manual_otp_hold")
-            or os.environ.get("GOPAY_STOP_AT_OTP") == "1"
         )
         self.midtrans_page_url = ""
         self.gopay_activation_link_url = ""
@@ -1082,32 +1080,6 @@ class GoPayCharger:
         # ── Linking: OTP + first PIN
         self._gopay_validate_reference(reference_id)
         self._gopay_user_consent(reference_id)
-        hold_info = {
-            "state": "otp_manual_hold",
-            "reason": "gopay_otp_sent",
-            "phone": self.phone,
-            "country_code": self.country_code,
-            "current_url": self.gopay_activation_link_url or self.midtrans_page_url,
-            "gopay_activation_link_url": self.gopay_activation_link_url,
-            "midtrans_page_url": self.midtrans_page_url,
-            "snap_token": snap_token,
-            "reference_id": reference_id,
-            "cs_id": cs_id,
-        }
-        if self.stop_at_otp:
-            self.log("[gopay] stop_at_otp enabled, task paused after OTP was sent")
-            if hold_info.get("current_url"):
-                self.log(f"[gopay] 当前网页地址: {hold_info['current_url']}")
-            self.log(
-                "[gopay] OTP_PAGE_INFO "
-                + json.dumps(hold_info, ensure_ascii=False, separators=(",", ":"))
-            )
-            print(
-                "GOPAY_OTP_MANUAL_HOLD="
-                + json.dumps(hold_info, ensure_ascii=False, separators=(",", ":")),
-                flush=True,
-            )
-            return hold_info
         print(
             f"GOPAY_OTP_TARGET phone={self.phone} country_code={self.country_code}",
             flush=True,
@@ -1431,7 +1403,7 @@ def whatsapp_http_otp_provider(
     def provider() -> str:
         issued_after = time.time() - max(0.0, issued_after_slack_s)
         deadline = time.time() + timeout
-        sess = requests.Session()
+        sess = trace_session(requests.Session(), "gopay.otp_relay")
         base_params = dict(params or {})
         if phone and "phone" not in base_params:
             base_params["phone"] = phone

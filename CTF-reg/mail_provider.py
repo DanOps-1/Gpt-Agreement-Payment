@@ -404,6 +404,30 @@ class MailProvider:
             if acc.email == target:
                 self._current_outlook = acc
                 return acc
+        if self._outlook_source == "db":
+            if not self._outlook_db_path.exists():
+                raise RuntimeError(f"Outlook 数据库不存在: {self._outlook_db_path}")
+            with sqlite3.connect(self._outlook_db_path, isolation_level=None, timeout=15) as c:
+                c.row_factory = sqlite3.Row
+                row = c.execute(
+                    """
+                    SELECT id, email, password, client_id, refresh_token
+                    FROM outlook_mail_accounts
+                    WHERE lower(email) = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (target,),
+                ).fetchone()
+            if row:
+                self._current_outlook_db_id = int(row["id"])
+                self._current_outlook = OutlookAccount(
+                    row["email"],
+                    row["password"],
+                    row["client_id"],
+                    row["refresh_token"],
+                )
+                return self._current_outlook
         raise RuntimeError(f"Outlook 账号池找不到邮箱: {email_addr}")
 
     def _outlook_access_token(self, acc: OutlookAccount) -> str:
@@ -483,5 +507,6 @@ class MailProvider:
                 last_error = f"{type(e).__name__}: {str(e)[:160]}"
             time.sleep(interval)
         detail = f"; last_error={last_error}" if last_error else ""
-        self._mark_outlook_db_account("failed", detail or "otp timeout")
+        if bool(getattr(self.cfg, "outlook_mark_failed_on_otp_timeout", True)):
+            self._mark_outlook_db_account("failed", detail or "otp timeout")
         raise TimeoutError(f"等待 Outlook OTP 超时 ({timeout}s): {email_addr}{detail}")

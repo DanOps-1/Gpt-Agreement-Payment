@@ -34,10 +34,6 @@
 
     <div class="form-stack otp-settings">
       <TermField v-model.number="form.otp_timeout" label="OTP 超时秒数" type="number" />
-      <label class="toggle-row">
-        <input type="checkbox" v-model="form.stop_at_otp" />
-        <span>到 OTP 后停止任务，用实机环境手动处理</span>
-      </label>
     </div>
 
     <div class="external-card">
@@ -240,7 +236,6 @@ function initialAccounts(): GoPayAccountForm[] {
 const form = ref({
   accounts: initialAccounts(),
   otp_timeout: init.otp_timeout ?? initOtp.timeout ?? 300,
-  stop_at_otp: init.stop_at_otp ?? false,
   auto_unbind_raw_request: init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "",
   auto_unbind_base_url: init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "",
   auto_unbind_unlink_raw_request: init.auto_unbind_unlink_raw_request ?? init.auto_unbind?.unlink_raw_request ?? "",
@@ -491,7 +486,6 @@ function buildGopayAnswer() {
     midtrans_client_id: first.midtrans_client_id,
     accounts,
     otp_timeout: form.value.otp_timeout,
-    stop_at_otp: form.value.stop_at_otp,
     auto_unbind_raw_request: form.value.auto_unbind_raw_request,
     auto_unbind_base_url: form.value.auto_unbind_base_url,
     auto_unbind_unlink_raw_request: form.value.auto_unbind_unlink_raw_request,
@@ -557,17 +551,6 @@ onUnmounted(() => {
 }
 .otp-settings {
   margin-top: 14px;
-}
-.toggle-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  padding: 8px 0;
-  font-size: 13px;
-}
-.toggle-row input {
-  accent-color: var(--accent);
 }
 .external-card {
   margin-top: 22px;

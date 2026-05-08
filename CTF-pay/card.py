@@ -53,6 +53,15 @@ except Exception:
 _OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output")
 os.makedirs(os.path.join(_OUTPUT_DIR, "logs"), exist_ok=True)
 LOG_FILE = os.path.join(_OUTPUT_DIR, "logs", "card.log")
+try:
+    from pay_trace import PAY_TRACE_FILE, install_requests_trace, log_pay_event, trace_session
+    install_requests_trace("card.py")
+except Exception:
+    PAY_TRACE_FILE = os.path.join(_OUTPUT_DIR, "logs", "pay_out.log")
+    def trace_session(session_obj, label: str = "session"):
+        return session_obj
+    def log_pay_event(title: str, payload=None):
+        return None
 
 # 让 `from cf_kv_otp_provider import ...` 在 card.py 直接执行/被 pipeline 子进程
 # 拉起时都能命中 `CTF-reg/` 下的实现。否则 RT / PayPal OTP 会在
@@ -68,6 +77,7 @@ def _init_log():
         f.write(f"{'='*80}\n")
         f.write(f"  Stripe 自动化支付 日志  —  {datetime.now().isoformat()}\n")
         f.write(f"{'='*80}\n\n")
+    log_pay_event("payment_run_start", {"card_log": LOG_FILE, "pay_trace": PAY_TRACE_FILE})
 
 def _log(msg: str):
     """追加一行到 log.txt 并同时 print"""
@@ -237,12 +247,14 @@ def _create_chatgpt_http_session(
         _apply_proxy_to_http_session(http, proxy_url)
         if user_agent:
             http.headers.update({"user-agent": user_agent})
+        trace_session(http, "card.chatgpt_http")
         return http, "curl_cffi(chrome136)"
 
     http = requests.Session()
     _apply_proxy_to_http_session(http, proxy_url)
     if user_agent:
         http.headers.update({"user-agent": user_agent})
+    trace_session(http, "card.chatgpt_http")
     return http, "requests"
 
 
@@ -5097,11 +5109,26 @@ def _safe_screenshot(page, path: str):
         pass
 
 
-def _fetch_openai_login_otp(target_email: str, timeout: int = 180) -> str:
-    """从 CF KV 取 OpenAI 登录 OTP（worker 已替代 IMAP→QQ 转发链路）。
+def _fetch_openai_login_otp(target_email: str, timeout: int = 180, mail_cfg: dict | None = None, issued_after: float | None = None) -> str:
+    """Fetch OpenAI login OTP using the configured mail provider."""
+    mail_cfg = mail_cfg or {}
+    provider_name = str(mail_cfg.get("provider") or "").strip().lower() or "cf"
+    if provider_name == "outlook":
+        try:
+            from types import SimpleNamespace
+            from mail_provider import MailProvider
 
-    返回空串表示超时或 KV 路径配置缺失，调用方按需 fallback。
-    """
+            rt_mail_cfg = dict(mail_cfg)
+            rt_mail_cfg["outlook_mark_failed_on_otp_timeout"] = False
+            provider = MailProvider.from_config(SimpleNamespace(**rt_mail_cfg))
+            return provider.wait_for_otp(target_email, timeout=timeout, issued_after=issued_after)
+        except TimeoutError:
+            _log(f"      [RT-OTP] Outlook 等 OTP 超时 {timeout}s")
+            return ""
+        except Exception as e:
+            _log(f"      [RT-OTP] Outlook 取 OTP 异常: {e}")
+            return ""
+
     try:
         from cf_kv_otp_provider import CloudflareKVOtpProvider
     except ImportError as e:
@@ -5109,7 +5136,7 @@ def _fetch_openai_login_otp(target_email: str, timeout: int = 180) -> str:
         return ""
     try:
         provider = CloudflareKVOtpProvider.from_env_or_secrets()
-        return provider.wait_for_otp(target_email, timeout=timeout)
+        return provider.wait_for_otp(target_email, timeout=timeout, issued_after=issued_after)
     except TimeoutError:
         _log(f"      [RT-OTP] CF KV 等 OTP 超时 {timeout}s")
         return ""
@@ -5330,8 +5357,14 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                 # OTP 页
                 if is_otp_page:
                     if not otp_fetched:
-                        _log("      [RT] 检测到 OTP 页面，从 IMAP 取验证码 ...")
-                        otp_code = _fetch_openai_login_otp(target_email=email, timeout=180)
+                        otp_provider_name = str((mail_cfg or {}).get("provider") or "cf").strip().lower() or "cf"
+                        _log(f"      [RT] 检测到 OTP 页面，从 {otp_provider_name.upper()} 取验证码 ...")
+                        otp_code = _fetch_openai_login_otp(
+                            target_email=email,
+                            timeout=180,
+                            mail_cfg=mail_cfg,
+                            issued_after=otp_sent_ts,
+                        )
                         if not otp_code:
                             _log("      [RT] OTP 获取超时")
                             return ""
@@ -5493,7 +5526,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
     _log(f"      [RT] 获得 code，POST /oauth/token 换 refresh_token ...")
     try:
         from curl_cffi.requests import Session as CffiSession
-        http_rt = CffiSession(impersonate="chrome136")
+        http_rt = trace_session(CffiSession(impersonate="chrome136"), "card.rt_oauth")
         if proxy_url:
             _apply_proxy_to_http_session(http_rt, proxy_url)
         r = http_rt.post(
@@ -6144,7 +6177,7 @@ def _paypal_browser_authorize(
                 hermes_url = page.url
                 # 提取 cookies 供 HTTP 使用
                 browser_cookies = ctx.cookies()
-                http_finish = requests.Session()
+                http_finish = trace_session(requests.Session(), "card.paypal_finish")
                 http_finish.headers.update({
                     "User-Agent": USER_AGENT,
                     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -6462,10 +6495,10 @@ def _handle_paypal_redirect(
     # ── 创建 HTTP session (curl_cffi Chrome 指纹) ──
     try:
         from curl_cffi.requests import Session as CffiSession
-        http = CffiSession(impersonate="chrome136")
+        http = trace_session(CffiSession(impersonate="chrome136"), "card.paypal_http")
         _log("      [PayPal] 使用 curl_cffi (chrome136 TLS 指纹)")
     except ImportError:
-        http = requests.Session()
+        http = trace_session(requests.Session(), "card.paypal_http")
         _log("      [PayPal] curl_cffi 不可用，使用 requests (TLS 指纹暴露风险)")
     http.headers.update({
         "User-Agent": USER_AGENT,
@@ -8128,7 +8161,7 @@ def run(
             fresh_only=fresh_only,
         )
 
-    http = requests.Session()
+    http = trace_session(requests.Session(), "card.payment_main")
     http.headers.update(_browser_like_session_headers(locale_profile["browser_locale"]))
     stage_proxy_cfg = cfg.get("stage_proxies") or {}
 
@@ -8461,8 +8494,6 @@ def run(
                             session_id=session_id,
                         )
                         init_ctx["gopay_result"] = gopay_result
-                        if gopay_result.get("state") == "otp_manual_hold":
-                            return confirm_data
                         _log("      GoPay 授权 + 扣款完成，继续 poll 结果 ...")
                     else:
                         success = _handle_paypal_redirect(
@@ -8585,9 +8616,6 @@ def run(
                                         session_id=session_id,
                                     )
                                     init_ctx["gopay_result"] = gopay_result
-                                    if gopay_result.get("state") == "otp_manual_hold":
-                                        got_redirect = True
-                                        break
                                     got_redirect = True
                                     break
                                 success = _handle_paypal_redirect(
@@ -8702,12 +8730,6 @@ def run(
                         _log(f"      重新 confirm 获取新的 challenge ({confirm_attempt}/{max_confirm_attempts}) ...")
                         continue
                 raise
-
-    gopay_result = init_ctx.get("gopay_result")
-    if isinstance(gopay_result, dict) and gopay_result.get("state") == "otp_manual_hold":
-        _log("      [gopay] 已在 OTP 阶段暂停，跳过 poll/RT/推送后续流程")
-        _log(f"\n日志已保存到: {LOG_FILE}")
-        return gopay_result
 
     with _http_session_stage_proxy(http, stage_proxy_cfg, "telemetry_poll"):
         send_telemetry_batch(http, session_id, init_ctx, phase="poll")

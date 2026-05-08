@@ -97,8 +97,6 @@ def _project_pay(answers: dict) -> dict:
                 "pin": first["pin"],
                 "accounts": accounts,
             }
-            if gp.get("stop_at_otp") is not None:
-                out["gopay"]["stop_at_otp"] = bool(gp.get("stop_at_otp"))
             if first.get("midtrans_client_id"):
                 out["gopay"]["midtrans_client_id"] = first["midtrans_client_id"]
             out["gopay"]["otp"] = {
