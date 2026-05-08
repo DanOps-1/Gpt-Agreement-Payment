@@ -183,6 +183,21 @@ def _pick_gopay_proxy(cfg: dict) -> str:
     return random.choice(choices)
 
 
+def _ensure_gopay_proxy_for_http_session(session_obj, cfg: dict) -> str:
+    if not isinstance(cfg, dict):
+        return ""
+    proxy = str(cfg.get("_active_gopay_proxy") or "").strip()
+    if not proxy:
+        proxy = _pick_gopay_proxy(cfg)
+        if proxy:
+            cfg["_active_gopay_proxy"] = proxy
+    if not proxy:
+        return ""
+    _apply_proxy_to_http_session(session_obj, proxy)
+    _log(f"      [gopay] 切换 GoPay 代理: {proxy}")
+    return proxy
+
+
 def _apply_proxy_to_http_session(session_obj, proxy_url: str):
     try:
         session_obj.trust_env = False
@@ -4473,11 +4488,11 @@ def _drive_gopay_from_redirect(
 
     auth_cfg = (cfg.get("fresh_checkout") or {}).get("auth") or {}
     cs_session = _gopay._build_chatgpt_session(auth_cfg)
-    proxy = (cfg.get("proxy") or "").strip() or None
-    gopay_proxy = _pick_gopay_proxy(cfg)
-    if gopay_proxy:
-        proxy = gopay_proxy
-        _log(f"      [gopay] 切换 GoPay 代理 → {gopay_proxy}")
+    proxy = (
+        str(cfg.get("_active_gopay_proxy") or "").strip()
+        or (cfg.get("proxy") or "").strip()
+        or None
+    )
     gopay_cfg = _gopay.pick_gopay_account_config(cfg.get("gopay") or {}, log=_log)
 
     if otp_file:
@@ -8389,10 +8404,10 @@ def run(
                     http, pk, card, session_id, stripe_ver, ctx=init_ctx
                 )
         elif use_gopay:
-            with _http_session_stage_proxy(http, stage_proxy_cfg, "payment_method"):
-                pm_id = create_gopay_payment_method(
-                    http, pk, card, session_id, stripe_ver, ctx=init_ctx
-                )
+            _ensure_gopay_proxy_for_http_session(http, cfg)
+            pm_id = create_gopay_payment_method(
+                http, pk, card, session_id, stripe_ver, ctx=init_ctx
+            )
         elif init_ctx.get("confirm_mode") != "inline_payment_method_data":
             with _http_session_stage_proxy(http, stage_proxy_cfg, "payment_method"):
                 pm_id = create_payment_method(
