@@ -183,6 +183,8 @@ def _project_pay(answers: dict) -> dict:
                     "enabled": True,
                     "rotation": "two_stage",
                     "list": proxy_list,
+                    "register_expected_country": proxy.get("register_expected_country") or proxy.get("expected_country", "US"),
+                    "payment_expected_country": proxy.get("payment_expected_country", "JP"),
                 }
     return out
 
@@ -245,6 +247,8 @@ def _project_reg(answers: dict) -> dict:
                     "enabled": True,
                     "rotation": "two_stage",
                     "list": proxy_list,
+                    "register_expected_country": proxy.get("register_expected_country") or proxy.get("expected_country", "US"),
+                    "payment_expected_country": proxy.get("payment_expected_country", "JP"),
                 }
     return out
 

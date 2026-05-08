@@ -73,6 +73,10 @@
         ></textarea>
       </label>
       <TermField v-model="form.expected_country" label="期望国家 · expected_country" placeholder="US" />
+      <div class="form-stack">
+        <TermField v-model="form.register_expected_country" label="注册期望国家 · register_expected_country" placeholder="US" />
+        <TermField v-model="form.payment_expected_country" label="支付期望国家 · payment_expected_country" placeholder="JP" />
+      </div>
       <div class="step-actions">
         <TermBtn :loading="loading" @click="testProxy">测试出口 IP</TermBtn>
       </div>
@@ -102,6 +106,8 @@ const form = ref({
   url: init.url ?? "",
   urls: (init.urls ?? (init.url ? String(init.url).split("\n") : [])) as string[],
   expected_country: init.expected_country ?? "US",
+  register_expected_country: init.register_expected_country ?? init.expected_country ?? "US",
+  payment_expected_country: init.payment_expected_country ?? "JP",
   api_key: init.api_key ?? "",
   lock_country: init.lock_country ?? init.register_country ?? "US",
   register_country: init.register_country ?? init.lock_country ?? "US",
@@ -142,7 +148,10 @@ async function testProxy() {
     result.value = await store.runPreflight("proxy", {
       mode: form.value.mode,
       url: form.value.url,
+      urls: form.value.urls,
       expected_country: form.value.expected_country,
+      register_expected_country: form.value.register_expected_country,
+      payment_expected_country: form.value.payment_expected_country,
     });
   } finally { loading.value = false; }
 }
