@@ -172,15 +172,28 @@ def _project_reg(answers: dict) -> dict:
     """Map flat wizard answers onto CTF-reg config schema."""
     out: dict = {}
     pm = _payment_method(answers)
+    mail_source = answers.get("mail_source") if isinstance(answers.get("mail_source"), dict) else {}
+    use_outlook = str(mail_source.get("provider") or "").strip().lower() == "outlook"
     # mail.catch_all_domain(s) 来自 Step03 Cloudflare 的 zone_names
     # IMAP 字段（imap_server/port/email/auth_code）已彻底删除——OTP 走
     # CF Email Worker → KV，凭证存 SQLite runtime_meta[secrets]。
-    zones = (answers.get("cloudflare") or {}).get("zone_names") or []
-    if zones:
+    if use_outlook:
         out["mail"] = {
+            "provider": "outlook",
+            "catch_all_domain": "",
+            "catch_all_domains": [],
+            "outlook_source": "db",
+            "outlook_poll_interval_s": float(mail_source.get("outlook_poll_interval_s") or 3),
+            "outlook_folder": str(mail_source.get("outlook_folder") or "Inbox"),
+        }
+    else:
+        zones = (answers.get("cloudflare") or {}).get("zone_names") or []
+        if zones:
+            out["mail"] = {
+                "provider": "cf",
             "catch_all_domain": zones[0],
             "catch_all_domains": list(zones),
-        }
+            }
     if "card" in answers and pm in ("card", "both"):
         out["card"] = {k: answers["card"].get(k, "") for k in ("number", "cvc", "exp_month", "exp_year")}
     if "billing" in answers:

@@ -43,7 +43,6 @@ class AccountImportServerRequest(BaseModel):
 
 class OutlookMailPoolImportRequest(BaseModel):
     text: str = ""
-    enable: bool = True
 
 
 class GoPayAutoUnbindFetchRequest(BaseModel):
@@ -162,20 +161,8 @@ def import_outlook_mail_pool(req: OutlookMailPoolImportRequest, user: str = Curr
         raise HTTPException(status_code=400, detail="Outlook 账号内容为空")
     result = get_db().import_outlook_mail_accounts(lines)
     reg_path = _resolve_reg_config_path()
-    if req.enable:
-        cfg, reg_path = _load_reg_config()
-        mail = cfg.setdefault("mail", {})
-        if not isinstance(mail, dict):
-            mail = {}
-            cfg["mail"] = mail
-        mail["provider"] = "outlook"
-        mail["outlook_source"] = "db"
-        mail["outlook_poll_interval_s"] = float(mail.get("outlook_poll_interval_s") or 3)
-        mail["outlook_folder"] = str(mail.get("outlook_folder") or "Inbox")
-        _save_reg_config(cfg, reg_path)
     return {
         "ok": True,
-        "enabled": bool(req.enable),
         "result": result,
         "path": str(s.DB_PATH),
         "reg_config_path": str(reg_path),

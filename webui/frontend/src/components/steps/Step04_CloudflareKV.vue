@@ -1,33 +1,74 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">步骤 04: Cloudflare KV</div>
-    <h2 class="step-h">$&nbsp;OTP 接收（CF Email Worker → KV）<span class="term-cursor"></span></h2>
+    <div class="term-divider" data-tail="──────────">步骤 04: 注册邮件</div>
+    <h2 class="step-h">$&nbsp;OTP 接收<span class="term-cursor"></span></h2>
     <p class="step-sub">
-      只填一个 API token，剩下的（建 KV、上传 Worker、给 Step 03 配的所有 zone
-      切 catch-all 路由）后端一键搞定。token 默认借 Step 03 的 <code>cf_token</code>，
-      也可以单独填一个权限更全的（需 <code>Workers Scripts:Edit</code> +
-      <code>Workers KV:Edit</code> + <code>Email Routing Rules:Edit</code>）。
+      手动选择注册验证码来源。CF KV 走 catch-all Worker；Outlook 走数据库邮箱池，不会因为导入文件自动启用。
     </p>
 
-    <div class="form-stack">
-      <TermField
-        v-model="form.api_token"
-        label="API Token · api_token"
-        type="password"
-        :placeholder="defaultTokenPlaceholder"
-      />
-      <TermField
-        v-model="form.fallback_to"
-        label="备份转发 · fallback_to (可选)"
-        placeholder="抓到 OTP 后同时转发一份到这个邮箱（迁移期保险）"
-      />
+    <div class="source-tabs">
+      <button :class="{ active: mailSource.provider === 'cf' }" @click="setProvider('cf')">CF KV</button>
+      <button :class="{ active: mailSource.provider === 'outlook' }" @click="setProvider('outlook')">Outlook 池</button>
     </div>
 
-    <div class="step-actions">
+    <div class="form-stack">
+      <template v-if="mailSource.provider === 'cf'">
+        <TermField
+          v-model="form.api_token"
+          label="API Token · api_token"
+          type="password"
+          :placeholder="defaultTokenPlaceholder"
+        />
+        <TermField
+          v-model="form.fallback_to"
+          label="备份转发 · fallback_to (可选)"
+          placeholder="抓到 OTP 后同时转发一份到这个邮箱（迁移期保险）"
+        />
+      </template>
+
+      <template v-else>
+        <div class="outlook-card">
+          <div class="pool-head">
+            <div>
+              <strong>Outlook 邮箱池</strong>
+              <span>
+                total={{ outlookPool.total || 0 }}
+                available={{ outlookPool.available || 0 }}
+                reserved={{ outlookPool.reserved || 0 }}
+                used={{ outlookPool.used || 0 }}
+                failed={{ outlookPool.failed || 0 }}
+              </span>
+            </div>
+            <TermBtn variant="ghost" :loading="outlookPool.loading" @click="loadOutlookPoolStats">刷新</TermBtn>
+          </div>
+          <textarea
+            v-model="outlookPool.text"
+            class="tf-textarea outlook-textarea"
+            rows="5"
+            placeholder="每行一个：邮箱----密码----client_id----refresh_token"
+          />
+          <div class="pool-actions">
+            <label class="file-btn">
+              读取文件
+              <input type="file" accept=".txt,.csv,text/plain" @change="loadOutlookPoolFile" />
+            </label>
+            <TermBtn :loading="outlookPool.importing" :disabled="!outlookPool.text.trim()" @click="importOutlookPool">
+              导入到数据库
+            </TermBtn>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <div v-if="mailSource.provider === 'cf'" class="step-actions">
       <TermBtn :loading="deploying" @click="deploy">一键部署 + 测试</TermBtn>
     </div>
 
-    <div v-if="deployResult" class="result-block result--ok" style="margin-top:14px">
+    <div v-else class="step-actions">
+      <TermBtn :loading="outlookPool.loading" @click="confirmOutlookSource">启用 Outlook 邮箱池</TermBtn>
+    </div>
+
+    <div v-if="mailSource.provider === 'cf' && deployResult" class="result-block result--ok" style="margin-top:14px">
       <div class="result-head"><span class="result-icon">✓</span> 部署成功</div>
       <ul class="result-list">
         <li class="row-ok"><span class="row-name">account</span><span class="row-msg">{{ deployResult.account_name }} ({{ deployResult.account_id }})</span></li>
@@ -67,10 +108,27 @@ import TermBtn from "../term/TermBtn.vue";
 const store = useWizardStore();
 const cfAns = (store.answers.cloudflare ?? {}) as any;
 const init = (store.answers.cloudflare_kv ?? {}) as any;
+const sourceInit = (store.answers.mail_source ?? {}) as any;
+
+const mailSource = ref({
+  provider: sourceInit.provider === "outlook" ? "outlook" : "cf",
+  outlook_poll_interval_s: sourceInit.outlook_poll_interval_s ?? 3,
+  outlook_folder: sourceInit.outlook_folder ?? "Inbox",
+});
 
 const form = ref({
   api_token: init.api_token ?? "",
   fallback_to: init.fallback_to ?? "",
+});
+const outlookPool = ref({
+  text: "",
+  loading: false,
+  importing: false,
+  total: 0,
+  available: 0,
+  reserved: 0,
+  used: 0,
+  failed: 0,
 });
 
 const defaultTokenPlaceholder = computed(() =>
@@ -91,6 +149,88 @@ const deployResult = ref<any>(
     : null
 );
 const error = ref<string>("");
+
+if (mailSource.value.provider === "outlook") {
+  loadOutlookPoolStats();
+}
+
+function setProvider(provider: "cf" | "outlook") {
+  mailSource.value.provider = provider;
+  store.setAnswer("mail_source", { ...mailSource.value });
+  if (provider === "outlook") {
+    loadOutlookPoolStats();
+  }
+}
+
+async function loadOutlookPoolStats() {
+  outlookPool.value.loading = true;
+  try {
+    const r = await api.get("/config/outlook-mail-pool");
+    Object.assign(outlookPool.value, {
+      total: r.data?.total || 0,
+      available: r.data?.available || 0,
+      reserved: r.data?.reserved || 0,
+      used: r.data?.used || 0,
+      failed: r.data?.failed || 0,
+    });
+  } catch (e: any) {
+    error.value = `加载 Outlook 邮箱池失败：${e?.response?.data?.detail || e?.message || e}`;
+  } finally {
+    outlookPool.value.loading = false;
+  }
+}
+
+async function loadOutlookPoolFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    outlookPool.value.text = await file.text();
+  } catch (e: any) {
+    error.value = `读取 Outlook 邮箱文件失败：${e?.message || e}`;
+  } finally {
+    input.value = "";
+  }
+}
+
+async function importOutlookPool() {
+  if (!outlookPool.value.text.trim()) {
+    error.value = "请粘贴或读取 Outlook 账号内容";
+    return;
+  }
+  error.value = "";
+  outlookPool.value.importing = true;
+  try {
+    const r = await api.post("/config/outlook-mail-pool/import", {
+      text: outlookPool.value.text,
+    });
+    const s = r.data?.result || {};
+    outlookPool.value.text = "";
+    await loadOutlookPoolStats();
+    store.setPreflight("cloudflare_kv", {
+      status: Number(s.available || outlookPool.value.available || 0) > 0 ? "ok" : "warn",
+      message: `Outlook 邮箱池已导入：parsed=${s.parsed || 0} available=${s.available || outlookPool.value.available || 0}`,
+      checks: [],
+    });
+  } catch (e: any) {
+    error.value = `导入 Outlook 邮箱池失败：${e?.response?.data?.detail || e?.message || e}`;
+  } finally {
+    outlookPool.value.importing = false;
+  }
+}
+
+async function confirmOutlookSource() {
+  error.value = "";
+  await loadOutlookPoolStats();
+  store.setAnswer("mail_source", { ...mailSource.value });
+  await store.saveToServer();
+  const available = Number(outlookPool.value.available || 0);
+  store.setPreflight("cloudflare_kv", {
+    status: available > 0 ? "ok" : "fail",
+    message: available > 0 ? `已启用 Outlook 邮箱池，available=${available}` : "Outlook 邮箱池没有可用账号",
+    checks: [],
+  });
+}
 
 async function deploy() {
   error.value = "";
@@ -152,4 +292,90 @@ watch(form, () => {
     fallback_to: form.value.fallback_to,
   });
 }, { deep: true });
+
+watch(mailSource, async () => {
+  store.setAnswer("mail_source", { ...mailSource.value });
+  await store.saveToServer();
+}, { deep: true });
 </script>
+
+<style scoped>
+.source-tabs {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  margin-bottom: 14px;
+}
+
+.source-tabs button {
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-secondary);
+  padding: 8px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.source-tabs button:last-child {
+  border-right: 0;
+}
+
+.source-tabs button.active {
+  color: var(--accent);
+  background: var(--bg-panel);
+}
+
+.outlook-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  padding: 12px;
+}
+
+.pool-head,
+.pool-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pool-head strong {
+  margin-right: 12px;
+}
+
+.pool-head span {
+  color: var(--fg-tertiary);
+  font-size: 12px;
+  word-spacing: 8px;
+}
+
+.outlook-textarea {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  min-height: 120px;
+}
+
+.file-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--fg-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.file-btn input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+</style>

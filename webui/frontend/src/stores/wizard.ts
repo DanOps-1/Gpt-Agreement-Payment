@@ -13,8 +13,8 @@ const REQUIRED_PREFLIGHT_BY_STEP: Record<number, string[]> = {
   2: ["system"],
   3: ["system"],
   4: ["system", "cloudflare"],
-  5: ["system", "cloudflare", "cloudflare_kv"],
-  6: ["system", "cloudflare", "cloudflare_kv", "proxy"],
+  5: ["system", "cloudflare_kv"],
+  6: ["system", "cloudflare_kv", "proxy"],
 };
 
 export const useWizardStore = defineStore("wizard", {
