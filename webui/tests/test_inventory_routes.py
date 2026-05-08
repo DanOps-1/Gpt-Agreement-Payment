@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 
 import respx
 from httpx import Response
@@ -220,7 +221,8 @@ def test_server_push_posts_account_import_payload(client):
     body = json.loads(req.content.decode())
     assert len(body["items"]) == 1
     item = body["items"][0]
-    assert item["uuid"] == "sakuya1.2.3."
+    uuid.UUID(item["uuid"])
+    assert req.headers["authorization"] == "Bearer sakuya1.2.3."
     assert item["email_data"] == "push@example.com----pw-123----at-token----rt-token"
     extra = json.loads(item["extra"])
     assert extra["email"] == "push@example.com"

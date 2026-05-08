@@ -44,7 +44,7 @@
         <input v-model="manager.importUrl" placeholder="https://mail.shfjkqhk.site/api/email-data" />
       </label>
       <label class="field">
-        <span>卡密 / uuid</span>
+        <span>服务器凭证</span>
         <input v-model="manager.importToken" type="password" autocomplete="off" />
       </label>
       <TermBtn variant="ghost" :loading="manager.savingConfig" @click="saveAccountImportServerConfig()">
@@ -438,7 +438,7 @@ async function loadAccountImportServerConfig() {
 
 async function saveAccountImportServerConfig(options?: { quiet?: boolean }) {
   if (!manager.value.importUrl.trim()) { message.warning("请填写导入接口 URL"); return false; }
-  if (!manager.value.importToken.trim()) { message.warning("请填写卡密 / uuid"); return false; }
+  if (!manager.value.importToken.trim()) { message.warning("请填写服务器凭证"); return false; }
   manager.value.savingConfig = true;
   try {
     await api.post("/config/account-import-server", {
@@ -591,7 +591,7 @@ async function pushManagerSelectedToServer() {
   const ids = managerServerPushIds.value;
   if (!ids.length) { message.warning("请选择有RT的账号推送至导入服务器"); return; }
   if (!manager.value.importUrl.trim()) { message.warning("请填写导入接口 URL"); return; }
-  if (!manager.value.importToken.trim()) { message.warning("请填写卡密 / uuid"); return; }
+  if (!manager.value.importToken.trim()) { message.warning("请填写服务器凭证"); return; }
   if (!(await saveAccountImportServerConfig({ quiet: true }))) return;
   manager.value.busy = true;
   try {

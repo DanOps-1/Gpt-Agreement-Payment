@@ -34,6 +34,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -3890,6 +3891,10 @@ def _server_import_error_message(body, text: str) -> str:
     return str(text or "")[:1000]
 
 
+def _server_import_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | None = None) -> str:
     import httpx
 
@@ -3922,7 +3927,7 @@ def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | 
             return "no_rt"
 
     item = {
-        "uuid": cfg["token"],
+        "uuid": str(uuid.uuid4()),
         "email_data": _email_data_for_server_import(account, email),
         "extra": json.dumps(_cpa_extra_for_server_import(account, email), ensure_ascii=False, separators=(",", ":")),
     }
@@ -3931,6 +3936,7 @@ def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | 
             resp = client.post(
                 cfg["url"],
                 json=item,
+                headers=_server_import_headers(cfg["token"]),
             )
         text = resp.text[:500]
         try:
@@ -3948,7 +3954,7 @@ def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | 
             msg = _server_import_error_message(body, text)
             print(
                 f"[push-server] {email} push failed "
-                f"url={cfg['url']} uuid={_mask_server_import_token(cfg['token'])} "
+                f"url={cfg['url']} auth={_mask_server_import_token(cfg['token'])} uuid={item['uuid']} "
                 f"http={resp.status_code} error={msg} body={body_text[:2000]}"
             )
             return "fail_upload"

@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import io
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -138,17 +139,17 @@ def _email_data_for_server_push(account: dict) -> str:
     ])
 
 
-def _server_push_payload(account: dict, uuid: str = "") -> dict:
+def _server_push_payload(account: dict, uuid_value: str = "") -> dict:
     extra = _cpa_auth_file_body(account)
     return {
-        "uuid": uuid,
+        "uuid": uuid_value or str(uuid.uuid4()),
         "email_data": _email_data_for_server_push(account),
         "extra": json.dumps(extra, ensure_ascii=False, separators=(",", ":")),
     }
 
 
-def _account_import_item(account: dict, uuid: str) -> dict:
-    return _server_push_payload(account, uuid)
+def _account_import_item(account: dict) -> dict:
+    return _server_push_payload(account)
 
 
 def _mask_secret(value: str, *, keep: int = 4) -> str:
@@ -170,6 +171,10 @@ def _response_error_message(body: object, text: str) -> str:
     return str(text or "")[:1000]
 
 
+def _server_import_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _log_account_import_response(*, url: str, token: str, item_count: int, resp: httpx.Response, body: object, text: str) -> None:
     ok = 200 <= resp.status_code < 300
     if isinstance(body, dict) and body.get("success") is False:
@@ -182,7 +187,7 @@ def _log_account_import_response(*, url: str, token: str, item_count: int, resp:
         body_text = str(text or "")
     runner._append_log(
         "[inventory:server-push] response "
-        f"url={url} uuid={_mask_secret(token)} items={item_count} "
+        f"url={url} auth={_mask_secret(token)} items={item_count} "
         f"http={resp.status_code} body={body_text[:2000]}"
     )
 
@@ -222,7 +227,7 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     if not url:
         raise HTTPException(status_code=400, detail="账号导入服务器 URL 不能为空")
     if not token:
-        raise HTTPException(status_code=400, detail="账号导入服务器卡密/uuid 不能为空")
+        raise HTTPException(status_code=400, detail="账号导入服务器凭证不能为空")
 
     accounts = [_hydrate_account_refresh_token(acc) for acc in accounts]
     ready_accounts = [acc for acc in accounts if str(acc.get("refresh_token") or "").strip()]
@@ -239,11 +244,12 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     if not ready_accounts:
         return skipped
 
-    items = [_account_import_item(acc, token) for acc in ready_accounts]
+    items = [_account_import_item(acc) for acc in ready_accounts]
     try:
         resp = client.post(
             url,
             json={"items": items},
+            headers=_server_import_headers(token),
         )
     except httpx.HTTPError as e:
         return [

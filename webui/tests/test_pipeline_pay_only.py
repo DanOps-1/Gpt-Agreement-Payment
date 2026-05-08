@@ -1,6 +1,7 @@
 import json
 import sys
 import types
+import uuid
 
 import pytest
 
@@ -233,9 +234,9 @@ def test_push_plus_account_to_server_posts_account_import_payload(tmp_path, monk
     assert result == "ok"
     req = calls[-1]
     assert req["url"] == "https://mail.shfjkqhk.site/api/email-data"
-    assert req["headers"] is None
+    assert req["headers"] == {"Authorization": "Bearer sakuya1.2.3."}
     item = req["json"]
-    assert item["uuid"] == "sakuya1.2.3."
+    uuid.UUID(item["uuid"])
     assert item["email_data"] == "retry@example.com----pw----at----rt"
     assert json.loads(item["extra"])["refresh_token"] == "rt"
     assert get_db().get_registered_account(aid)["server_pushed_at"] > 0
@@ -289,6 +290,8 @@ def test_push_plus_account_to_server_uses_card_result_rt_fallback(tmp_path, monk
     )
 
     assert result == "ok"
+    assert calls[-1]["headers"] == {"Authorization": "Bearer sakuya1.2.3."}
+    uuid.UUID(calls[-1]["json"]["uuid"])
     assert calls[-1]["json"]["email_data"] == "retry@example.com----pw----at----rt-from-card"
     assert get_db().get_registered_account(aid)["refresh_token"] == "rt-from-card"
 

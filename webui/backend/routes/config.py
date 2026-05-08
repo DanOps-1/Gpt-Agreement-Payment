@@ -114,7 +114,7 @@ def save_account_import_server(req: AccountImportServerRequest, user: str = Curr
     if not url:
         raise HTTPException(status_code=400, detail="导入接口 URL 不能为空")
     if not token:
-        raise HTTPException(status_code=400, detail="卡密/uuid 不能为空")
+        raise HTTPException(status_code=400, detail="推送服务器凭证不能为空")
     data = _load_pay_config()
     data["account_import_server"] = {
         "url": url,
