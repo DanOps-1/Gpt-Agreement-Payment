@@ -33,6 +33,14 @@
     </div>
 
     <div class="form-stack otp-settings">
+      <label class="qr-toggle">
+        <input v-model="form.qr_payment" type="checkbox" />
+        <span>
+          <strong>二维码支付</strong>
+          <small>勾选后支付阶段尝试生成 QR/QRIS，扫码后自动继续轮询结果。</small>
+        </span>
+      </label>
+      <TermField v-if="form.qr_payment" v-model.number="form.qr_wait_timeout" label="扫码等待秒数" type="number" />
       <TermField v-model.number="form.otp_timeout" label="OTP 超时秒数" type="number" />
     </div>
 
@@ -252,6 +260,8 @@ function initialAccounts(): GoPayAccountForm[] {
 
 const form = ref({
   accounts: initialAccounts(),
+  qr_payment: Boolean(init.qr_payment || init.qr_enabled || ["qr", "qris", "qr_payment"].includes(String(init.payment_mode || init.mode || "").toLowerCase())),
+  qr_wait_timeout: init.qr_wait_timeout ?? 300,
   otp_timeout: init.otp_timeout ?? initOtp.timeout ?? 300,
 });
 
@@ -524,6 +534,9 @@ function buildGopayAnswer() {
     pin: first.pin,
     midtrans_client_id: first.midtrans_client_id,
     accounts,
+    qr_payment: Boolean(form.value.qr_payment),
+    payment_mode: form.value.qr_payment ? "qr" : "tokenization",
+    qr_wait_timeout: form.value.qr_wait_timeout,
     otp_timeout: form.value.otp_timeout,
     otp: {
       source: "auto",
@@ -600,6 +613,32 @@ onUnmounted(() => {
 }
 .otp-settings {
   margin-top: 14px;
+}
+.qr-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  background: rgba(255,255,255,0.03);
+  color: var(--fg-primary);
+  cursor: pointer;
+}
+.qr-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+.qr-toggle strong,
+.qr-toggle small {
+  display: block;
+}
+.qr-toggle small {
+  margin-top: 4px;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 .external-card {
   margin-top: 22px;

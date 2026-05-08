@@ -229,29 +229,8 @@ def _proxy_lines_from_value(value) -> list[str]:
     return [_normalize_proxy_url(str(x).strip()) for x in raw if str(x).strip()]
 
 
-def _pick_gopay_proxy(cfg: dict) -> str:
-    proxies_cfg = (cfg or {}).get("proxies")
-    if not isinstance(proxies_cfg, dict):
-        return ""
-    choices = _proxy_lines_from_value(proxies_cfg.get("gopay_list") or proxies_cfg.get("gopay_urls"))
-    if not choices:
-        return ""
-    return random.choice(choices)
-
-
 def _ensure_gopay_proxy_for_http_session(session_obj, cfg: dict) -> str:
-    if not isinstance(cfg, dict):
-        return ""
-    proxy = str(cfg.get("_active_gopay_proxy") or "").strip()
-    if not proxy:
-        proxy = _pick_gopay_proxy(cfg)
-        if proxy:
-            cfg["_active_gopay_proxy"] = proxy
-    if not proxy:
-        return ""
-    _apply_proxy_to_http_session(session_obj, proxy)
-    _log(f"      [gopay] 切换 GoPay 代理: {proxy}")
-    return proxy
+    return ""
 
 
 def _apply_proxy_to_http_session(session_obj, proxy_url: str):
@@ -332,19 +311,7 @@ def _resolve_stage_proxy_cfg(stage_proxy_cfg: dict | None, stage_name: str):
 
 @contextmanager
 def _http_session_stage_proxy(session_obj, stage_proxy_cfg: dict | None, stage_name: str):
-    proxy_cfg = _resolve_stage_proxy_cfg(stage_proxy_cfg, stage_name)
-    if proxy_cfg is _PROXY_OVERRIDE_SENTINEL:
-        yield
-        return
-
-    prev_proxies = dict(getattr(session_obj, "proxies", {}) or {})
-    _apply_proxy_to_http_session(session_obj, _build_proxy_url_from_cfg(proxy_cfg))
-    _log(f"      [proxy] stage={stage_name} → {_describe_proxy_cfg(proxy_cfg)}")
-    try:
-        yield
-    finally:
-        if hasattr(session_obj, "proxies"):
-            session_obj.proxies = prev_proxies
+    yield
 
 
 def _extract_api_error(resp) -> tuple[str, str]:
@@ -4547,11 +4514,15 @@ def _drive_gopay_from_redirect(
     auth_cfg = (cfg.get("fresh_checkout") or {}).get("auth") or {}
     cs_session = _gopay._build_chatgpt_session(auth_cfg)
     proxy = (
-        str(cfg.get("_active_gopay_proxy") or "").strip()
-        or (cfg.get("proxy") or "").strip()
+        (cfg.get("proxy") or "").strip()
         or None
     )
-    gopay_cfg = _gopay.pick_gopay_account_config(cfg.get("gopay") or {}, log=_log)
+    raw_gopay_cfg = cfg.get("gopay") or {}
+    if _gopay.is_qr_payment_enabled(raw_gopay_cfg):
+        gopay_cfg = dict(raw_gopay_cfg)
+        _log("      [gopay-qr] 二维码支付模式已启用，跳过 GoPay 账号绑定流程")
+    else:
+        gopay_cfg = _gopay.pick_gopay_account_config(raw_gopay_cfg, log=_log)
     cfg["gopay"] = gopay_cfg
 
     if otp_file:
@@ -8126,10 +8097,13 @@ def run(
             if str(here) not in _sys.path:
                 _sys.path.insert(0, str(here))
             import gopay as _gopay
-            if not _gopay.normalize_gopay_accounts(gopay_cfg):
+            if not (
+                _gopay.is_qr_payment_enabled(gopay_cfg)
+                or _gopay.normalize_gopay_accounts(gopay_cfg)
+            ):
                 raise ValueError
         except ValueError:
-            raise ValueError("GoPay 模式需 cfg.gopay 提供 accounts[]，或 country_code / phone_number / pin")
+            raise ValueError("GoPay 模式需 cfg.gopay 提供 accounts[]，或 country_code / phone_number / pin；二维码支付可开启 qr_payment")
 
     _FIRST_NAMES = [
         "JAMES", "JOHN", "ROBERT", "MICHAEL", "WILLIAM", "DAVID", "RICHARD", "JOSEPH",
@@ -8210,7 +8184,7 @@ def run(
 
     http = trace_session(requests.Session(), "card.payment_main")
     http.headers.update(_browser_like_session_headers(locale_profile["browser_locale"]))
-    stage_proxy_cfg = cfg.get("stage_proxies") or {}
+    stage_proxy_cfg = {}
 
     # 代理配置
     proxy_cfg = cfg.get("proxy")
@@ -8220,11 +8194,6 @@ def run(
         _log(f"      代理: {_describe_proxy_cfg(proxy_cfg)}")
     else:
         _log("      代理: 无 (直连)")
-    if stage_proxy_cfg:
-        _log("      stage_proxies:")
-        for stage_name in sorted(stage_proxy_cfg):
-            _log(f"        - {stage_name}: {_describe_proxy_cfg(stage_proxy_cfg.get(stage_name))}")
-
     with _http_session_stage_proxy(http, stage_proxy_cfg, "fingerprint"):
         reg_guid, reg_muid, reg_sid = register_fingerprint(http)
 
@@ -8485,7 +8454,6 @@ def run(
                     http, pk, card, session_id, stripe_ver, ctx=init_ctx
                 )
         elif use_gopay:
-            _ensure_gopay_proxy_for_http_session(http, cfg)
             pm_id = create_gopay_payment_method(
                 http, pk, card, session_id, stripe_ver, ctx=init_ctx
             )

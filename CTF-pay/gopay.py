@@ -91,11 +91,11 @@ DEFAULT_TIMEOUT = 30
 LINK_RETRY_LIMIT = 2  # 406 "account already linked" retry
 LINK_RETRY_SLEEP_S = 12.0  # Midtrans 需要冷却 ~10s 才会让 406 → 201（实测）
 LINK_429_RETRY_LIMIT = 30
-LINK_429_PROXY_SWITCH_EVERY = 10
 LINK_429_RETRY_SLEEP_MIN_S = 2.0
 LINK_429_RETRY_SLEEP_MAX_S = 3.0
 CHARGE_RETRY_LIMIT = 4
 CHARGE_RETRY_SLEEP_S = 2.0
+QR_WAIT_TIMEOUT_S = 300.0
 TRANSIENT_REQUEST_RETRY_LIMIT = 3
 TRANSIENT_REQUEST_RETRY_MIN_S = 1.0
 TRANSIENT_REQUEST_RETRY_MAX_S = 2.5
@@ -166,28 +166,6 @@ def _proxy_list_from_cfg(cfg: Optional[dict], primary_proxy: Optional[str] = Non
     out: list[str] = []
     if primary_proxy:
         out.append(_normalize_proxy_url(str(primary_proxy).strip()))
-    cfg = cfg or {}
-    candidates: list[Any] = []
-    proxies_cfg = cfg.get("proxies")
-    if isinstance(proxies_cfg, dict):
-        gopay_candidates = proxies_cfg.get("gopay_list") or proxies_cfg.get("gopay_urls")
-        candidates.append(gopay_candidates)
-        if not gopay_candidates:
-            candidates.append(proxies_cfg.get("list"))
-    candidates.append(cfg.get("proxy_pool"))
-    candidates.append(cfg.get("proxy_list"))
-    candidates.append(cfg.get("proxies"))
-    for raw in candidates:
-        if isinstance(raw, str):
-            parts = [p.strip() for p in re.split(r"[\r\n,]+", raw) if p.strip()]
-        elif isinstance(raw, list):
-            parts = [str(p).strip() for p in raw if str(p).strip()]
-        else:
-            parts = []
-        for proxy in parts:
-            proxy = _normalize_proxy_url(proxy)
-            if proxy and proxy not in out:
-                out.append(proxy)
     return out
 
 
@@ -307,6 +285,23 @@ def normalize_gopay_accounts(gopay_cfg: dict) -> list[dict]:
     return []
 
 
+def _truthy_cfg(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "y", "on", "qr", "qris")
+    return bool(value)
+
+
+def is_qr_payment_enabled(gopay_cfg: dict) -> bool:
+    if not isinstance(gopay_cfg, dict):
+        return False
+    mode = str(gopay_cfg.get("payment_mode") or gopay_cfg.get("mode") or "").strip().lower()
+    return (
+        mode in ("qr", "qris", "qr_payment")
+        or _truthy_cfg(gopay_cfg.get("qr_payment"))
+        or _truthy_cfg(gopay_cfg.get("qr_enabled"))
+    )
+
+
 def pick_gopay_account_config(
     gopay_cfg: dict,
     *,
@@ -376,16 +371,20 @@ class GoPayCharger:
         runtime_cfg: Optional[dict] = None,
     ):
         self.cs = chatgpt_session
+        self.qr_payment = is_qr_payment_enabled(gopay_cfg)
         if isinstance(gopay_cfg, dict) and (
-            gopay_cfg.get("accounts") and not gopay_cfg.get("_selected_account")
+            gopay_cfg.get("accounts") and not gopay_cfg.get("_selected_account") and not self.qr_payment
         ):
             gopay_cfg = pick_gopay_account_config(gopay_cfg, log=log)
-        self.country_code = str(gopay_cfg["country_code"]).lstrip("+")
-        self.phone = _phone_digits(gopay_cfg["phone_number"])
-        self.pin = str(gopay_cfg["pin"])
+        self.country_code = str(gopay_cfg.get("country_code") or "62").lstrip("+")
+        self.phone = _phone_digits(gopay_cfg.get("phone_number") or "")
+        self.pin = str(gopay_cfg.get("pin") or "")
+        if not self.qr_payment and not (self.country_code and self.phone and self.pin):
+            raise GoPayError("gopay config missing usable account: need country_code / phone_number / pin")
         self.midtrans_client_id = str(
             gopay_cfg.get("midtrans_client_id") or DEFAULT_MIDTRANS_CLIENT_ID
         )
+        self.qr_wait_timeout = _float_cfg(gopay_cfg, "qr_wait_timeout", QR_WAIT_TIMEOUT_S)
         self.midtrans_page_url = ""
         self.gopay_activation_link_url = ""
         self.otp_provider = otp_provider
@@ -419,20 +418,6 @@ class GoPayCharger:
             self.ext.proxies = {"http": proxy, "https": proxy} if proxy else {"http": "", "https": ""}
         except Exception:
             pass
-
-    def _switch_proxy_after_429(self) -> bool:
-        if len(self.proxy_pool) <= 1:
-            self.log("[gopay] midtrans linking 429 reached 10 times, no alternate proxy configured")
-            return False
-        old_proxy = self.proxy_pool[self.proxy_index % len(self.proxy_pool)]
-        self.proxy_index = (self.proxy_index + 1) % len(self.proxy_pool)
-        new_proxy = self.proxy_pool[self.proxy_index]
-        self._apply_proxy(new_proxy)
-        self.log(
-            "[gopay] midtrans linking 429 reached 10 times, switched proxy "
-            f"{self.proxy_index + 1}/{len(self.proxy_pool)}: {old_proxy} -> {new_proxy}"
-        )
-        return True
 
     def _request_ext(self, method: str, url: str, *, retry_label: str = "", **kwargs: Any):
         last_exc: Exception | None = None
@@ -779,8 +764,6 @@ class GoPayCharger:
                 last_err = f"429 {r.text[:120]}"
                 if rate_limit_attempt > LINK_429_RETRY_LIMIT:
                     raise GoPayError(f"midtrans linking 429 exhausted retries: {last_err}")
-                if rate_limit_attempt % LINK_429_PROXY_SWITCH_EVERY == 0:
-                    self._switch_proxy_after_429()
                 sleep_s = random.uniform(LINK_429_RETRY_SLEEP_MIN_S, LINK_429_RETRY_SLEEP_MAX_S)
                 time.sleep(sleep_s)
                 continue
@@ -949,6 +932,151 @@ class GoPayCharger:
                 continue
         raise GoPayError(f"midtrans charge: no reference after retries: {last_detail}")
 
+    def _extract_qr_payload(self, data: dict) -> tuple[str, str]:
+        if not isinstance(data, dict):
+            return "", ""
+
+        for key in (
+            "qr_string",
+            "qr_content",
+            "qris_string",
+            "qris",
+            "qris_url",
+            "qr_code_url",
+        ):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip(), "qr_string" if "string" in key or key in ("qris", "qr_content") else "qr_image_url"
+
+        actions = data.get("actions")
+        if isinstance(actions, list):
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                name = str(action.get("name") or "").lower()
+                url = str(action.get("url") or "").strip()
+                if url and ("qr" in name or "qris" in url.lower() or "qr-code" in url.lower()):
+                    return url, "qr_image_url"
+
+        for key in (
+            "deeplink_redirect_url",
+            "gopay_deeplink_url",
+            "redirect_url",
+            "payment_url",
+            "gopay_web_url",
+            "finish_redirect_url",
+        ):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip(), "payment_url"
+        return "", ""
+
+    def _midtrans_create_qr_charge(self, snap_token: str) -> dict:
+        url = f"https://app.midtrans.com/snap/v2/transactions/{snap_token}/charge"
+        headers = {
+            **self._midtrans_basic_auth(),
+            "Content-Type": "application/json",
+            "Origin": "https://app.midtrans.com",
+            "Referer": f"https://app.midtrans.com/snap/v4/redirection/{snap_token}?gopayMode=qr",
+        }
+        candidates = [
+            ("qris", {"payment_type": "qris", "promo_details": None}),
+            ("gopay-qr", {"payment_type": "gopay", "tokenization": "false", "promo_details": None}),
+        ]
+        last_detail = ""
+        for label, body in candidates:
+            for attempt in range(1, CHARGE_RETRY_LIMIT + 1):
+                try:
+                    r = self.ext.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
+                except Exception as exc:
+                    if not _looks_transient_request_error(exc) or attempt >= CHARGE_RETRY_LIMIT:
+                        raise
+                    last_detail = f"{label} {type(exc).__name__}: {str(exc)[:200]}"
+                    self.log(
+                        "[gopay-qr] midtrans charge transient error, "
+                        f"{CHARGE_RETRY_SLEEP_S:.1f}s 后重试 {attempt}/{CHARGE_RETRY_LIMIT}: {last_detail}"
+                    )
+                    time.sleep(CHARGE_RETRY_SLEEP_S)
+                    continue
+
+                raw_text = (r.text or "")[:1000]
+                try:
+                    data = r.json()
+                except Exception:
+                    data = {}
+                keys_log = ",".join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__
+                payload, kind = self._extract_qr_payload(data)
+                self.log(
+                    "[gopay-qr] midtrans charge response "
+                    f"mode={label} attempt={attempt}/{CHARGE_RETRY_LIMIT} "
+                    f"status={r.status_code} keys={keys_log} payload_type={kind or '-'} "
+                    f"body={raw_text[:300]!r}"
+                )
+                r.raise_for_status()
+
+                if payload:
+                    return {
+                        "payload": payload,
+                        "payload_type": kind,
+                        "charge_mode": label,
+                        "snap_token": snap_token,
+                        "response": data,
+                    }
+
+                last_detail = f"mode={label} status={r.status_code} keys={keys_log} body={raw_text[:300]!r}"
+                if attempt < CHARGE_RETRY_LIMIT:
+                    self.log(
+                        "[gopay-qr] midtrans charge no QR payload, "
+                        f"{CHARGE_RETRY_SLEEP_S:.1f}s 后重试 {attempt}/{CHARGE_RETRY_LIMIT}"
+                    )
+                    time.sleep(CHARGE_RETRY_SLEEP_S)
+                    continue
+                break
+        raise GoPayError(f"midtrans qr charge: no QR payload after retries: {last_detail}")
+
+    def _save_qr_artifact(self, qr_info: dict) -> str:
+        payload = str(qr_info.get("payload") or "").strip()
+        kind = str(qr_info.get("payload_type") or "")
+        snap_token = str(qr_info.get("snap_token") or uuid.uuid4())
+        if not payload:
+            return ""
+
+        out_dir = Path(__file__).resolve().parents[1] / "output" / "gopay_qr"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", snap_token)[:80]
+
+        if kind != "qr_image_url":
+            try:
+                import qrcode  # type: ignore
+
+                path = out_dir / f"{stem}.png"
+                img = qrcode.make(payload)
+                img.save(path)
+                return str(path)
+            except Exception as exc:
+                self.log(f"[gopay-qr] qrcode 生成失败，改写入文本: {type(exc).__name__}: {str(exc)[:120]}")
+
+        if kind == "qr_image_url":
+            try:
+                r = self.ext.get(payload, headers=self._midtrans_basic_auth(), timeout=DEFAULT_TIMEOUT)
+                if 200 <= r.status_code < 300:
+                    suffix = ".png"
+                    content_type = str(r.headers.get("content-type") or "").lower()
+                    if "svg" in content_type:
+                        suffix = ".svg"
+                    elif "jpeg" in content_type or "jpg" in content_type:
+                        suffix = ".jpg"
+                    path = out_dir / f"{stem}{suffix}"
+                    path.write_bytes(r.content)
+                    return str(path)
+                self.log(f"[gopay-qr] 下载二维码图片失败 status={r.status_code}: {payload[:160]}")
+            except Exception as exc:
+                self.log(f"[gopay-qr] 下载二维码图片异常: {type(exc).__name__}: {str(exc)[:160]}")
+
+        path = out_dir / f"{stem}.txt"
+        path.write_text(payload, encoding="utf-8")
+        return str(path)
+
     # ───── Step 14: GoPay charge processing ─────
 
     def _gopay_payment_validate(self, charge_ref: str):
@@ -1012,9 +1140,9 @@ class GoPayCharger:
 
     # ───── Step 15: Stripe + ChatGPT verify ─────
 
-    def _chatgpt_verify(self, cs_id: str) -> dict:
+    def _chatgpt_verify(self, cs_id: str, timeout_s: float = 60.0) -> dict:
         """Poll chatgpt verify until plan is active."""
-        deadline = time.time() + 60
+        deadline = time.time() + max(1.0, float(timeout_s or 60.0))
         while time.time() < deadline:
             r = self.cs.get(
                 "https://chatgpt.com/checkout/verify",
@@ -1049,7 +1177,38 @@ class GoPayCharger:
         """
         snap_token = self._fetch_pm_redirect_snap_token(pm_redirect_url)
         self.log(f"[gopay] midtrans snap_token={snap_token}")
+        if self.qr_payment:
+            return self._run_midtrans_qr(snap_token, cs_id)
         return self._run_midtrans_and_gopay(snap_token, cs_id)
+
+    def _run_midtrans_qr(self, snap_token: str, cs_id: str) -> dict:
+        self._midtrans_load_transaction(snap_token)
+        qr_info = self._midtrans_create_qr_charge(snap_token)
+        artifact = self._save_qr_artifact(qr_info)
+        payload = str(qr_info.get("payload") or "")
+        kind = str(qr_info.get("payload_type") or "")
+        if artifact:
+            self.log(f"[gopay-qr] 二维码已生成: {artifact}")
+            print(f"GOPAY_QR_FILE={artifact}", flush=True)
+        if kind == "qr_string":
+            print(f"GOPAY_QR_DATA={payload}", flush=True)
+        elif payload:
+            print(f"GOPAY_QR_URL={payload}", flush=True)
+        if cs_id:
+            self.log(f"[gopay-qr] 请扫码完成支付，最多等待 {int(self.qr_wait_timeout)}s ...")
+            result = self._chatgpt_verify(cs_id, timeout_s=self.qr_wait_timeout)
+            result.update({
+                "snap_token": snap_token,
+                "qr_payload_type": kind,
+                "qr_artifact": artifact,
+            })
+            return result
+        return {
+            "state": "qr_ready",
+            "snap_token": snap_token,
+            "qr_payload_type": kind,
+            "qr_artifact": artifact,
+        }
 
     def _run_midtrans_and_gopay(self, snap_token: str, cs_id: str) -> dict:
         self._midtrans_load_transaction(snap_token)
@@ -1677,7 +1836,7 @@ def main():
         print("[error] config has no 'gopay' block", file=sys.stderr)
         sys.exit(2)
     try:
-        gopay_cfg = pick_gopay_account_config(raw_gopay_cfg)
+        gopay_cfg = dict(raw_gopay_cfg) if is_qr_payment_enabled(raw_gopay_cfg) else pick_gopay_account_config(raw_gopay_cfg)
     except GoPayError as e:
         print(f"[error] {e}", file=sys.stderr)
         sys.exit(2)

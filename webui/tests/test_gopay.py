@@ -331,6 +331,53 @@ def test_midtrans_linking_first_429_retries_without_realtime_429_log(monkeypatch
     assert not [line for line in logs if "429" in line or "request_headers" in line or "rate limited" in line]
 
 
+def test_gopay_proxy_pool_keeps_payment_proxy_stable():
+    charger = build_charger()
+    charger.proxy_pool = gopay._proxy_list_from_cfg(
+        {"proxies": {"gopay_list": ["http://gopay-1.example:8080", "http://gopay-2.example:8080"]}},
+        "http://payment.example:8080",
+    )
+
+    assert charger.proxy_pool == ["http://payment.example:8080"]
+
+
+def test_qr_payment_mode_does_not_require_gopay_account():
+    cs_session = requests.Session()
+    cs_session.headers["Cookie"] = "__Secure-next-auth.session-token=fake"
+
+    charger = gopay.GoPayCharger(
+        cs_session,
+        {"qr_payment": True, "qr_wait_timeout": 120},
+        otp_provider=lambda: "",
+        log=lambda _m: None,
+    )
+
+    assert charger.qr_payment is True
+    assert charger.qr_wait_timeout == 120
+
+
+def test_extract_qr_payload_from_midtrans_actions():
+    charger = build_charger()
+
+    payload, kind = charger._extract_qr_payload({
+        "actions": [
+            {"name": "generate-qr-code", "url": "https://api.midtrans.com/v2/qris.png"},
+        ],
+    })
+
+    assert payload == "https://api.midtrans.com/v2/qris.png"
+    assert kind == "qr_image_url"
+
+
+def test_extract_qr_payload_from_qr_string():
+    charger = build_charger()
+
+    payload, kind = charger._extract_qr_payload({"qr_string": "000201010212QRISDATA"})
+
+    assert payload == "000201010212QRISDATA"
+    assert kind == "qr_string"
+
+
 def test_midtrans_linking_429_retries_past_406_limit(monkeypatch):
     sleeps: list[float] = []
     monkeypatch.setattr(gopay.time, "sleep", lambda s: sleeps.append(float(s)))

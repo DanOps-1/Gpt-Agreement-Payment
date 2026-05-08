@@ -67,6 +67,18 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
     return []
 
 
+def _gopay_qr_payment_enabled(gp: dict) -> bool:
+    if not isinstance(gp, dict):
+        return False
+    mode = str(gp.get("payment_mode") or gp.get("mode") or "").strip().lower()
+    raw = gp.get("qr_payment", gp.get("qr_enabled", False))
+    if isinstance(raw, str):
+        enabled = raw.strip().lower() in ("1", "true", "yes", "y", "on", "qr", "qris")
+    else:
+        enabled = bool(raw)
+    return enabled or mode in ("qr", "qris", "qr_payment")
+
+
 def _gopay_auto_unbind_from_value(value: dict, fallback: dict | None = None) -> dict:
     fallback = fallback or {}
     src = value.get("auto_unbind") if isinstance(value.get("auto_unbind"), dict) else {}
@@ -126,22 +138,29 @@ def _project_pay(answers: dict) -> dict:
     if pm == "gopay" and "gopay" in answers:
         gp = answers["gopay"] or {}
         accounts = _normalize_gopay_accounts(gp)
-        if accounts:
-            first = accounts[0]
+        qr_payment = _gopay_qr_payment_enabled(gp)
+        if accounts or qr_payment:
+            first = accounts[0] if accounts else {}
             out["gopay"] = {
-                "country_code": first["country_code"],
-                "phone_number": first["phone_number"],
-                "pin": first["pin"],
+                "country_code": first["country_code"] if accounts else str(gp.get("country_code") or "62").lstrip("+"),
+                "phone_number": first["phone_number"] if accounts else str(gp.get("phone_number") or ""),
+                "pin": first["pin"] if accounts else str(gp.get("pin") or ""),
                 "accounts": accounts,
             }
-            if first.get("midtrans_client_id"):
-                out["gopay"]["midtrans_client_id"] = first["midtrans_client_id"]
+            if (accounts and first.get("midtrans_client_id")) or gp.get("midtrans_client_id"):
+                out["gopay"]["midtrans_client_id"] = (
+                    first.get("midtrans_client_id") if accounts else str(gp.get("midtrans_client_id"))
+                )
+            if qr_payment:
+                out["gopay"]["qr_payment"] = True
+                out["gopay"]["payment_mode"] = "qr"
+                out["gopay"]["qr_wait_timeout"] = int(gp.get("qr_wait_timeout") or 300)
             out["gopay"]["otp"] = {
                 "source": "auto",
                 "timeout": int(gp.get("otp_timeout") or 300),
                 "interval": 1,
             }
-            auto_unbind = _gopay_auto_unbind_from_value(first, fallback=gp)
+            auto_unbind = _gopay_auto_unbind_from_value(first if accounts else gp, fallback=gp)
             if auto_unbind:
                 out["gopay"]["auto_unbind"] = auto_unbind
     if "team_plan" in answers:
