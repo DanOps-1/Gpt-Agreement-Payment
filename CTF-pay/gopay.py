@@ -400,6 +400,8 @@ class GoPayCharger:
             or gopay_cfg.get("manual_otp_hold")
             or os.environ.get("GOPAY_STOP_AT_OTP") == "1"
         )
+        self.midtrans_page_url = ""
+        self.gopay_activation_link_url = ""
         self.otp_provider = otp_provider
         self.log = log
         self.proxy_pool = _proxy_list_from_cfg(proxy_cfg, proxy)
@@ -727,6 +729,7 @@ class GoPayCharger:
     def _midtrans_init_linking(self, snap_token: str) -> str:
         """POST snap/v3/accounts/{snap}/linking. Retries on 406."""
         url = f"https://app.midtrans.com/snap/v3/accounts/{snap_token}/linking"
+        self.midtrans_page_url = f"https://app.midtrans.com/snap/v4/redirection/{snap_token}"
         body = {
             "type": "gopay",
             "country_code": self.country_code,
@@ -762,11 +765,15 @@ class GoPayCharger:
                 continue
             if r.status_code == 201:
                 data = r.json()
-                m = re.search(r"reference=([a-f0-9-]{36})", data.get("activation_link_url", ""))
+                activation_link = data.get("activation_link_url", "")
+                self.gopay_activation_link_url = activation_link
+                m = re.search(r"reference=([a-f0-9-]{36})", activation_link)
                 if not m:
                     raise GoPayError(f"midtrans linking 201 but no reference: {data}")
                 ref = m.group(1)
                 self.log(f"[gopay] midtrans linking ok reference={ref}")
+                if activation_link:
+                    self.log(f"[gopay] 当前网页地址: {activation_link}")
                 return ref
             if r.status_code == 406:
                 attempt += 1
@@ -1080,12 +1087,17 @@ class GoPayCharger:
             "reason": "gopay_otp_sent",
             "phone": self.phone,
             "country_code": self.country_code,
+            "current_url": self.gopay_activation_link_url or self.midtrans_page_url,
+            "gopay_activation_link_url": self.gopay_activation_link_url,
+            "midtrans_page_url": self.midtrans_page_url,
             "snap_token": snap_token,
             "reference_id": reference_id,
             "cs_id": cs_id,
         }
         if self.stop_at_otp:
             self.log("[gopay] stop_at_otp enabled, task paused after OTP was sent")
+            if hold_info.get("current_url"):
+                self.log(f"[gopay] 当前网页地址: {hold_info['current_url']}")
             self.log(
                 "[gopay] OTP_PAGE_INFO "
                 + json.dumps(hold_info, ensure_ascii=False, separators=(",", ":"))
