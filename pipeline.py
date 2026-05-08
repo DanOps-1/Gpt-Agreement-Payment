@@ -1016,32 +1016,40 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
     if proxy_pool is None:
         proxy_pool = _build_proxy_pool_from_card_cfg(card_cfg)
 
-    # 挑代理（独立于域）
-    picked_proxy = proxy_pool.pick() if proxy_pool and proxy_pool.proxies else ""
-    if picked_proxy:
-        print(f"[ProxyPool] 本次代理: {picked_proxy}")
+    # Proxy list is a pool, not "register line + payment line".
+    # Each task picks one pool entry; Webshare refreshes the underlying IP before payment.
+    reg_proxy = pay_proxy = ""
+    if proxy_pool and proxy_pool.proxies:
+        reg_proxy, pay_proxy = proxy_pool.pick_two_stage()
+    if reg_proxy or pay_proxy:
+        if reg_proxy == pay_proxy:
+            print(f"[ProxyPool] 本次代理: {reg_proxy}")
+        else:
+            print(f"[ProxyPool] 注册代理: {reg_proxy}")
+            print(f"[ProxyPool] 支付代理: {pay_proxy}")
 
     # 挑域 + 写临时 CTF-reg config（同时覆盖 proxy）
     # pool.domains 为空时，若有 provisioner 仍要让 pick() 触发自动开通
     picked_domain = pool.pick_and_mark_used() if pool and (pool.domains or pool.provisioner) else ""
     temp_cardw = None
     effective_cardw = cardw_config_path
-    if picked_domain or picked_proxy:
-        temp_cardw = _rewrite_cardw_with_domain(cardw_config_path, picked_domain, picked_proxy)
+    if picked_domain or reg_proxy:
+        temp_cardw = _rewrite_cardw_with_domain(cardw_config_path, picked_domain, reg_proxy)
         effective_cardw = temp_cardw
         if picked_domain:
             print(f"[DomainPool] 本次使用域: {picked_domain}")
 
-    # CTF-pay 也覆盖 proxy（支付流程走同一代理）
+    # CTF-pay uses the same pool entry; dynamic providers can refresh the exit IP between stages.
     temp_card = None
     effective_card = card_config_path
-    if picked_proxy:
-        temp_card = _rewrite_card_with_proxy(card_config_path, picked_proxy)
+    if pay_proxy:
+        temp_card = _rewrite_card_with_proxy(card_config_path, pay_proxy)
         effective_card = temp_card
 
     ts = datetime.now(timezone.utc).isoformat()
     record = {"ts": ts, "registration": {}, "payment": {},
-              "domain": picked_domain, "proxy": picked_proxy}
+              "domain": picked_domain, "proxy": pay_proxy or reg_proxy,
+              "register_proxy": reg_proxy, "payment_proxy": pay_proxy}
 
     try:
         # Step 1: 注册
@@ -1057,6 +1065,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
             _append_result(record)
             raise
         reg_acc = _find_latest_registered_account_for_email(reg.get("email", ""))
+        _refresh_proxy_before_payment(card_cfg or {}, team_client=team_client)
 
         # Step 2: 支付
         print(f"\n{'='*60}")
@@ -1234,7 +1243,7 @@ def _run_batch_worker(args_tuple):
     temp_card = None
     results = []
     try:
-        worker_card_path, _picked_proxy = _worker_card_config(
+        worker_card_path, _reg_proxy, _pay_proxy = _worker_card_config(
             card_config_path,
             card_cfg,
             worker_id,
@@ -1246,7 +1255,7 @@ def _run_batch_worker(args_tuple):
             temp_card = worker_card_path
         worker_kwargs = dict(kwargs)
         worker_kwargs["card_cfg"] = None
-        worker_kwargs["proxy_pool"] = ProxyPool([_picked_proxy]) if _picked_proxy else ProxyPool()
+        worker_kwargs["proxy_pool"] = ProxyPool([p for p in (_reg_proxy, _pay_proxy) if p])
         for idx in task_indices:
             print(f"\n[batch-worker-{worker_id}] start task {idx + 1}")
             try:
@@ -1260,8 +1269,10 @@ def _run_batch_worker(args_tuple):
                 r = pipeline(worker_card_path, **scoped_kwargs)
                 r["batch_index"] = idx
                 r["worker_id"] = worker_id
-                if _picked_proxy:
-                    r["proxy"] = _picked_proxy
+                if _reg_proxy or _pay_proxy:
+                    r["proxy"] = _pay_proxy or _reg_proxy
+                    r["register_proxy"] = _reg_proxy
+                    r["payment_proxy"] = _pay_proxy
             except Exception as e:
                 err = str(e)[:200]
                 r = {
@@ -1297,7 +1308,7 @@ def _run_pay_only_worker(args_tuple):
     temp_card = None
     results = []
     try:
-        worker_card_path, picked_proxy = _worker_card_config(
+        worker_card_path, reg_proxy, pay_proxy = _worker_card_config(
             card_config_path,
             card_cfg,
             worker_id,
@@ -1321,8 +1332,10 @@ def _run_pay_only_worker(args_tuple):
                 )
                 r["batch_index"] = idx
                 r["worker_id"] = worker_id
-                if picked_proxy:
-                    r["proxy"] = picked_proxy
+                if reg_proxy or pay_proxy:
+                    r["proxy"] = pay_proxy or reg_proxy
+                    r["register_proxy"] = reg_proxy
+                    r["payment_proxy"] = pay_proxy
             except Exception as e:
                 r = {"batch_index": idx, "worker_id": worker_id, "status": "error", "error": str(e)[:200]}
                 print(f"[pay-only-worker-{worker_id}] payment exception: {e}")
@@ -1513,6 +1526,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
             picked_domain = acc.get("picked_domain", "")
             invite_perm = "-"
             try:
+                _refresh_proxy_before_payment(card_cfg or {}, team_client=team_client)
                 pay_result = pay(
                     card_config_path,
                     session_token=acc.get("session_token"),
@@ -2961,6 +2975,25 @@ def _rotate_webshare_ip(card_cfg: dict, team_client=None, prev_ip: str = "") -> 
     return new_px
 
 
+def _refresh_proxy_before_payment(card_cfg: dict, team_client=None) -> dict:
+    ws_cfg = (card_cfg or {}).get("webshare") or {}
+    if not ws_cfg.get("enabled"):
+        return {}
+    if ws_cfg.get("refresh_between_stages", True) is False:
+        return {}
+    print("[ProxyPool] Webshare refresh before payment stage ...")
+    try:
+        _ensure_gost_alive(card_cfg, team_client)
+        px = _rotate_webshare_ip(card_cfg, team_client=team_client, prev_ip="")
+        print(f"[ProxyPool] payment proxy IP ready: {px.get('proxy_address', '?')}")
+        return px
+    except WebshareQuotaExhausted as e:
+        print(f"[ProxyPool] Webshare quota exhausted, keep current proxy: {e}")
+    except Exception as e:
+        print(f"[ProxyPool] Webshare refresh failed, keep current proxy: {e}")
+    return {}
+
+
 class ProxyPool:
     """代理轮换池（stub）。未来扩展：健康检查、失败标记、LRU 轮换。
     当前行为：有 list 则返回第一个（保持稳定），无 list 返回空字符串（走配置默认代理）。"""
@@ -2979,6 +3012,10 @@ class ProxyPool:
             return random.choice(self.proxies)
         return self.proxies[0]
 
+    def pick_two_stage(self) -> tuple[str, str]:
+        proxy = self.pick()
+        return proxy, proxy
+
     def pick_for_worker(self, worker_id: int) -> str:
         if not self.proxies:
             return ""
@@ -2990,6 +3027,10 @@ class ProxyPool:
         if len(self.proxies) > 1 or self.rotation in ("round_robin", "worker", "lru"):
             return self.proxies[int(worker_id) % len(self.proxies)]
         return self.proxies[0]
+
+    def pick_two_stage_for_worker(self, worker_id: int) -> tuple[str, str]:
+        proxy = self.pick_for_worker(worker_id)
+        return proxy, proxy
 
     def mark_fail(self, proxy):
         # TODO: 实现失败标记 + 冷却
@@ -3014,11 +3055,6 @@ def _validate_worker_resources(card_cfg, workers, *, use_gopay=False, proxy_pool
                 f"workers={workers} 但 GoPay accounts 只有 {len(accounts)} 个，无法保证手机号不重复"
             )
     pool = proxy_pool or _build_proxy_pool_from_card_cfg(card_cfg or {})
-    if pool.proxies and len(pool.proxies) < workers:
-        raise RuntimeError(
-            f"workers={workers} 但 HTTP 代理只有 {len(pool.proxies)} 个，无法保证代理不重复"
-        )
-
 
 def _rewrite_cardw_with_domain(src_path, domain, proxy_url=""):
     """读 CTF-reg config，把 catch_all_domain 覆盖为 domain，可选覆盖 proxy，写到临时文件返回路径"""
@@ -3102,7 +3138,10 @@ def _rewrite_card_for_worker(src_path, *, proxy_url="", gopay_account=None, work
 
 
 def _worker_card_config(card_config_path, card_cfg, worker_id, workers, proxy_pool=None, use_gopay=False):
-    picked_proxy = proxy_pool.pick_for_worker(worker_id) if proxy_pool and proxy_pool.proxies else ""
+    reg_proxy = pay_proxy = ""
+    if proxy_pool and proxy_pool.proxies:
+        reg_proxy, pay_proxy = proxy_pool.pick_two_stage_for_worker(worker_id)
+    picked_proxy = pay_proxy or reg_proxy
     selected_gopay = None
     if use_gopay:
         accounts = _gopay_accounts_from_card_cfg(card_cfg or {})
@@ -3114,16 +3153,20 @@ def _worker_card_config(card_config_path, card_cfg, worker_id, workers, proxy_po
             selected_gopay = accounts[int(worker_id) % len(accounts)]
             label = selected_gopay.get("label") or selected_gopay.get("name") or f"account-{worker_id + 1}"
             print(f"[batch-worker-{worker_id}] GoPay account={label}")
-    if picked_proxy:
-        print(f"[batch-worker-{worker_id}] proxy={picked_proxy}")
+    if reg_proxy or pay_proxy:
+        if reg_proxy == pay_proxy:
+            print(f"[batch-worker-{worker_id}] proxy={reg_proxy}")
+        else:
+            print(f"[batch-worker-{worker_id}] register_proxy={reg_proxy}")
+            print(f"[batch-worker-{worker_id}] payment_proxy={pay_proxy}")
     if picked_proxy or selected_gopay:
         return _rewrite_card_for_worker(
             card_config_path,
             proxy_url=picked_proxy,
             gopay_account=selected_gopay,
             worker_id=worker_id,
-        ), picked_proxy
-    return card_config_path, ""
+        ), reg_proxy, pay_proxy
+    return card_config_path, "", ""
 
 
 def _find_latest_refresh_token_for_email(email, session_id=""):

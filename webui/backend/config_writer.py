@@ -164,7 +164,22 @@ def _project_pay(answers: dict) -> dict:
         elif mode == "none":
             out["proxy"] = ""
         elif proxy.get("url"):
-            out["proxy"] = proxy["url"]
+            proxy_list = [
+                str(x).strip()
+                for x in (
+                    proxy.get("urls")
+                    if isinstance(proxy.get("urls"), list)
+                    else str(proxy.get("url") or "").splitlines()
+                )
+                if str(x).strip()
+            ]
+            out["proxy"] = proxy_list[0]
+            if len(proxy_list) > 1:
+                out["proxies"] = {
+                    "enabled": True,
+                    "rotation": "worker",
+                    "list": proxy_list,
+                }
     return out
 
 
@@ -191,8 +206,8 @@ def _project_reg(answers: dict) -> dict:
         if zones:
             out["mail"] = {
                 "provider": "cf",
-            "catch_all_domain": zones[0],
-            "catch_all_domains": list(zones),
+                "catch_all_domain": zones[0],
+                "catch_all_domains": list(zones),
             }
     if "card" in answers and pm in ("card", "both"):
         out["card"] = {k: answers["card"].get(k, "") for k in ("number", "cvc", "exp_month", "exp_year")}
@@ -211,7 +226,22 @@ def _project_reg(answers: dict) -> dict:
         elif mode == "none":
             out["proxy"] = ""
         elif proxy.get("url"):
-            out["proxy"] = proxy["url"]
+            proxy_list = [
+                str(x).strip()
+                for x in (
+                    proxy.get("urls")
+                    if isinstance(proxy.get("urls"), list)
+                    else str(proxy.get("url") or "").splitlines()
+                )
+                if str(x).strip()
+            ]
+            out["proxy"] = proxy_list[0]
+            if len(proxy_list) > 1:
+                out["proxies"] = {
+                    "enabled": True,
+                    "rotation": "worker",
+                    "list": proxy_list,
+                }
     return out
 
 

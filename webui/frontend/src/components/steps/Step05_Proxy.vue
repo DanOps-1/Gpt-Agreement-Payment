@@ -54,7 +54,15 @@
     </div>
 
     <div v-if="form.mode === 'manual'" class="form-stack" style="margin-top:16px">
-      <TermField v-model="form.url" label="代理 URL · url" placeholder="socks5://user:pw@host:port" />
+      <label class="tf">
+        <span class="tf-tag">代理 URL · url</span>
+        <textarea
+          v-model="proxyText"
+          class="tf-textarea"
+          placeholder="每行一个代理池入口&#10;并发 worker 会按行分配；支付前 Webshare 会刷新出口 IP"
+          rows="3"
+        ></textarea>
+      </label>
       <TermField v-model="form.expected_country" label="期望国家 · expected_country" placeholder="US" />
       <div class="step-actions">
         <TermBtn :loading="loading" @click="testProxy">测试出口 IP</TermBtn>
@@ -71,7 +79,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useWizardStore } from "../../stores/wizard";
 import type { PreflightResult } from "../../api/client";
 import TermField from "../term/TermField.vue";
@@ -83,6 +91,7 @@ const init = store.answers.proxy ?? {};
 const form = ref({
   mode: init.mode ?? "manual",
   url: init.url ?? "",
+  urls: (init.urls ?? (init.url ? String(init.url).split("\n") : [])) as string[],
   expected_country: init.expected_country ?? "US",
   api_key: init.api_key ?? "",
   lock_country: init.lock_country ?? "US",
@@ -93,6 +102,14 @@ const form = ref({
   no_rotation_cooldown_s: init.no_rotation_cooldown_s ?? 10800,
   gost_listen_port: init.gost_listen_port ?? 18898,
   sync_team_proxy: init.sync_team_proxy ?? true,
+});
+const proxyText = computed({
+  get: () => (form.value.urls?.length ? form.value.urls : (form.value.url ? [form.value.url] : [])).join("\n"),
+  set: (v: string) => {
+    const lines = v.split("\n").map((s) => s.trim()).filter(Boolean);
+    form.value.urls = lines;
+    form.value.url = lines[0] || "";
+  },
 });
 const loading = ref(false);
 const result = ref<PreflightResult | null>(null);
@@ -165,4 +182,9 @@ code {
 .advanced-toggle:hover { color: var(--accent); }
 .toggle-row { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0; font-size: 13px; }
 .toggle-row input { accent-color: var(--accent); }
+.tf { display: grid; grid-template-columns: minmax(140px, max-content) minmax(0, 1fr); border: 1px solid var(--border); background: var(--bg-base); transition: border-color 80ms; }
+.tf:focus-within { border-color: var(--accent); }
+.tf-tag { background: var(--bg-panel); color: var(--fg-tertiary); padding: 10px 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; border-right: 1px solid var(--border); display: flex; align-items: flex-start; white-space: nowrap; }
+.tf-textarea { background: transparent; border: 0; padding: 10px 12px; color: var(--fg-primary); font: inherit; font-size: 13px; outline: none; resize: vertical; min-height: 72px; width: 100%; }
+.tf-textarea::placeholder { color: var(--fg-tertiary); opacity: 0.6; }
 </style>
