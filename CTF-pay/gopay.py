@@ -719,7 +719,6 @@ class GoPayCharger:
         last_err: Optional[str] = None
         rate_limit_attempt = 0
         attempt = 0
-        tried_no_auth_after_429 = False
         while attempt < LINK_RETRY_LIMIT + 1:
             try:
                 r = self.ext.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
@@ -767,43 +766,6 @@ class GoPayCharger:
                     "[gopay] midtrans linking 429 request_headers="
                     + json.dumps(_safe_all_headers_for_log(effective_headers), ensure_ascii=False, separators=(",", ":"))
                 )
-                if not tried_no_auth_after_429:
-                    tried_no_auth_after_429 = True
-                    no_auth_headers = {
-                        k: v for k, v in headers.items()
-                        if str(k).lower() != "authorization"
-                    }
-                    no_auth_effective_headers = dict(getattr(self.ext, "headers", {}) or {})
-                    no_auth_effective_headers.update(no_auth_headers)
-                    self.log(
-                        "[gopay] midtrans linking 429 no-auth fallback request_headers="
-                        + json.dumps(_safe_all_headers_for_log(no_auth_effective_headers), ensure_ascii=False, separators=(",", ":"))
-                    )
-                    try:
-                        fallback = self.ext.post(
-                            url,
-                            json=body,
-                            headers=no_auth_headers,
-                            timeout=DEFAULT_TIMEOUT,
-                        )
-                    except Exception as exc:
-                        self.log(
-                            "[gopay] midtrans linking 429 no-auth fallback error: "
-                            f"{type(exc).__name__}: {str(exc)[:160]}"
-                        )
-                    else:
-                        if fallback.status_code == 201:
-                            data = fallback.json()
-                            m = re.search(r"reference=([a-f0-9-]{36})", data.get("activation_link_url", ""))
-                            if not m:
-                                raise GoPayError(f"midtrans linking no-auth 201 but no reference: {data}")
-                            ref = m.group(1)
-                            self.log(f"[gopay] midtrans linking no-auth fallback ok reference={ref}")
-                            return ref
-                        self.log(
-                            "[gopay] midtrans linking 429 no-auth fallback "
-                            f"status={fallback.status_code} body={fallback.text[:200]}"
-                        )
                 if rate_limit_attempt > LINK_429_RETRY_LIMIT:
                     raise GoPayError(f"midtrans linking 429 exhausted retries: {last_err}")
                 if rate_limit_attempt % LINK_429_PROXY_SWITCH_EVERY == 0:
