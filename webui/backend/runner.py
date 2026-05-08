@@ -44,7 +44,7 @@ _otp_pending_since: Optional[float] = None
 _otp_pending_phone: str = ""
 _otp_pending_country_code: str = ""
 _otp_file_is_temp: bool = False
-_RUN_GOPAY_AUTO_UNBIND_ENABLED = False
+_RUN_GOPAY_AUTO_UNBIND_ENABLED = True
 
 
 def _append_log(line: str) -> None:
@@ -301,9 +301,9 @@ def _drain(proc: subprocess.Popen, run_id: int) -> None:
             line = line.rstrip()
             if not line:
                 continue
-            # Automatic GoPay unlink is disabled in Run. GoPay's x-e1 header
-            # appears to be a request-level signature bound to method/path/link_id,
-            # so saved PATCH replay is not stable enough to run after payment.
+            # Automatic GoPay unlink now re-signs x-e1 per request, so the
+            # saved linkedapps/PATCH headers from the wizard can be reused as a
+            # baseline after payment succeeds.
             should_auto_unbind = _RUN_GOPAY_AUTO_UNBIND_ENABLED and _is_pay_success_line(line)
             with _lock:
                 if run_id != _run_id or _proc is not proc:

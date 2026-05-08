@@ -798,6 +798,38 @@ class Database:
             stats[str(row["status"])] = int(row["n"])
         return stats
 
+    def mark_outlook_mail_account_paid(self, email: str) -> bool:
+        target = _email(email)
+        if not target:
+            return False
+        now = time.time()
+        with self._conn() as c:
+            cur = c.execute(
+                """
+                UPDATE outlook_mail_accounts
+                SET status='used', used_at=?, updated_at=?, last_error=''
+                WHERE email=?
+                """,
+                (now, now, target),
+            )
+        return bool(cur.rowcount)
+
+    def release_outlook_mail_account(self, email: str, reason: str = "") -> bool:
+        target = _email(email)
+        if not target:
+            return False
+        now = time.time()
+        with self._conn() as c:
+            cur = c.execute(
+                """
+                UPDATE outlook_mail_accounts
+                SET status='available', reserved_at=0, updated_at=?, last_error=?
+                WHERE email=? AND status!='used'
+                """,
+                (now, _text(reason)[:500], target),
+            )
+        return bool(cur.rowcount)
+
     def user_count(self) -> int:
         with self._conn() as c:
             return c.execute("SELECT COUNT(*) FROM users").fetchone()[0]

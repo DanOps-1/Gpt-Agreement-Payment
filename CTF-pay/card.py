@@ -118,6 +118,23 @@ def _log_response(resp: requests.Response, tag: str = ""):
         _log_raw(f"    BODY(raw): {resp.text[:2000]}")
     _log_raw(f"{'─'*70}\n")
 
+def _sync_outlook_mail_payment_state(email: str, paid: bool, reason: str = "") -> None:
+    target = str(email or "").strip().lower()
+    if not target:
+        return
+    try:
+        db = get_db()
+        if paid:
+            if getattr(db, "mark_outlook_mail_account_paid", None):
+                if db.mark_outlook_mail_account_paid(target):
+                    _log(f"      [mail] Outlook 邮箱标记为已支付消耗: {target}")
+        else:
+            if getattr(db, "release_outlook_mail_account", None):
+                if db.release_outlook_mail_account(target, reason or "payment_not_succeeded"):
+                    _log(f"      [mail] Outlook 邮箱释放为可复用: {target}")
+    except Exception as e:
+        _log(f"      [mail] 同步 Outlook 邮箱状态失败: {e}")
+
 
 def _describe_challenge_artifact(name: str, value: str) -> str:
     value = str(value or "")
@@ -8736,6 +8753,12 @@ def run(
 
     terminal_result = init_ctx.get("terminal_result")
     if terminal_result:
+        terminal_email = fresh_cfg.get("_chatgpt_email", card.get("email", ""))
+        _sync_outlook_mail_payment_state(
+            terminal_email,
+            False,
+            f"terminal_payment_state={terminal_result.get('payment_object_status', 'failed')}",
+        )
         err = terminal_result.get("error", {})
         _log(f"\n{'='*60}")
         _log("  支付已落到终态失败")
@@ -8756,6 +8779,11 @@ def run(
     chatgpt_email = fresh_cfg.get("_chatgpt_email", card.get("email", ""))
     payment_channel = "gopay" if use_gopay else ("paypal" if use_paypal else "card")
     result_state = result.get("state", "unknown")
+    _sync_outlook_mail_payment_state(
+        chatgpt_email,
+        result_state == "succeeded",
+        f"payment_state={result_state}",
+    )
 
     # 从数据库查最近一条匹配 email 的账号凭证。
     extra_info = {}

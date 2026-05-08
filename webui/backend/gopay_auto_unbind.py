@@ -8,6 +8,8 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
 
+from .gopay_signer import signed_headers
+
 
 DROP_REQUEST_HEADERS = {
     "host",
@@ -181,13 +183,36 @@ def _count_linked_services(payload: Any) -> tuple[int, int]:
     return len(services), account_count
 
 
+def _path_for_signature(url: str) -> tuple[str, str]:
+    parsed = urlsplit(url)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    return parsed.netloc, path
+
+
+def _signed_request_headers(parsed: dict[str, Any], *, method: str | None = None, url: str | None = None, body: str | None = None) -> dict[str, str]:
+    req_method = (method or parsed["method"]).upper()
+    req_url = url or parsed["url"]
+    req_body = parsed["body"] if body is None else body
+    host, path = _path_for_signature(req_url)
+    return signed_headers(
+        parsed["headers"],
+        method=req_method,
+        host=host,
+        path=path,
+        body=req_body or "",
+    )
+
+
 def fetch_linkedapps(raw_request: str, base_url: str = "", timeout: float = 20.0) -> dict[str, Any]:
     parsed = parse_raw_http_request(raw_request, base_url)
+    headers = _signed_request_headers(parsed)
     with httpx.Client(timeout=max(1.0, min(float(timeout or 20.0), 60.0)), follow_redirects=False) as client:
         resp = client.request(
             parsed["method"],
             parsed["url"],
-            headers=parsed["headers"],
+            headers=headers,
             content=parsed["body"].encode("utf-8") if parsed["body"] else None,
         )
     body_text = resp.text
@@ -209,7 +234,7 @@ def fetch_linkedapps(raw_request: str, base_url: str = "", timeout: float = 20.0
         "has_data": has_linkedapps_data(body_json),
         "unlink_urls": unlink_urls,
         "unlink_url": unlink_urls[0] if unlink_urls else "",
-        "request_headers": parsed["headers"],
+        "request_headers": headers,
     }
 
 
@@ -236,9 +261,11 @@ def patch_unlink(
     request_template = unlink_raw_request if (unlink_raw_request or "").strip() else raw_request
     parsed = parse_raw_http_request(request_template, base_url)
     target_url = _resolve_unlink_target(parsed["url"], base_url, unlink_url, normalize=normalize)
-    body = parsed["body"].encode("utf-8") if parsed["body"] else b""
+    body_text = parsed["body"]
+    body = body_text.encode("utf-8") if body_text else b""
+    headers = _signed_request_headers(parsed, method="PATCH", url=target_url, body=body_text)
     with httpx.Client(timeout=max(1.0, min(float(timeout or 20.0), 60.0)), follow_redirects=False) as client:
-        resp = client.request("PATCH", target_url, headers=parsed["headers"], content=body)
+        resp = client.request("PATCH", target_url, headers=headers, content=body)
     body_json = None
     try:
         body_json = resp.json()

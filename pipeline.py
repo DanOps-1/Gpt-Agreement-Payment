@@ -767,15 +767,24 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
                 result_json = json.loads(payload)
             if time.time() > deadline:
                 _terminate_process_tree(proc)
+                failed_email = _extract_registered_email_from_logs(lines)
+                if failed_email:
+                    _release_outlook_mail_account(failed_email, "registration_timeout")
                 raise RegistrationError("注册超时")
     finally:
         proc.wait()
 
     if proc.returncode != 0 and result_json is None:
         last_lines = "\n".join(lines[-5:])
+        failed_email = _extract_registered_email_from_logs(lines)
+        if failed_email:
+            _release_outlook_mail_account(failed_email, "registration_failed")
         raise RegistrationError(f"注册失败 (exit={proc.returncode}): {last_lines}")
 
     if result_json is None:
+        failed_email = _extract_registered_email_from_logs(lines)
+        if failed_email:
+            _release_outlook_mail_account(failed_email, "registration_no_credentials")
         raise RegistrationError("注册完成但未获取到凭证")
 
     email = result_json.get("email", "?")
@@ -1145,6 +1154,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
             }
         except PaymentError as e:
             record["payment"] = {"status": "error", "email": reg.get("email", ""), "error": str(e)[:200]}
+            _release_outlook_mail_account(reg.get("email", ""), "payment_error")
             if getattr(e, "code", "") == "gopay_account_unavailable":
                 record["account_removed"] = True
                 _delete_registered_account_for_payment_failure(
@@ -1156,6 +1166,8 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
 
         # Step 3: 支付成功 → gpt-team 导入 + invite 探测
         pay_status = pay_result.get("status", "unknown")
+        if pay_status != "succeeded":
+            _release_outlook_mail_account(reg.get("email", ""), f"payment_state={pay_status}")
         if pay_status == "succeeded" and team_client:
             try:
                 probe_status = _team_probe_after_payment(
@@ -1712,6 +1724,25 @@ def _append_result(record):
         get_db().add_pipeline_result(record)
     except Exception:
         pass
+
+
+def _release_outlook_mail_account(email: str, reason: str) -> None:
+    target = _norm_email(email)
+    if not target:
+        return
+    try:
+        if get_db().release_outlook_mail_account(target, reason):
+            print(f"[mail] Outlook 邮箱释放为可复用: {target} ({reason})")
+    except Exception as e:
+        print(f"[mail] Outlook 邮箱释放失败: {target}: {e}")
+
+
+def _extract_registered_email_from_logs(lines) -> str:
+    for line in reversed(lines or []):
+        m = re.search(r"([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})", str(line or ""))
+        if m:
+            return _norm_email(m.group(1))
+    return ""
 
 
 def _norm_email(value: str) -> str:

@@ -283,6 +283,12 @@ class MailProvider:
         if not self._outlook_db_path.exists():
             raise RuntimeError(f"Outlook 数据库不存在: {self._outlook_db_path}")
         now = time.time()
+        retry_after_s = float(
+            getattr(self.cfg, "outlook_reserved_retry_after_s", 0)
+            or os.environ.get("OUTLOOK_RESERVED_RETRY_AFTER_S", "1800")
+            or 1800
+        )
+        stale_reserved_before = now - max(0.0, retry_after_s)
         with sqlite3.connect(self._outlook_db_path, isolation_level=None, timeout=15) as c:
             c.row_factory = sqlite3.Row
             c.execute("PRAGMA busy_timeout = 15000")
@@ -291,14 +297,20 @@ class MailProvider:
                 """
                 SELECT id, email, password, client_id, refresh_token
                 FROM outlook_mail_accounts
-                WHERE status='available'
-                ORDER BY id ASC
+                WHERE status IN ('available', 'failed')
+                   OR (status='reserved' AND reserved_at <= ?)
+                ORDER BY CASE status
+                    WHEN 'available' THEN 0
+                    WHEN 'failed' THEN 1
+                    ELSE 2
+                END, id ASC
                 LIMIT 1
-                """
+                """,
+                (stale_reserved_before,),
             ).fetchone()
             if not row:
                 c.execute("COMMIT")
-                raise RuntimeError("Outlook 邮箱池已耗尽：没有 available 账号")
+                raise RuntimeError("Outlook 邮箱池已耗尽：没有可复用账号（used 或仍在 reserved 冷却中）")
             c.execute(
                 """
                 UPDATE outlook_mail_accounts
@@ -336,9 +348,13 @@ class MailProvider:
                 )
 
     def mark_current_mailbox_used(self) -> None:
-        """Mark the reserved Outlook mailbox as consumed after registration succeeds."""
-        if self.provider == "outlook":
-            self._mark_outlook_db_account("used")
+        """Keep Outlook mailbox reserved after registration.
+
+        Outlook rows are consumed only after payment succeeds.  Registration
+        success alone must remain retryable because a later payment step may
+        fail or the task may be interrupted.
+        """
+        return None
 
     def create_mailbox(self) -> str:
         """生成 random@catch_all 邮箱地址（也可复用 _reuse_email）。
