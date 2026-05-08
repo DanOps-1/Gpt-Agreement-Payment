@@ -31,6 +31,15 @@ def _is_socks5_with_auth(url: str) -> bool:
     return pp.scheme in ("socks5", "socks5h") and bool(pp.username)
 
 
+def _normalize_manual_proxy_url(proxy_url: str) -> str:
+    proxy_url = (proxy_url or "").strip()
+    if not proxy_url:
+        return ""
+    if "://" in proxy_url:
+        return proxy_url
+    return f"http://{proxy_url}"
+
+
 def _port_listening(port: int) -> bool:
     try:
         with _sock.create_connection(("127.0.0.1", port), timeout=1.5):
@@ -70,6 +79,7 @@ def _spawn_gost_relay(upstream_url: str, listen_port: int) -> tuple[bool, str]:
 
 
 def _check_one_proxy(proxy_url: str, expected_country: str | None, prefix: str = "") -> list[CheckResult]:
+    proxy_url = _normalize_manual_proxy_url(proxy_url)
     checks: list[CheckResult] = []
     try:
         with httpx.Client(proxy=proxy_url, timeout=15.0) as c:
@@ -134,17 +144,17 @@ def check(body: dict) -> PreflightResult:
         return aggregate([CheckResult(name="proxy", status="ok", message="no proxy configured")])
 
     register_list = [
-        str(x).strip()
+        _normalize_manual_proxy_url(str(x).strip())
         for x in (cfg.register_urls or [])
         if str(x).strip()
     ]
     payment_list = [
-        str(x).strip()
+        _normalize_manual_proxy_url(str(x).strip())
         for x in (cfg.payment_urls or [])
         if str(x).strip()
     ]
     proxy_list = [
-        str(x).strip()
+        _normalize_manual_proxy_url(str(x).strip())
         for x in (cfg.urls or ([cfg.url] if cfg.url else []))
         if str(x).strip()
     ]

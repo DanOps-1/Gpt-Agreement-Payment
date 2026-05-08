@@ -320,7 +320,16 @@ def _proxy_lines(value) -> list[str]:
         raw = value
     else:
         raw = str(value or "").splitlines()
-    return [str(x).strip() for x in raw if str(x).strip()]
+    return [_normalize_manual_proxy_url(str(x).strip()) for x in raw if str(x).strip()]
+
+
+def _normalize_manual_proxy_url(proxy_url: str) -> str:
+    proxy_url = (proxy_url or "").strip()
+    if not proxy_url:
+        return ""
+    if "://" in proxy_url:
+        return proxy_url
+    return f"http://{proxy_url}"
 
 
 def _manual_proxy_lists(proxy: dict) -> tuple[list[str], list[str], list[str]]:

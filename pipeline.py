@@ -63,7 +63,10 @@ def _proxy_url_from_cfg_value(proxy_cfg) -> str:
     if not proxy_cfg:
         return ""
     if isinstance(proxy_cfg, str):
-        return proxy_cfg.strip()
+        proxy_url = proxy_cfg.strip()
+        if proxy_url and "://" not in proxy_url:
+            proxy_url = f"http://{proxy_url}"
+        return proxy_url
     if not isinstance(proxy_cfg, dict):
         return ""
     host = str(proxy_cfg.get("host") or "").strip()

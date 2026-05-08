@@ -68,7 +68,7 @@
         <textarea
           v-model="registerProxyText"
           class="tf-textarea"
-          placeholder="每行一个注册代理，运行时随机取一行"
+          placeholder="每行一个注册代理，默认按 http:// 拼接"
           rows="3"
         ></textarea>
       </label>
@@ -77,7 +77,7 @@
         <textarea
           v-model="paymentProxyText"
           class="tf-textarea"
-          placeholder="每行一个支付代理，运行时随机取一行"
+          placeholder="每行一个支付代理，默认按 http:// 拼接"
           rows="3"
         ></textarea>
       </label>
