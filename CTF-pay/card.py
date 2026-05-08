@@ -8512,8 +8512,8 @@ def run(
                         if isinstance(gopay_result, dict) and gopay_result.get("state") == "qr_ready":
                             init_ctx["gopay_qr_result"] = gopay_result
                             _log("      [gopay-qr] 二维码已生成，跳过支付结果 poll")
-                            break
-                        _log("      GoPay 授权 + 扣款完成，继续 poll 结果 ...")
+                        else:
+                            _log("      GoPay 授权 + 扣款完成，继续 poll 结果 ...")
                     else:
                         success = _handle_paypal_redirect(
                             paypal_redirect_url,
