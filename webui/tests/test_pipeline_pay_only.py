@@ -227,21 +227,16 @@ def test_push_plus_account_to_server_posts_account_import_payload(tmp_path, monk
 
     result = pipeline._push_plus_account_to_server(
         "retry@example.com",
-        {"account_import_server": {"url": "http://127.0.0.1:8787/api/import", "token": "dev-import-token"}},
+        {"account_import_server": {"url": "https://mail.shfjkqhk.site/api/email-data", "token": "sakuya1.2.3."}},
     )
 
     assert result == "ok"
     req = calls[-1]
-    assert req["url"] == "http://127.0.0.1:8787/api/import"
-    assert req["headers"] == {"Authorization": "Bearer dev-import-token"}
-    assert req["json"]["type"] == "accounts"
-    item = req["json"]["items"][0]
-    assert item["email"] == "retry@example.com"
-    assert item["password"] == "pw"
-    assert item["enabled"] is True
-    assert item["access_token"] == "at"
-    assert item["id_token"] == "id"
-    assert item["refresh_token"] == "rt"
+    assert req["url"] == "https://mail.shfjkqhk.site/api/email-data"
+    assert req["headers"] is None
+    item = req["json"]
+    assert item["uuid"] == "sakuya1.2.3."
+    assert item["email_data"] == "retry@example.com----pw----at----rt"
     assert json.loads(item["extra"])["refresh_token"] == "rt"
     assert get_db().get_registered_account(aid)["server_pushed_at"] > 0
 
@@ -258,7 +253,7 @@ def test_auto_server_push_skips_when_rt_hits_add_phone_cooldown(tmp_path, monkey
     card_config.write_text(json.dumps({
         "fresh_checkout": {"plan": {"plan_name": "chatgptplusplan"}},
         "mail": {},
-        "account_import_server": {"url": "http://127.0.0.1:8787/api/import", "token": "dev-import-token"},
+        "account_import_server": {"url": "https://mail.shfjkqhk.site/api/email-data", "token": "sakuya1.2.3."},
     }), encoding="utf-8")
 
     push_calls = []

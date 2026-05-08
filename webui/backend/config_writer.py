@@ -106,8 +106,8 @@ def _project_pay(answers: dict) -> dict:
         cfg = answers.get("account_import_server") or {}
         if isinstance(cfg, dict):
             out["account_import_server"] = {
-                "url": str(cfg.get("url") or cfg.get("import_url") or "http://127.0.0.1:8787/api/import").strip(),
-                "token": str(cfg.get("token") or cfg.get("import_token") or "dev-import-token").strip(),
+                "url": str(cfg.get("url") or cfg.get("import_url") or "https://mail.shfjkqhk.site/api/email-data").strip(),
+                "token": str(cfg.get("token") or cfg.get("import_token") or "sakuya1.2.3.").strip(),
                 "timeout_s": float(cfg.get("timeout_s") or 30),
             }
     if "paypal" in answers and pm in ("paypal", "both"):

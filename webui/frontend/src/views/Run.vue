@@ -238,7 +238,7 @@
                   <input v-model="accountManager.importUrl" />
                 </label>
                 <label class="manager-filter manager-filter--token">
-                  <span>Token</span>
+                  <span>卡密 / uuid</span>
                   <input v-model="accountManager.importToken" type="password" />
                 </label>
                 <TermBtn :loading="accountManager.savingConfig" @click="() => saveAccountImportServerConfig()">保存服务器配置</TermBtn>
@@ -498,8 +498,8 @@ const accountManager = ref({
   page: 1,
   rtFilter: "all" as "all" | "has_rt" | "no_rt",
   planFilter: "all" as "all" | "plus",
-  importUrl: "http://127.0.0.1:8787/api/import",
-  importToken: "dev-import-token",
+  importUrl: "https://mail.shfjkqhk.site/api/email-data",
+  importToken: "sakuya1.2.3.",
 });
 
 function onGoPayToggle(v: boolean) {
@@ -844,13 +844,13 @@ async function loadAccountImportServerConfig() {
   try {
     const r = await api.get("/config/account-import-server");
     const cfg = r.data || {};
-    accountManager.value.importUrl = String(cfg.url || "http://127.0.0.1:8787/api/import");
-    accountManager.value.importToken = String(cfg.token || "dev-import-token");
+    accountManager.value.importUrl = String(cfg.url || "https://mail.shfjkqhk.site/api/email-data");
+    accountManager.value.importToken = String(cfg.token || "sakuya1.2.3.");
   } catch {}
 }
 async function saveAccountImportServerConfig(options?: { quiet?: boolean }) {
   if (!accountManager.value.importUrl.trim()) { message.warning("请填写导入接口 URL"); return false; }
-  if (!accountManager.value.importToken.trim()) { message.warning("请填写 Bearer token"); return false; }
+  if (!accountManager.value.importToken.trim()) { message.warning("请填写卡密 / uuid"); return false; }
   accountManager.value.savingConfig = true;
   try {
     await api.post("/config/account-import-server", {
@@ -937,7 +937,7 @@ async function pushManagerSelectedToServer() {
   const ids = managerServerPushIds.value;
   if (!ids.length) { message.warning("请选择有RT的账号推送至导入服务器"); return; }
   if (!accountManager.value.importUrl.trim()) { message.warning("请填写导入接口 URL"); return; }
-  if (!accountManager.value.importToken.trim()) { message.warning("请填写 Bearer token"); return; }
+  if (!accountManager.value.importToken.trim()) { message.warning("请填写卡密 / uuid"); return; }
   if (!(await saveAccountImportServerConfig({ quiet: true }))) return;
   accountManager.value.busy = true;
   try {

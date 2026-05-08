@@ -38,8 +38,8 @@ class GoPayAutoUnbindRequest(BaseModel):
 
 
 class AccountImportServerRequest(BaseModel):
-    url: str = "http://127.0.0.1:8787/api/import"
-    token: str = "dev-import-token"
+    url: str = "https://mail.shfjkqhk.site/api/email-data"
+    token: str = "sakuya1.2.3."
     timeout_s: float = 30
 
 
@@ -100,8 +100,8 @@ def get_account_import_server(user: str = CurrentUser):
     if not isinstance(cfg, dict):
         cfg = {}
     return {
-        "url": str(cfg.get("url") or cfg.get("import_url") or "http://127.0.0.1:8787/api/import"),
-        "token": str(cfg.get("token") or cfg.get("import_token") or "dev-import-token"),
+        "url": str(cfg.get("url") or cfg.get("import_url") or "https://mail.shfjkqhk.site/api/email-data"),
+        "token": str(cfg.get("token") or cfg.get("import_token") or "sakuya1.2.3."),
         "timeout_s": float(cfg.get("timeout_s") or 30),
         "path": str(s.PAY_CONFIG_PATH),
     }
@@ -114,7 +114,7 @@ def save_account_import_server(req: AccountImportServerRequest, user: str = Curr
     if not url:
         raise HTTPException(status_code=400, detail="导入接口 URL 不能为空")
     if not token:
-        raise HTTPException(status_code=400, detail="Bearer token 不能为空")
+        raise HTTPException(status_code=400, detail="卡密/uuid 不能为空")
     data = _load_pay_config()
     data["account_import_server"] = {
         "url": url,

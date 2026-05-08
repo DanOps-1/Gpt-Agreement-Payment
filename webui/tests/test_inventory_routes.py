@@ -204,30 +204,24 @@ def test_server_push_posts_account_import_payload(client):
     })
     aid = db.iter_registered_accounts()[0]["id"]
 
-    pushed = respx.post("http://127.0.0.1:8787/api/import").mock(
+    pushed = respx.post("https://mail.shfjkqhk.site/api/email-data").mock(
         return_value=Response(200, json={"success": True})
     )
 
     r = client.post("/api/inventory/accounts/server-push", json={
         "ids": [aid],
-        "import_url": "http://127.0.0.1:8787/api/import",
-        "import_token": "dev-import-token",
+        "import_url": "https://mail.shfjkqhk.site/api/email-data",
+        "import_token": "sakuya1.2.3.",
     })
 
     assert r.status_code == 200
     assert r.json()["summary"] == {"total": 1, "ok": 1, "missing": 0, "fail": 0}
     req = pushed.calls.last.request
-    assert req.headers["authorization"] == "Bearer dev-import-token"
     body = json.loads(req.content.decode())
-    assert body["type"] == "accounts"
     assert len(body["items"]) == 1
     item = body["items"][0]
-    assert item["email"] == "push@example.com"
-    assert item["password"] == "pw-123"
-    assert item["enabled"] is True
-    assert item["id_token"] == "id-token"
-    assert item["access_token"] == "at-token"
-    assert item["refresh_token"] == "rt-token"
+    assert item["uuid"] == "sakuya1.2.3."
+    assert item["email_data"] == "push@example.com----pw-123----at-token----rt-token"
     extra = json.loads(item["extra"])
     assert extra["email"] == "push@example.com"
     assert extra["id_token"] == "id-token"
@@ -247,7 +241,7 @@ def test_server_push_backfills_rt_before_import(client, monkeypatch):
         "access_token": "at-token",
     })
     aid = db.iter_registered_accounts()[0]["id"]
-    pushed = respx.post("http://127.0.0.1:8787/api/import").mock(
+    pushed = respx.post("https://mail.shfjkqhk.site/api/email-data").mock(
         return_value=Response(200, json={"success": True})
     )
     from webui.backend.routes import inventory
@@ -260,15 +254,15 @@ def test_server_push_backfills_rt_before_import(client, monkeypatch):
 
     r = client.post("/api/inventory/accounts/server-push", json={
         "ids": [aid],
-        "import_url": "http://127.0.0.1:8787/api/import",
-        "import_token": "dev-import-token",
+        "import_url": "https://mail.shfjkqhk.site/api/email-data",
+        "import_token": "sakuya1.2.3.",
     })
 
     assert r.status_code == 200
     assert r.json()["summary"] == {"total": 1, "ok": 1, "missing": 0, "fail": 0}
     assert len(pushed.calls) == 1
     body = json.loads(pushed.calls.last.request.content.decode())
-    assert body["items"][0]["refresh_token"] == "rt-backfilled"
+    assert body["items"][0]["email_data"] == "nort@example.com----pw-123----at-token----rt-backfilled"
     assert get_db().get_registered_account(aid)["refresh_token"] == "rt-backfilled"
 
 
@@ -283,7 +277,7 @@ def test_server_push_skips_when_backfill_hits_add_phone(client, monkeypatch):
         "access_token": "at-token",
     })
     aid = db.iter_registered_accounts()[0]["id"]
-    pushed = respx.post("http://127.0.0.1:8787/api/import").mock(
+    pushed = respx.post("https://mail.shfjkqhk.site/api/email-data").mock(
         return_value=Response(200, json={"success": True})
     )
     from webui.backend.routes import inventory
@@ -296,8 +290,8 @@ def test_server_push_skips_when_backfill_hits_add_phone(client, monkeypatch):
 
     r = client.post("/api/inventory/accounts/server-push", json={
         "ids": [aid],
-        "import_url": "http://127.0.0.1:8787/api/import",
-        "import_token": "dev-import-token",
+        "import_url": "https://mail.shfjkqhk.site/api/email-data",
+        "import_token": "sakuya1.2.3.",
     })
 
     assert r.status_code == 200
@@ -333,8 +327,8 @@ def test_server_push_failure_is_logged(client, monkeypatch):
 
     r = client.post("/api/inventory/accounts/server-push", json={
         "ids": [aid],
-        "import_url": "http://127.0.0.1:8787/api/import",
-        "import_token": "dev-import-token",
+        "import_url": "https://mail.shfjkqhk.site/api/email-data",
+        "import_token": "sakuya1.2.3.",
     })
 
     assert r.status_code == 200
