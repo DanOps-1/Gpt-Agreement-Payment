@@ -64,11 +64,20 @@
 
     <div v-if="form.mode === 'manual'" class="form-stack" style="margin-top:16px">
       <label class="tf">
-        <span class="tf-tag">代理 URL · url</span>
+        <span class="tf-tag">注册代理 URL</span>
         <textarea
-          v-model="proxyText"
+          v-model="registerProxyText"
           class="tf-textarea"
-          placeholder="第一行注册代理&#10;第二行支付代理"
+          placeholder="每行一个注册代理，运行时随机取一行"
+          rows="3"
+        ></textarea>
+      </label>
+      <label class="tf">
+        <span class="tf-tag">支付代理 URL</span>
+        <textarea
+          v-model="paymentProxyText"
+          class="tf-textarea"
+          placeholder="每行一个支付代理，运行时随机取一行"
           rows="3"
         ></textarea>
       </label>
@@ -105,6 +114,10 @@ const form = ref({
   mode: init.mode ?? "manual",
   url: init.url ?? "",
   urls: (init.urls ?? (init.url ? String(init.url).split("\n") : [])) as string[],
+  register_url: init.register_url ?? "",
+  register_urls: (init.register_urls ?? []) as string[],
+  payment_url: init.payment_url ?? "",
+  payment_urls: (init.payment_urls ?? []) as string[],
   expected_country: init.expected_country ?? "US",
   register_expected_country: init.register_expected_country ?? init.expected_country ?? "US",
   payment_expected_country: init.payment_expected_country ?? "JP",
@@ -122,12 +135,32 @@ const form = ref({
   refresh_between_stages: init.refresh_between_stages ?? true,
   sync_team_proxy: init.sync_team_proxy ?? true,
 });
-const proxyText = computed({
-  get: () => (form.value.urls?.length ? form.value.urls : (form.value.url ? [form.value.url] : [])).join("\n"),
+const legacyLines = () => (form.value.urls?.length ? form.value.urls : (form.value.url ? String(form.value.url).split("\n") : []))
+  .map((s) => s.trim())
+  .filter(Boolean);
+const registerProxyText = computed({
+  get: () => {
+    const lines = form.value.register_urls?.length ? form.value.register_urls : (form.value.register_url ? [form.value.register_url] : []);
+    return (lines.length ? lines : legacyLines().slice(0, 1)).join("\n");
+  },
   set: (v: string) => {
     const lines = v.split("\n").map((s) => s.trim()).filter(Boolean);
-    form.value.urls = lines;
-    form.value.url = lines[0] || "";
+    form.value.register_urls = lines;
+    form.value.register_url = lines[0] || "";
+    form.value.url = form.value.register_url || form.value.payment_url || "";
+  },
+});
+const paymentProxyText = computed({
+  get: () => {
+    const lines = form.value.payment_urls?.length ? form.value.payment_urls : (form.value.payment_url ? [form.value.payment_url] : []);
+    const fallback = legacyLines();
+    return (lines.length ? lines : (fallback.length > 1 ? fallback.slice(1) : fallback.slice(0, 1))).join("\n");
+  },
+  set: (v: string) => {
+    const lines = v.split("\n").map((s) => s.trim()).filter(Boolean);
+    form.value.payment_urls = lines;
+    form.value.payment_url = lines[0] || "";
+    form.value.url = form.value.register_url || form.value.payment_url || "";
   },
 });
 const loading = ref(false);
@@ -149,6 +182,8 @@ async function testProxy() {
       mode: form.value.mode,
       url: form.value.url,
       urls: form.value.urls,
+      register_urls: form.value.register_urls,
+      payment_urls: form.value.payment_urls,
       expected_country: form.value.expected_country,
       register_expected_country: form.value.register_expected_country,
       payment_expected_country: form.value.payment_expected_country,

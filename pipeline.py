@@ -3109,8 +3109,10 @@ class ProxyPool:
     """代理轮换池（stub）。未来扩展：健康检查、失败标记、LRU 轮换。
     当前行为：有 list 则返回第一个（保持稳定），无 list 返回空字符串（走配置默认代理）。"""
 
-    def __init__(self, proxies=None, rotation="static", state_file=None):
+    def __init__(self, proxies=None, rotation="static", state_file=None, register_proxies=None, payment_proxies=None):
         self.proxies = [p for p in (proxies or []) if p and str(p).strip()]
+        self.register_proxies = [p for p in (register_proxies or []) if p and str(p).strip()]
+        self.payment_proxies = [p for p in (payment_proxies or []) if p and str(p).strip()]
         self.rotation = rotation  # static / random / lru
         self.state_file = state_file
         self._lock = threading.Lock()
@@ -3124,6 +3126,12 @@ class ProxyPool:
         return self.proxies[0]
 
     def pick_two_stage(self) -> tuple[str, str]:
+        if self.register_proxies or self.payment_proxies:
+            reg_choices = self.register_proxies or self.proxies
+            pay_choices = self.payment_proxies or self.proxies or reg_choices
+            reg_proxy = random.choice(reg_choices) if reg_choices else ""
+            pay_proxy = random.choice(pay_choices) if pay_choices else reg_proxy
+            return reg_proxy, pay_proxy
         if not self.proxies:
             return "", ""
         if len(self.proxies) == 1:
@@ -3154,7 +3162,12 @@ def _build_proxy_pool_from_card_cfg(card_cfg) -> "ProxyPool":
     pp = (card_cfg or {}).get("proxies") or {}
     if not pp.get("enabled"):
         return ProxyPool()
-    return ProxyPool(proxies=pp.get("list", []), rotation=pp.get("rotation", "static"))
+    return ProxyPool(
+        proxies=pp.get("list", []),
+        register_proxies=pp.get("register_list", []),
+        payment_proxies=pp.get("payment_list", []),
+        rotation=pp.get("rotation", "static"),
+    )
 
 
 def _validate_worker_resources(card_cfg, workers, *, use_gopay=False, proxy_pool=None):
