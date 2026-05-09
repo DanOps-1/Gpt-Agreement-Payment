@@ -331,6 +331,95 @@ def test_midtrans_linking_first_429_retries_without_realtime_429_log(monkeypatch
     assert not [line for line in logs if "429" in line or "request_headers" in line or "rate limited" in line]
 
 
+def test_midtrans_linking_prechecks_unbind_and_continues_when_no_links(monkeypatch):
+    logs: list[str] = []
+    calls: list[str] = []
+    charger = gopay.GoPayCharger(
+        requests.Session(),
+        {
+            "country_code": "86",
+            "phone_number": "00000000000",
+            "pin": "111111",
+            "auto_unbind": {"raw_request": "GET /v1/linkedapps HTTP/2\nHost: customer.gopayapi.com\nx-m1: m1\n"},
+        },
+        otp_provider=lambda: "",
+        log=logs.append,
+    )
+
+    class Resp:
+        status_code = 201
+        text = '{"status_code":"201"}'
+        def json(self):
+            return {"activation_link_url": f"https://x.test/?reference={LINK_REF}"}
+
+    class Ext:
+        def post(self, *args, **kwargs):
+            calls.append("linking")
+            return Resp()
+
+    monkeypatch.setattr(gopay._gopay_auto_unbind, "fetch_linkedapps", lambda *a, **k: {
+        "has_data": True,
+        "status_code": 200,
+        "body_json": {"data": {"linked_services": []}},
+    })
+    monkeypatch.setattr(gopay._gopay_auto_unbind, "run_from_gopay_config", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not unlink")))
+    charger.ext = Ext()
+
+    assert charger._midtrans_init_linking(SNAP_TOKEN) == LINK_REF
+    assert calls == ["linking"]
+    assert any("no existing binding" in line for line in logs)
+
+
+def test_midtrans_linking_prechecks_unbind_when_links_exist(monkeypatch):
+    logs: list[str] = []
+    calls: list[str] = []
+    charger = gopay.GoPayCharger(
+        requests.Session(),
+        {
+            "country_code": "86",
+            "phone_number": "00000000000",
+            "pin": "111111",
+            "auto_unbind": {"raw_request": "GET /v1/linkedapps HTTP/2\nHost: customer.gopayapi.com\nx-m1: m1\n"},
+        },
+        otp_provider=lambda: "",
+        log=logs.append,
+    )
+
+    class Resp:
+        status_code = 201
+        text = '{"status_code":"201"}'
+        def json(self):
+            return {"activation_link_url": f"https://x.test/?reference={LINK_REF}"}
+
+    class Ext:
+        def post(self, *args, **kwargs):
+            calls.append("linking")
+            return Resp()
+
+    linked_payload = {
+        "data": {
+            "linked_services": [{
+                "service_id": "checkout_midtrans",
+                "linked_accounts": [{"link_id": "link-1", "unlink_url": "/v1/links/link-1"}],
+            }],
+        },
+    }
+    monkeypatch.setattr(gopay._gopay_auto_unbind, "fetch_linkedapps", lambda *a, **k: {
+        "has_data": True,
+        "status_code": 200,
+        "body_json": linked_payload,
+    })
+    monkeypatch.setattr(gopay._gopay_auto_unbind, "run_from_gopay_config", lambda *a, **k: {
+        "ok": True,
+        "unlink_status_code": 200,
+    })
+    charger.ext = Ext()
+
+    assert charger._midtrans_init_linking(SNAP_TOKEN) == LINK_REF
+    assert calls == ["linking"]
+    assert any("unlinking before linking" in line for line in logs)
+
+
 def test_gopay_proxy_pool_keeps_payment_proxy_stable():
     charger = build_charger()
     charger.proxy_pool = gopay._proxy_list_from_cfg(

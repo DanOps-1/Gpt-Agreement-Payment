@@ -77,6 +77,17 @@ except Exception:
     except Exception:
         _signed_gopay_headers = None  # type: ignore
 
+try:
+    from webui.backend import gopay_auto_unbind as _gopay_auto_unbind
+except Exception:
+    try:
+        _repo_root = Path(__file__).resolve().parents[1]
+        if str(_repo_root) not in sys.path:
+            sys.path.insert(0, str(_repo_root))
+        from webui.backend import gopay_auto_unbind as _gopay_auto_unbind
+    except Exception:
+        _gopay_auto_unbind = None  # type: ignore
+
 
 def _new_session(impersonate: str = "chrome136") -> Any:
     """Build session with chrome TLS fingerprint when available."""
@@ -951,10 +962,56 @@ class GoPayCharger:
         ).decode("ascii")
         return {"Authorization": f"Basic {token}"}
 
+    def _pre_unbind_existing_gopay_links(self) -> None:
+        auto = self.gopay_cfg.get("auto_unbind") if isinstance(self.gopay_cfg.get("auto_unbind"), dict) else {}
+        raw_request = str(auto.get("raw_request") or self.gopay_cfg.get("auto_unbind_raw_request") or "").strip()
+        base_url = str(auto.get("base_url") or self.gopay_cfg.get("auto_unbind_base_url") or "")
+        timeout = _float_cfg(auto or self.gopay_cfg, "timeout", DEFAULT_TIMEOUT)
+        if not raw_request:
+            self.log("[gopay] auto-unbind precheck skipped: raw_request not configured")
+            return
+        if _gopay_auto_unbind is None:
+            self.log("[gopay] auto-unbind precheck skipped: gopay_auto_unbind unavailable")
+            return
+
+        self.log("[gopay] auto-unbind precheck: checking linked GoPay apps")
+        try:
+            linked = _gopay_auto_unbind.fetch_linkedapps(raw_request, base_url, timeout=timeout)
+            entries = _gopay_auto_unbind.extract_gopay_link_entries(linked.get("body_json"))
+        except Exception as exc:
+            raise GoPayError(f"auto-unbind precheck failed: {type(exc).__name__}: {str(exc)[:300]}") from exc
+
+        if not linked.get("has_data"):
+            raise GoPayError(
+                "auto-unbind precheck failed before linking: "
+                f"linkedapps status={linked.get('status_code') or '-'} body={str(linked.get('body') or '')[:240]}"
+            )
+        if not entries:
+            self.log("[gopay] auto-unbind precheck ok: no existing binding")
+            return
+
+        self.log(f"[gopay] auto-unbind precheck found {len(entries)} linked account(s), unlinking before linking")
+        try:
+            result = _gopay_auto_unbind.run_from_gopay_config(self.gopay_cfg, log=self.log)
+        except Exception as exc:
+            raise GoPayError(f"auto-unbind failed before linking: {type(exc).__name__}: {str(exc)[:300]}") from exc
+        if result.get("ok"):
+            self.log(
+                "[gopay] auto-unbind precheck ok: existing binding removed "
+                f"status={result.get('unlink_status_code') or '-'}"
+            )
+            return
+        raise GoPayError(
+            "auto-unbind failed before linking: "
+            f"reason={result.get('reason') or '-'} linkedapps_status={result.get('linkedapps_status_code') or '-'} "
+            f"unlink_status={result.get('unlink_status_code') or '-'}"
+        )
+
     # ───── Step 7: Midtrans linking initiation ─────
 
     def _midtrans_init_linking(self, snap_token: str) -> str:
         """POST snap/v3/accounts/{snap}/linking. Retries on 406."""
+        self._pre_unbind_existing_gopay_links()
         url = f"https://app.midtrans.com/snap/v3/accounts/{snap_token}/linking"
         self.midtrans_page_url = f"https://app.midtrans.com/snap/v4/redirection/{snap_token}"
         body = {
