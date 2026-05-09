@@ -51,8 +51,8 @@
             <TermToggle v-model="form.gopay" @update:modelValue="onGoPayToggle">GoPay (印尼)</TermToggle>
           </div>
           <div v-if="!isFreeMode" class="ctl-row toggles">
-            <TermToggle v-model="form.pay_only">--pay-only</TermToggle>
-            <TermToggle v-model="form.register_only" :disabled="form.pay_only">--register-only</TermToggle>
+            <TermToggle v-model="form.pay_only" @update:modelValue="onPayOnlyToggle">--pay-only</TermToggle>
+            <TermToggle v-model="form.register_only" @update:modelValue="onRegisterOnlyToggle">--register-only</TermToggle>
             <TermToggle v-model="form.push_server">--push-server</TermToggle>
           </div>
           <p v-if="!isFreeMode" class="ctl-hint">
@@ -504,6 +504,14 @@ const accountManager = ref({
 
 function onGoPayToggle(v: boolean) {
   if (v) form.value.paypal = false;
+}
+
+function onPayOnlyToggle(v: boolean) {
+  if (v) form.value.register_only = false;
+}
+
+function onRegisterOnlyToggle(v: boolean) {
+  if (v) form.value.pay_only = false;
 }
 
 const status = ref<RunStatus>({

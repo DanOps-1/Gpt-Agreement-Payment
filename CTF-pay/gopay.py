@@ -34,6 +34,8 @@ Flow (15 steps):
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import datetime as _dt
 import json
 import os
@@ -302,6 +304,57 @@ def _extract_payment_id_from_qris(qris: str) -> str:
 def _looks_like_qris_payload(value: str) -> bool:
     text = str(value or "").strip()
     return bool(text.startswith("000201") and len(text) >= 80 and text[-4:].isalnum())
+
+
+def _iter_nested_dicts(value: Any, depth: int = 0) -> Any:
+    if depth > 5:
+        return
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _iter_nested_dicts(child, depth + 1)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _iter_nested_dicts(child, depth + 1)
+
+
+def _data_image_suffix(content_type: str, raw: bytes = b"") -> str:
+    ctype = str(content_type or "").lower()
+    if "svg" in ctype or raw.lstrip().startswith(b"<svg") or b"<svg" in raw[:256].lower():
+        return ".svg"
+    if "jpeg" in ctype or "jpg" in ctype or raw.startswith(b"\xff\xd8"):
+        return ".jpg"
+    if "png" in ctype or raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if "gif" in ctype or raw.startswith(b"GIF"):
+        return ".gif"
+    if "webp" in ctype or raw.startswith(b"RIFF"):
+        return ".webp"
+    return ".png"
+
+
+def _decode_data_image(value: str) -> tuple[bytes, str]:
+    text = str(value or "").strip()
+    m = re.match(r"^data:(image/[A-Za-z0-9.+-]+);base64,(.+)$", text, re.I | re.S)
+    if m:
+        try:
+            raw = base64.b64decode(m.group(2), validate=True)
+        except (binascii.Error, ValueError):
+            return b"", ""
+        return raw, _data_image_suffix(m.group(1), raw)
+    if "://" in text or len(text) < 80:
+        return b"", ""
+    compact = re.sub(r"\s+", "", text)
+    if not re.fullmatch(r"[A-Za-z0-9+/=_-]+", compact):
+        return b"", ""
+    try:
+        raw = base64.b64decode(compact.replace("-", "+").replace("_", "/"), validate=False)
+    except (binascii.Error, ValueError):
+        return b"", ""
+    suffix = _data_image_suffix("", raw)
+    if suffix == ".png" and not raw.startswith((b"\x89PNG", b"\xff\xd8", b"GIF", b"RIFF")) and b"<svg" not in raw[:256].lower():
+        return b"", ""
+    return raw, suffix
 
 
 def _phone_digits(value: Any) -> str:
@@ -1086,47 +1139,50 @@ class GoPayCharger:
         if not isinstance(data, dict):
             return "", ""
 
-        for key in (
-            "qr_string",
-            "qr_content",
-            "qris_string",
-            "qris",
-            "qris_url",
-            "qr_code_url",
-        ):
-            value = data.get(key)
-            if isinstance(value, str) and value.strip():
-                value = value.strip()
-                if _looks_like_payment_return_url(value):
-                    continue
-                return value, "qr_string" if "string" in key or key in ("qris", "qr_content") else "qr_image_url"
-
-        actions = data.get("actions")
-        if isinstance(actions, list):
-            for action in actions:
-                if not isinstance(action, dict):
-                    continue
-                name = str(action.get("name") or "").lower()
-                url = str(action.get("url") or "").strip()
-                if _looks_like_payment_return_url(url):
-                    continue
-                if url and ("qr" in name or "qris" in url.lower() or "qr-code" in url.lower()):
-                    return url, "qr_image_url"
-
-        for key in (
+        qr_string_keys = ("qr_string", "qr_content", "qris_string", "qris", "qr_code")
+        qr_image_keys = ("qris_url", "qr_code_url", "qr_image", "qr_image_url", "qr_image_base64")
+        payment_url_keys = (
             "deeplink_redirect_url",
             "deeplink_url",
             "gopay_deeplink_url",
             "redirect_url",
             "payment_url",
             "gopay_web_url",
-        ):
-            value = data.get(key)
-            if isinstance(value, str) and value.strip():
-                value = value.strip()
-                if _looks_like_payment_return_url(value):
-                    continue
-                return value, "payment_url"
+        )
+
+        for obj in _iter_nested_dicts(data):
+            for key in qr_string_keys + qr_image_keys:
+                value = obj.get(key)
+                if isinstance(value, str) and value.strip():
+                    value = value.strip()
+                    if _looks_like_payment_return_url(value):
+                        continue
+                    if _looks_like_qris_payload(value):
+                        return value, "qr_string"
+                    if value.startswith("data:image/") or key in qr_image_keys or value.startswith(("http://", "https://")):
+                        return value, "qr_image_url"
+                    return value, "qr_string" if key in qr_string_keys else "qr_image_url"
+
+            actions = obj.get("actions")
+            if isinstance(actions, list):
+                for action in actions:
+                    if not isinstance(action, dict):
+                        continue
+                    name = str(action.get("name") or "").lower()
+                    url = str(action.get("url") or "").strip()
+                    if _looks_like_payment_return_url(url):
+                        continue
+                    if url and ("qr" in name or "qris" in url.lower() or "qr-code" in url.lower()):
+                        return url, "qr_image_url"
+
+        for obj in _iter_nested_dicts(data):
+            for key in payment_url_keys:
+                value = obj.get(key)
+                if isinstance(value, str) and value.strip():
+                    value = value.strip()
+                    if _looks_like_payment_return_url(value):
+                        continue
+                    return value, "payment_url"
         return "", ""
 
     def _midtrans_create_qr_charge(self, snap_token: str) -> dict:
@@ -1224,17 +1280,23 @@ class GoPayCharger:
                 self.log(f"[gopay-qr] qrcode 生成失败，改写入文本: {type(exc).__name__}: {str(exc)[:120]}")
 
         if kind == "qr_image_url":
+            raw, suffix = _decode_data_image(payload)
+            if raw:
+                path = out_dir / f"{stem}{suffix}"
+                path.write_bytes(raw)
+                self.log(f"[gopay-qr] saved data-url QR image: {path} bytes={len(raw)}")
+                return str(path)
             try:
                 r = self.ext.get(payload, headers=self._midtrans_basic_auth(), timeout=DEFAULT_TIMEOUT)
                 if 200 <= r.status_code < 300:
-                    suffix = ".png"
                     content_type = str(r.headers.get("content-type") or "").lower()
-                    if "svg" in content_type:
-                        suffix = ".svg"
-                    elif "jpeg" in content_type or "jpg" in content_type:
-                        suffix = ".jpg"
+                    suffix = _data_image_suffix(content_type, r.content)
                     path = out_dir / f"{stem}{suffix}"
                     path.write_bytes(r.content)
+                    self.log(
+                        f"[gopay-qr] downloaded QR image: {path} "
+                        f"status={r.status_code} content_type={content_type or '-'} bytes={len(r.content)}"
+                    )
                     return str(path)
                 self.log(f"[gopay-qr] 下载二维码图片失败 status={r.status_code}: {payload[:160]}")
             except Exception as exc:
@@ -1251,9 +1313,27 @@ class GoPayCharger:
             return ""
         path = Path(artifact)
         if not path.exists():
+            self.log(f"[gopay-qris] QR artifact missing: {artifact}")
             return ""
         if path.suffix.lower() == ".txt":
             return path.read_text(encoding="utf-8", errors="replace").strip()
+
+        try:
+            stat = path.stat()
+            self.log(f"[gopay-qris] decoding QR artifact path={path} suffix={path.suffix.lower() or '-'} bytes={stat.st_size}")
+        except Exception:
+            pass
+
+        if path.suffix.lower() == ".svg":
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for pattern in (
+                r">((?:000201)[^<\s]{8,})<",
+                r"(?:data|qris|qr[_-]?string)[\"'\s:=]+((?:000201)[A-Za-z0-9]+)",
+            ):
+                m = re.search(pattern, text, re.I)
+                if m:
+                    return m.group(1).strip()
+
         decoders = []
         try:
             from pyzbar.pyzbar import decode as pyzbar_decode  # type: ignore
@@ -1263,13 +1343,13 @@ class GoPayCharger:
                 for item in pyzbar_decode(Image.open(path))
                 if getattr(item, "data", None)
             ]))
-        except Exception:
-            pass
+        except Exception as exc:
+            self.log(f"[gopay-qris] pyzbar unavailable: {type(exc).__name__}: {str(exc)[:120]}")
         try:
             import cv2  # type: ignore
-            decoders.append(("opencv", lambda: [cv2.QRCodeDetector().detectAndDecode(cv2.imread(str(path)))[0]]))
-        except Exception:
-            pass
+            decoders.append(("opencv", lambda: self._decode_qr_with_opencv(cv2, path)))
+        except Exception as exc:
+            self.log(f"[gopay-qris] opencv unavailable: {type(exc).__name__}: {str(exc)[:120]}")
         for name, decoder in decoders:
             try:
                 for value in decoder():
@@ -1279,7 +1359,47 @@ class GoPayCharger:
                         return value
             except Exception as exc:
                 self.log(f"[gopay-qris] {name} decode failed: {type(exc).__name__}: {str(exc)[:120]}")
+        self.log(f"[gopay-qris] QR image decode produced no data; artifact={path}")
         return ""
+
+    def _decode_qr_with_opencv(self, cv2: Any, path: Path) -> list[str]:
+        img = cv2.imread(str(path))
+        if img is None:
+            self.log(f"[gopay-qris] opencv could not read image: {path}")
+            return []
+
+        detector = cv2.QRCodeDetector()
+        candidates = [img]
+        try:
+            h, w = img.shape[:2]
+            if h and w and min(h, w) < 640:
+                scale = max(2, int(640 / max(1, min(h, w))))
+                candidates.append(cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC))
+        except Exception:
+            pass
+        try:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            candidates.append(gray)
+            candidates.append(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1])
+            candidates.append(cv2.copyMakeBorder(gray, 40, 40, 40, 40, cv2.BORDER_CONSTANT, value=255))
+        except Exception:
+            pass
+
+        values: list[str] = []
+        for candidate in candidates:
+            try:
+                value = detector.detectAndDecode(candidate)[0]
+                if value:
+                    values.append(value)
+            except Exception:
+                continue
+            try:
+                ok, decoded, _points, _straight = detector.detectAndDecodeMulti(candidate)
+                if ok:
+                    values.extend([v for v in decoded if v])
+            except Exception:
+                continue
+        return values
 
     def _qris_string_from_info(self, qr_info: dict, artifact: str) -> str:
         payload = str(qr_info.get("payload") or "").strip()
@@ -1291,11 +1411,16 @@ class GoPayCharger:
             if decoded:
                 return decoded
         response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
-        for key in ("qr_string", "qris", "qris_string", "qr_content"):
-            value = str(response.get(key) or "").strip()
-            if value:
-                return value
-        raise GoPayError("QRIS payload not found: unable to decode QR to string")
+        for obj in _iter_nested_dicts(response):
+            for key in ("qr_string", "qris", "qris_string", "qr_content", "qr_code"):
+                value = str(obj.get(key) or "").strip()
+                if value:
+                    return value
+        keys = qr_info.get("response_keys") or (sorted(response.keys()) if isinstance(response, dict) else [])
+        raise GoPayError(
+            "QRIS payload not found: unable to decode QR to string "
+            f"(payload_type={kind or '-'} artifact={artifact or '-'} response_keys={','.join(keys) if keys else '-'})"
+        )
 
     def _qris_cfg(self) -> dict:
         cfg = self.gopay_cfg.get("qris") if isinstance(self.gopay_cfg.get("qris"), dict) else {}

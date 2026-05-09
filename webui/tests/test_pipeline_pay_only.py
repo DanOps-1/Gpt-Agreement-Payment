@@ -156,6 +156,53 @@ def test_pay_only_success_imports_cpa_with_plus_tag(tmp_path, monkeypatch):
     assert rows[-1]["cpa_import"] == "ok"
 
 
+def test_pay_only_config_fallback_disables_auto_register(tmp_path, monkeypatch):
+    _reset_db(tmp_path, monkeypatch)
+    card_config = tmp_path / "config.paypal.json"
+    card_config.write_text(json.dumps({
+        "fresh_checkout": {
+            "auth": {
+                "auto_register": {
+                    "enabled": True,
+                    "retry_on_auth_error": True,
+                    "config_path": "CTF-reg/config.paypal-proxy.json",
+                },
+            },
+        },
+    }), encoding="utf-8")
+
+    seen = {}
+
+    class FakeProc:
+        returncode = 0
+
+        def __init__(self, cmd, **kwargs):
+            seen["cmd"] = cmd
+            seen["config_path"] = cmd[cmd.index("--config") + 1]
+            self.stdout = iter([
+                'CARD_RESULT_JSON={"status":"succeeded","raw":{"chatgpt_email":"cfg@example.com"}}\n',
+            ])
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(pipeline.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(pipeline, "_log_payment_exit_ip", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline, "_refresh_proxy_before_payment", lambda *args, **kwargs: None)
+
+    result = pipeline.pay_only(str(card_config), use_paypal=True)
+
+    assert result["status"] == "succeeded"
+    tmp_cfg = json.loads(open(seen["config_path"], encoding="utf-8").read())
+    auto = tmp_cfg["fresh_checkout"]["auth"]["auto_register"]
+    assert auto["enabled"] is False
+    assert auto["retry_on_auth_error"] is False
+    assert tmp_cfg["fresh_checkout"]["auth"]["mode"] == "access_token"
+
+
 def test_pay_only_push_server_only_for_plus_success(tmp_path, monkeypatch):
     db = _reset_db(tmp_path, monkeypatch)
     card_config = tmp_path / "config.paypal.json"

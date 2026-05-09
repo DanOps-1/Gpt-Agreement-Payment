@@ -34,6 +34,8 @@ def get_status(user: str = CurrentUser):
 
 @router.post("/start")
 def start(req: StartRequest, user: str = CurrentUser):
+    if req.register_only and req.pay_only:
+        raise HTTPException(status_code=400, detail="--register-only and --pay-only cannot both be enabled")
     if req.mode == "singlexn" and req.count < 1:
         raise HTTPException(status_code=400, detail="singlexn 模式下次数必须 >= 1")
     if req.mode == "batch" and req.batch < 1:
@@ -120,6 +122,8 @@ async def stream(user: str = CurrentUser):
 @router.post("/preview")
 def preview(req: StartRequest, user: str = CurrentUser):
     """干跑：只返命令行不实际启动。"""
+    if req.register_only and req.pay_only:
+        raise HTTPException(status_code=400, detail="--register-only and --pay-only cannot both be enabled")
     cmd = runner.build_cmd(
         req.mode, req.paypal, req.batch, req.workers, req.self_dealer,
         req.register_only, req.pay_only, gopay=req.gopay, count=req.count,

@@ -128,6 +128,32 @@ def browser_register(cfg, mail_provider) -> dict:
         "cookie_header": "",
     }
 
+    def _extract_cookie_state(chatgpt_cookies) -> None:
+        session_parts = {}
+        for c in chatgpt_cookies:
+            n = c.get("name", "")
+            v = c.get("value", "")
+            if not n or not v:
+                continue
+            # ChatGPT has used both next-auth and authjs cookie names, and
+            # large secure cookies may be chunked as name.0, name.1, ...
+            if (
+                n in ("__Secure-next-auth.session-token", "__Secure-authjs.session-token")
+                or n.startswith("__Secure-next-auth.session-token.")
+                or n.startswith("__Secure-authjs.session-token.")
+            ):
+                base, dot, suffix = n.rpartition(".")
+                if dot and suffix.isdigit():
+                    session_parts[int(suffix)] = v
+                elif not result["session_token"]:
+                    result["session_token"] = v
+            if n in ("oai-did", "oai-device-id"):
+                result["device_id"] = v
+            if n in ("__Host-next-auth.csrf-token", "__Host-authjs.csrf-token"):
+                result["csrf_token"] = v.split("|")[0] if "|" in v else v
+        if not result["session_token"] and session_parts:
+            result["session_token"] = "".join(session_parts[i] for i in sorted(session_parts))
+
     def _visible_otp_inputs():
         selectors = [
             'input[autocomplete="one-time-code"]',
@@ -789,16 +815,25 @@ def browser_register(cfg, mail_provider) -> dict:
             logger.info(f"[browser-reg] access_token 长度: {len(result['access_token'])}")
 
             # [9] 提取 cookies
-            all_cookies = ctx.cookies()
-            chatgpt_cookies = [c for c in all_cookies if "chatgpt.com" in c.get("domain", "")]
-            for c in chatgpt_cookies:
-                n = c["name"]
-                if n == "__Secure-next-auth.session-token":
-                    result["session_token"] = c["value"]
-                if n in ("oai-did", "oai-device-id"):
-                    result["device_id"] = c["value"]
-                if n == "__Host-next-auth.csrf-token":
-                    result["csrf_token"] = c["value"].split("|")[0] if "|" in c["value"] else c["value"]
+            chatgpt_cookies = []
+            for i in range(16):
+                all_cookies = ctx.cookies()
+                chatgpt_cookies = [
+                    c for c in all_cookies if "chatgpt.com" in c.get("domain", "")
+                ]
+                result["session_token"] = ""
+                result["device_id"] = ""
+                result["csrf_token"] = ""
+                _extract_cookie_state(chatgpt_cookies)
+                if result["session_token"]:
+                    break
+                if i in (0, 5, 15):
+                    cookie_names = ", ".join(sorted(c.get("name", "") for c in chatgpt_cookies))
+                    logger.info(
+                        f"[browser-reg] session cookie not ready @{i}s; "
+                        f"chatgpt cookies: {cookie_names[:500]}"
+                    )
+                time.sleep(1)
             result["cookie_header"] = "; ".join(
                 f"{c['name']}={c['value']}" for c in chatgpt_cookies
             )

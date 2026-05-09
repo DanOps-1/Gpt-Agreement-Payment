@@ -10,3 +10,4 @@ respx>=0.20
 responses>=0.25
 requests>=2.31
 qrcode[pil]>=7.4
+opencv-python-headless>=4.8

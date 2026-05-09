@@ -59,6 +59,15 @@ def test_run_preview_push_server(client):
     assert "--push-server" in body["cmd_str"]
 
 
+def test_run_preview_rejects_register_and_pay_only_together(client):
+    _login(client)
+    r = client.post(
+        "/api/run/preview",
+        json={"mode": "single", "register_only": True, "pay_only": True},
+    )
+    assert r.status_code == 400
+
+
 def test_run_invalid_mode(client):
     _login(client)
     r = client.post("/api/run/preview", json={"mode": "bogus"})

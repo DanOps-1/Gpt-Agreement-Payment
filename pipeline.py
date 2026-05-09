@@ -924,7 +924,8 @@ def _scoped_gopay_otp_file(path, worker_id=None, task_index=None):
 
 def pay(card_config_path, session_token=None, access_token=None,
         device_id=None, use_paypal=False, use_gopay=False,
-        gopay_otp_file=None, python=None, timeout=600, log_label=""):
+        gopay_otp_file=None, python=None, timeout=600, log_label="",
+        allow_auto_register=True):
     """执行 Stripe 支付流程。
 
     use_paypal / use_gopay 互斥：默认 card 路径，paypal 走 PayPal browser，
@@ -943,7 +944,7 @@ def pay(card_config_path, session_token=None, access_token=None,
     # 如果有外部凭证，创建临时配置
     config_to_use = card_config_path
     tmp_config = None
-    if session_token or access_token:
+    if session_token or access_token or not allow_auto_register:
         with open(card_config_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
         cfg_for_env = cfg
@@ -956,9 +957,9 @@ def pay(card_config_path, session_token=None, access_token=None,
         if device_id:
             auth["device_id"] = device_id
         auth["prefer_session_refresh"] = True
-        # 禁用 auto_register（凭证已有）
         auto = auth.get("auto_register", {})
         auto["enabled"] = False
+        auto["retry_on_auth_error"] = False
         auth["auto_register"] = auto
 
         tmp_config = tempfile.NamedTemporaryFile(
@@ -1943,6 +1944,7 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
             gopay_otp_file=gopay_otp_file,
             timeout=timeout_pay,
             log_label=log_label,
+            allow_auto_register=False,
         )
         status = result.get("status", "unknown")
         raw = result.get("raw") if isinstance(result.get("raw"), dict) else {}
@@ -4746,6 +4748,9 @@ def main():
 
     if args.paypal and args.gopay:
         print("[ERROR] --paypal 与 --gopay 互斥", file=sys.stderr)
+        sys.exit(2)
+    if args.register_only and args.pay_only:
+        print("[ERROR] --register-only 与 --pay-only 互斥", file=sys.stderr)
         sys.exit(2)
     if args.free_register and args.free_backfill_rt:
         print("[ERROR] --free-register 与 --free-backfill-rt 互斥", file=sys.stderr)

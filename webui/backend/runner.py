@@ -98,6 +98,8 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
               backfill_rt_ids: Optional[list[int]] = None,
               push_server: bool = False) -> list[str]:
     """根据参数拼出最终命令行。"""
+    if register_only and pay_only:
+        raise RuntimeError("--register-only and --pay-only cannot be used together")
     cmd = ["xvfb-run", "-a", sys.executable, "-u", "pipeline.py",
            "--config", str(s.PAY_CONFIG_PATH)]
     # free_only 涓や釜瀛愭ā寮忎笉闇€瑕?paypal / gopay 鏀粯娈?

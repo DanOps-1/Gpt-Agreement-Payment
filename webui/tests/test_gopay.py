@@ -427,10 +427,54 @@ def test_extract_qr_payload_from_midtrans_actions():
 def test_extract_qr_payload_from_qr_string():
     charger = build_charger()
 
-    payload, kind = charger._extract_qr_payload({"qr_string": "000201010212QRISDATA"})
+    payload, kind = charger._extract_qr_payload({"qr_string": "000201010212QRISDATAEXAMPLE"})
 
-    assert payload == "000201010212QRISDATA"
+    assert payload == "000201010212QRISDATAEXAMPLE"
     assert kind == "qr_string"
+
+
+def test_extract_qr_payload_from_nested_qr_string():
+    charger = build_charger()
+
+    payload, kind = charger._extract_qr_payload({
+        "data": {
+            "transaction": {
+                "qris_string": "000201010212QRISDATAEXAMPLE",
+            },
+        },
+    })
+
+    assert payload == "000201010212QRISDATAEXAMPLE"
+    assert kind == "qr_string"
+
+
+def test_decode_data_image_payload_accepts_data_url():
+    raw = b"\x89PNG\r\n\x1a\nfake"
+    data_url = "data:image/png;base64," + gopay.base64.b64encode(raw).decode("ascii")
+
+    decoded, suffix = gopay._decode_data_image(data_url)
+
+    assert decoded == raw
+    assert suffix == ".png"
+
+
+def test_qris_string_from_info_reads_nested_response():
+    charger = build_charger()
+
+    qris = charger._qris_string_from_info(
+        {
+            "payload": "https://api.midtrans.com/v2/qris.png",
+            "payload_type": "payment_url",
+            "response": {
+                "data": {
+                    "qr_content": "000201010212QRISDATAEXAMPLE",
+                },
+            },
+        },
+        "",
+    )
+
+    assert qris == "000201010212QRISDATAEXAMPLE"
 
 
 def test_extract_qr_payload_ignores_stripe_return_url():
