@@ -592,6 +592,70 @@ def test_qris_request_reuses_auto_unbind_raw_headers(monkeypatch):
     assert signed[0]["body"].startswith('{"type":"QR_CODE"')
 
 
+def test_qris_headers_prefer_auto_unbind_over_stale_headers(monkeypatch):
+    signed: list[dict] = []
+    raw_request = "\n".join([
+        "GET /v1/linkedapps HTTP/2",
+        "Host: customer.gopayapi.com",
+        "authorization: Bearer oppo-token",
+        "x-m1: oppo-m1",
+        "x-uniqueid: oppo-unique",
+        "x-phonemake: OPPO",
+        "x-phonemodel: OPPO, PGEM10",
+        "x-deviceos: Android, 12",
+        "x-appversion: 2.8.0",
+        "x-appid: com.gojek.gopay",
+        "x-apptype: GOPAY",
+        "x-platform: Android",
+        "",
+    ])
+    charger = gopay.GoPayCharger(
+        requests.Session(),
+        {
+            "qr_payment": True,
+            "pin": "123456",
+            "auto_unbind": {"raw_request": raw_request},
+            "headers": {
+                "authorization": "Bearer huawei-token",
+                "x-m1": "huawei-m1",
+                "x-uniqueid": "huawei-unique",
+                "x-phonemake": "HUAWEI",
+                "x-phonemodel": "HUAWEI, ALN-AL00",
+                "x-deviceos": "Android, 12",
+                "x-appversion": "2.8.0",
+                "x-appid": "com.gojek.gopay",
+                "x-apptype": "GOPAY",
+                "x-platform": "Android",
+            },
+        },
+        otp_provider=lambda: "",
+        log=lambda _m: None,
+    )
+
+    def fake_signed(headers, **kwargs):
+        signed.append({"headers": dict(headers), **kwargs})
+        out = dict(headers)
+        out["x-e1"] = "fresh"
+        return out
+
+    class Resp:
+        status_code = 200
+        text = '{"ok":true}'
+        def json(self):
+            return {"ok": True}
+
+    monkeypatch.setattr(gopay, "_signed_gopay_headers", fake_signed)
+    monkeypatch.setattr(charger, "_request_ext", lambda *a, **k: Resp())
+
+    charger._qris_request("POST", "/v1/explore", {"type": "QR_CODE", "data": "000201010212QRISDATA"})
+
+    assert signed
+    assert signed[0]["headers"]["authorization"] == "Bearer oppo-token"
+    assert signed[0]["headers"]["x-m1"] == "oppo-m1"
+    assert signed[0]["headers"]["x-phonemake"] == "OPPO"
+    assert signed[0]["headers"]["x-phonemodel"] == "OPPO, PGEM10"
+
+
 def test_gopay_signer_uses_app_nonce_shape():
     nonce = gopay._signed_gopay_headers.__globals__["app_nonce_hex"]()
 

@@ -1514,14 +1514,27 @@ class GoPayCharger:
 
     def _qris_base_headers(self) -> dict[str, str]:
         qris_cfg = self._qris_cfg()
-        headers = _merge_header_sources(
-            _default_qris_headers(self.gopay_cfg),
-            *_auto_unbind_header_sources(self.gopay_cfg),
+        prefer_auto_unbind = _truthy_cfg(
+            qris_cfg.get("prefer_auto_unbind_headers")
+            or self.gopay_cfg.get("qris_prefer_auto_unbind_headers")
+            or self.gopay_cfg.get("prefer_auto_unbind_headers")
+            or True
+        )
+        auto_sources = _auto_unbind_header_sources(self.gopay_cfg)
+        explicit_sources = (
             self.gopay_cfg.get("headers"),
             self.gopay_cfg.get("qris_headers"),
             self.gopay_cfg.get("qris_raw_headers"),
             qris_cfg.get("headers"),
             qris_cfg.get("raw_headers"),
+        )
+        ordered_sources = (
+            (_default_qris_headers(self.gopay_cfg), *explicit_sources, *auto_sources)
+            if prefer_auto_unbind
+            else (_default_qris_headers(self.gopay_cfg), *auto_sources, *explicit_sources)
+        )
+        headers = _merge_header_sources(
+            *ordered_sources,
         )
         headers = {k: v for k, v in headers.items() if str(v or "").strip()}
         missing = [
