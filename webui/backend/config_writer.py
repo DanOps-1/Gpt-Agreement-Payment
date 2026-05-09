@@ -42,6 +42,10 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
         }
         if item.get("midtrans_client_id") or gp.get("midtrans_client_id"):
             account["midtrans_client_id"] = str(item.get("midtrans_client_id") or gp.get("midtrans_client_id"))
+        for key in ("headers", "qris_headers", "qris_raw_headers", "qris", "qris_base_url", "qris_hmac_key", "qris_service_id", "qris_merchant_id"):
+            value = item.get(key) if key in item else gp.get(key)
+            if value:
+                account[key] = value
         auto_unbind = _gopay_auto_unbind_from_value(item, fallback=gp)
         if auto_unbind:
             account["auto_unbind"] = auto_unbind
@@ -60,6 +64,9 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
         }
         if gp.get("midtrans_client_id"):
             account["midtrans_client_id"] = str(gp["midtrans_client_id"])
+        for key in ("headers", "qris_headers", "qris_raw_headers", "qris", "qris_base_url", "qris_hmac_key", "qris_service_id", "qris_merchant_id"):
+            if gp.get(key):
+                account[key] = gp[key]
         auto_unbind = _gopay_auto_unbind_from_value(gp)
         if auto_unbind:
             account["auto_unbind"] = auto_unbind
@@ -151,6 +158,10 @@ def _project_pay(answers: dict) -> dict:
                 out["gopay"]["midtrans_client_id"] = (
                     first.get("midtrans_client_id") if accounts else str(gp.get("midtrans_client_id"))
                 )
+            for key in ("headers", "qris_headers", "qris_raw_headers", "qris", "qris_base_url", "qris_hmac_key", "qris_service_id", "qris_merchant_id"):
+                value = (first.get(key) if accounts else None) or gp.get(key)
+                if value:
+                    out["gopay"][key] = value
             if qr_payment:
                 out["gopay"]["qr_payment"] = True
                 out["gopay"]["payment_mode"] = "qr"

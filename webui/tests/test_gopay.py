@@ -358,7 +358,7 @@ def test_qr_payment_mode_does_not_require_gopay_account():
 
 def test_qr_payment_uses_qris_charge(monkeypatch):
     logs: list[str] = []
-    verify_calls: list[str] = []
+    qris_calls: list[tuple[str, dict]] = []
     charger = gopay.GoPayCharger(
         requests.Session(),
         {
@@ -393,19 +393,21 @@ def test_qr_payment_uses_qris_charge(monkeypatch):
         },
     )
     monkeypatch.setattr(charger, "_save_qr_artifact", lambda qr_info: "output/gopay_qr/test.png")
-    monkeypatch.setattr(charger, "_chatgpt_verify", lambda cs_id, timeout_s=60.0: verify_calls.append(cs_id) or {"state": "unexpected"})
+    monkeypatch.setattr(charger, "_run_qris_app_payment", lambda qris, qr_info: qris_calls.append((qris, qr_info)) or {"payment_id": "A120260509150543TEST"})
+    monkeypatch.setattr(charger, "_chatgpt_verify", lambda cs_id, timeout_s=60.0: {"state": "succeeded", "cs_id": cs_id})
 
     result = charger._run_midtrans_qr(SNAP_TOKEN, "cs_live_test")
 
-    assert result["state"] == "qr_ready"
+    assert result["state"] == "succeeded"
     assert result["qr_charge_mode"] == "qris"
     assert result["qr_payload_type"] == "qr_string"
     assert result["cs_id"] == "cs_live_test"
     assert result["qr_http_status"] == 201
     assert result["qr_status_code"] == "201"
     assert result["qr_transaction_status"] == "pending"
-    assert verify_calls == []
-    assert any("QR_READY_PAUSE" in line for line in logs)
+    assert qris_calls and qris_calls[0][0] == "000201010212QRISDATA"
+    assert result["qris_payment"]["payment_id"] == "A120260509150543TEST"
+    assert any("starting GoPay APP payment" in line for line in logs)
     assert any("二维码已生成" in line for line in logs)
 
 
@@ -443,6 +445,107 @@ def test_extract_qr_payload_ignores_stripe_return_url():
 
     assert payload == ""
     assert kind == ""
+
+
+def test_qris_request_resigns_x_e1_per_body(monkeypatch):
+    signed: list[dict] = []
+    charger = gopay.GoPayCharger(
+        requests.Session(),
+        {
+            "qr_payment": True,
+            "pin": "123456",
+            "headers": {
+                "authorization": "Bearer token",
+                "x-m1": "m1",
+                "x-uniqueid": "unique",
+                "x-phonemake": "Google",
+                "x-phonemodel": "Pixel",
+                "x-deviceos": "Android, 12",
+                "x-appversion": "2.8.0",
+                "x-appid": "com.gojek.gopay",
+                "x-apptype": "GOPAY",
+                "x-platform": "Android",
+                "x-e1": "old",
+            },
+        },
+        otp_provider=lambda: "",
+        log=lambda _m: None,
+    )
+
+    def fake_signed(headers, **kwargs):
+        signed.append({"headers": dict(headers), **kwargs})
+        out = dict(headers)
+        out["x-e1"] = f"signed:{kwargs['body']}"
+        return out
+
+    class Resp:
+        status_code = 200
+        text = '{"ok":true}'
+        def json(self):
+            return {"ok": True}
+
+    monkeypatch.setattr(gopay, "_signed_gopay_headers", fake_signed)
+    monkeypatch.setattr(charger, "_request_ext", lambda *a, **k: Resp())
+
+    charger._qris_request("POST", "/v1/explore", {"type": "QR_CODE", "data": "000201010212QRISDATA"})
+
+    assert signed
+    assert signed[0]["method"] == "POST"
+    assert signed[0]["path"] == "/v1/explore"
+    assert '"type":"QR_CODE"' in signed[0]["body"]
+    assert signed[0]["headers"]["authorization"] == "Bearer token"
+
+
+def test_qris_request_reuses_auto_unbind_raw_headers(monkeypatch):
+    signed: list[dict] = []
+    raw_request = "\n".join([
+        "GET /v1/linkedapps HTTP/2",
+        "Host: customer.gopayapi.com",
+        "authorization: Bearer auto-unbind-token",
+        "x-m1: m1",
+        "x-uniqueid: unique-from-unbind",
+        "x-phonemake: Google",
+        "x-phonemodel: Pixel",
+        "x-deviceos: Android, 12",
+        "x-appversion: 2.8.0",
+        "x-appid: com.gojek.gopay",
+        "x-apptype: GOPAY",
+        "x-platform: Android",
+        "x-e1: stale",
+        "",
+    ])
+    charger = gopay.GoPayCharger(
+        requests.Session(),
+        {
+            "qr_payment": True,
+            "pin": "123456",
+            "auto_unbind": {"raw_request": raw_request},
+        },
+        otp_provider=lambda: "",
+        log=lambda _m: None,
+    )
+
+    def fake_signed(headers, **kwargs):
+        signed.append({"headers": dict(headers), **kwargs})
+        out = dict(headers)
+        out["x-e1"] = "fresh"
+        return out
+
+    class Resp:
+        status_code = 200
+        text = '{"ok":true}'
+        def json(self):
+            return {"ok": True}
+
+    monkeypatch.setattr(gopay, "_signed_gopay_headers", fake_signed)
+    monkeypatch.setattr(charger, "_request_ext", lambda *a, **k: Resp())
+
+    charger._qris_request("POST", "/v1/explore", {"type": "QR_CODE", "data": "000201010212QRISDATA"})
+
+    assert signed
+    assert signed[0]["headers"]["authorization"] == "Bearer auto-unbind-token"
+    assert signed[0]["headers"]["x-uniqueid"] == "unique-from-unbind"
+    assert signed[0]["body"].startswith('{"type":"QR_CODE"')
 
 
 def test_midtrans_linking_429_retries_past_406_limit(monkeypatch):

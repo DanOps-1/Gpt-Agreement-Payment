@@ -46,6 +46,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -62,6 +63,17 @@ try:
     from curl_cffi.requests import Session as _CurlCffiSession  # type: ignore
 except ImportError:
     _CurlCffiSession = None  # type: ignore
+
+try:
+    from webui.backend.gopay_signer import signed_headers as _signed_gopay_headers
+except Exception:
+    try:
+        _repo_root = Path(__file__).resolve().parents[1]
+        if str(_repo_root) not in sys.path:
+            sys.path.insert(0, str(_repo_root))
+        from webui.backend.gopay_signer import signed_headers as _signed_gopay_headers
+    except Exception:
+        _signed_gopay_headers = None  # type: ignore
 
 
 def _new_session(impersonate: str = "chrome136") -> Any:
@@ -96,6 +108,7 @@ LINK_429_RETRY_SLEEP_MAX_S = 3.0
 CHARGE_RETRY_LIMIT = 4
 CHARGE_RETRY_SLEEP_S = 2.0
 QR_WAIT_TIMEOUT_S = 300.0
+GOPAY_CUSTOMER_BASE_URL = "https://customer.gopayapi.com"
 TRANSIENT_REQUEST_RETRY_LIMIT = 3
 TRANSIENT_REQUEST_RETRY_MIN_S = 1.0
 TRANSIENT_REQUEST_RETRY_MAX_S = 2.5
@@ -167,6 +180,128 @@ def _proxy_list_from_cfg(cfg: Optional[dict], primary_proxy: Optional[str] = Non
     if primary_proxy:
         out.append(_normalize_proxy_url(str(primary_proxy).strip()))
     return out
+
+
+def _json_dumps_compact(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _raw_headers_to_dict(raw: Any) -> dict[str, str]:
+    if isinstance(raw, dict):
+        return {str(k).strip(): str(v).strip() for k, v in raw.items() if str(k).strip() and str(v).strip()}
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return _raw_headers_to_dict(parsed)
+    except Exception:
+        pass
+    if "\r\n\r\n" in text:
+        text = text.split("\r\n\r\n", 1)[0]
+    elif "\n\n" in text:
+        text = text.split("\n\n", 1)[0]
+    headers: dict[str, str] = {}
+    for line in text.replace("\r\n", "\n").split("\n"):
+        line = line.strip()
+        if not line or line.upper().startswith(("GET ", "POST ", "PATCH ", "PUT ", "DELETE ")):
+            continue
+        if ":" not in line:
+            continue
+        name, value = line.split(":", 1)
+        name = name.strip()
+        value = value.strip()
+        if name and value and name.lower() not in ("host", "content-length", "connection"):
+            headers[name] = value
+    return headers
+
+
+def _merge_header_sources(*sources: Any) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    for source in sources:
+        parsed = _raw_headers_to_dict(source)
+        for key, value in parsed.items():
+            lk = key.lower()
+            for old_key in list(merged):
+                if old_key.lower() == lk:
+                    merged.pop(old_key, None)
+            merged[key] = value
+    return merged
+
+
+def _auto_unbind_header_sources(gopay_cfg: dict) -> list[Any]:
+    auto = gopay_cfg.get("auto_unbind") if isinstance(gopay_cfg.get("auto_unbind"), dict) else {}
+    return [
+        gopay_cfg.get("auto_unbind_raw_request"),
+        gopay_cfg.get("auto_unbind_unlink_raw_request"),
+        auto.get("raw_request"),
+        auto.get("unlink_raw_request"),
+    ]
+
+
+def _default_qris_headers(gopay_cfg: dict) -> dict[str, str]:
+    app_version = str(gopay_cfg.get("app_version") or gopay_cfg.get("x_appversion") or "2.8.0")
+    device_os = str(gopay_cfg.get("device_os") or gopay_cfg.get("x_deviceos") or "Android, 12")
+    return {
+        "accept-encoding": "gzip",
+        "country-code": str(gopay_cfg.get("gopay_country_code") or "ID"),
+        "gojek-country-code": str(gopay_cfg.get("gopay_country_code") or "ID"),
+        "gojek-service-area": str(gopay_cfg.get("gojek_service_area") or "1"),
+        "x-appversion": app_version,
+        "x-help-version": str(gopay_cfg.get("help_version") or app_version),
+        "x-location": str(gopay_cfg.get("x_location") or ""),
+        "x-location-accuracy": str(gopay_cfg.get("x_location_accuracy") or ""),
+        "custom_location": str(gopay_cfg.get("custom_location") or ""),
+        "x-uniqueid": str(gopay_cfg.get("x_uniqueid") or ""),
+        "x-phonemake": str(gopay_cfg.get("x_phonemake") or ""),
+        "x-phonemodel": str(gopay_cfg.get("x_phonemodel") or ""),
+        "x-deviceos": device_os,
+        "x-user-type": str(gopay_cfg.get("x_user_type") or "customer"),
+        "x-appid": str(gopay_cfg.get("x_appid") or "com.gojek.gopay"),
+        "gojek-timezone": str(gopay_cfg.get("gojek_timezone") or "Asia/Jakarta"),
+        "x-apptype": str(gopay_cfg.get("x_apptype") or "GOPAY"),
+        "x-user-locale": str(gopay_cfg.get("x_user_locale") or "en_ID"),
+        "accept-language": str(gopay_cfg.get("accept_language") or "en-ID"),
+        "x-platform": str(gopay_cfg.get("x_platform") or "Android"),
+        "user-agent": str(
+            gopay_cfg.get("gopay_user_agent")
+            or f"GoPay/{app_version} (com.gojek.gopay; build:{app_version.replace('.', '')}; {device_os})"
+        ),
+        "content-type": "application/json",
+    }
+
+
+def _parse_tlv(value: str) -> list[tuple[str, str]]:
+    result: list[tuple[str, str]] = []
+    index = 0
+    while index + 4 <= len(value):
+        tag = value[index:index + 2]
+        try:
+            length = int(value[index + 2:index + 4])
+        except ValueError:
+            break
+        start = index + 4
+        end = start + length
+        if end > len(value):
+            break
+        result.append((tag, value[start:end]))
+        index = end
+    return result
+
+
+def _extract_payment_id_from_qris(qris: str) -> str:
+    for tag, val in _parse_tlv(qris):
+        if tag == "62":
+            for nested_tag, nested_val in _parse_tlv(val):
+                if nested_tag in ("50", "05", "07") and nested_val:
+                    return nested_val
+    return ""
+
+
+def _looks_like_qris_payload(value: str) -> bool:
+    text = str(value or "").strip()
+    return bool(text.startswith("000201") and len(text) >= 80 and text[-4:].isalnum())
 
 
 def _phone_digits(value: Any) -> str:
@@ -387,12 +522,13 @@ class GoPayCharger:
         self.cs = chatgpt_session
         self.qr_payment = is_qr_payment_enabled(gopay_cfg)
         if isinstance(gopay_cfg, dict) and (
-            gopay_cfg.get("accounts") and not gopay_cfg.get("_selected_account") and not self.qr_payment
+            gopay_cfg.get("accounts") and not gopay_cfg.get("_selected_account")
         ):
             gopay_cfg = pick_gopay_account_config(gopay_cfg, log=log)
         self.country_code = str(gopay_cfg.get("country_code") or "62").lstrip("+")
         self.phone = _phone_digits(gopay_cfg.get("phone_number") or "")
         self.pin = str(gopay_cfg.get("pin") or "")
+        self.gopay_cfg = dict(gopay_cfg or {})
         if not self.qr_payment and not (self.country_code and self.phone and self.pin):
             raise GoPayError("gopay config missing usable account: need country_code / phone_number / pin")
         self.midtrans_client_id = str(
@@ -1110,6 +1246,267 @@ class GoPayCharger:
 
     # ───── Step 14: GoPay charge processing ─────
 
+    def _decode_qr_artifact(self, artifact: str) -> str:
+        if not artifact:
+            return ""
+        path = Path(artifact)
+        if not path.exists():
+            return ""
+        if path.suffix.lower() == ".txt":
+            return path.read_text(encoding="utf-8", errors="replace").strip()
+        decoders = []
+        try:
+            from pyzbar.pyzbar import decode as pyzbar_decode  # type: ignore
+            from PIL import Image  # type: ignore
+            decoders.append(("pyzbar", lambda: [
+                item.data.decode("utf-8", "replace")
+                for item in pyzbar_decode(Image.open(path))
+                if getattr(item, "data", None)
+            ]))
+        except Exception:
+            pass
+        try:
+            import cv2  # type: ignore
+            decoders.append(("opencv", lambda: [cv2.QRCodeDetector().detectAndDecode(cv2.imread(str(path)))[0]]))
+        except Exception:
+            pass
+        for name, decoder in decoders:
+            try:
+                for value in decoder():
+                    value = str(value or "").strip()
+                    if value:
+                        self.log(f"[gopay-qris] QR image decoded via {name}")
+                        return value
+            except Exception as exc:
+                self.log(f"[gopay-qris] {name} decode failed: {type(exc).__name__}: {str(exc)[:120]}")
+        return ""
+
+    def _qris_string_from_info(self, qr_info: dict, artifact: str) -> str:
+        payload = str(qr_info.get("payload") or "").strip()
+        kind = str(qr_info.get("payload_type") or "")
+        if _looks_like_qris_payload(payload):
+            return payload
+        if kind == "qr_image_url" or payload.startswith(("http://", "https://")):
+            decoded = self._decode_qr_artifact(artifact)
+            if decoded:
+                return decoded
+        response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
+        for key in ("qr_string", "qris", "qris_string", "qr_content"):
+            value = str(response.get(key) or "").strip()
+            if value:
+                return value
+        raise GoPayError("QRIS payload not found: unable to decode QR to string")
+
+    def _qris_cfg(self) -> dict:
+        cfg = self.gopay_cfg.get("qris") if isinstance(self.gopay_cfg.get("qris"), dict) else {}
+        return dict(cfg or {})
+
+    def _qris_base_headers(self) -> dict[str, str]:
+        qris_cfg = self._qris_cfg()
+        headers = _merge_header_sources(
+            _default_qris_headers(self.gopay_cfg),
+            *_auto_unbind_header_sources(self.gopay_cfg),
+            self.gopay_cfg.get("headers"),
+            self.gopay_cfg.get("qris_headers"),
+            self.gopay_cfg.get("qris_raw_headers"),
+            qris_cfg.get("headers"),
+            qris_cfg.get("raw_headers"),
+        )
+        headers = {k: v for k, v in headers.items() if str(v or "").strip()}
+        missing = [
+            name for name in (
+                "authorization", "x-m1", "x-uniqueid", "x-phonemake",
+                "x-phonemodel", "x-deviceos", "x-appversion", "x-appid",
+                "x-apptype", "x-platform",
+            )
+            if not any(k.lower() == name for k in headers)
+        ]
+        if missing:
+            raise GoPayError(
+                "gopay qris headers missing required fields for x-e1 signing: "
+                + ", ".join(missing)
+                + "; paste GoPay APP headers in the existing auto-unbind raw request/header field"
+            )
+        return headers
+
+    def _qris_url(self, path: str) -> str:
+        qris_cfg = self._qris_cfg()
+        base = str(
+            qris_cfg.get("base_url")
+            or self.gopay_cfg.get("qris_base_url")
+            or self.gopay_cfg.get("customer_base_url")
+            or GOPAY_CUSTOMER_BASE_URL
+        ).strip()
+        if "://" not in base:
+            base = f"https://{base}"
+        return urljoin(base.rstrip("/") + "/", path.lstrip("/"))
+
+    def _qris_signed_headers(self, method: str, url: str, body_text: str) -> dict[str, str]:
+        if _signed_gopay_headers is None:
+            raise GoPayError("gopay qris signer unavailable: webui.backend.gopay_signer import failed")
+        parsed = urlsplit(url)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        key = str(self._qris_cfg().get("hmac_key") or self.gopay_cfg.get("qris_hmac_key") or "")
+        kwargs = {"method": method.upper(), "host": parsed.netloc, "path": path, "body": body_text}
+        if key:
+            kwargs["key"] = key
+        return _signed_gopay_headers(self._qris_base_headers(), **kwargs)
+
+    def _qris_request(self, method: str, path: str, body: dict | None = None) -> dict:
+        url = self._qris_url(path)
+        body_text = _json_dumps_compact(body) if body is not None else ""
+        headers = self._qris_signed_headers(method, url, body_text)
+        self.log(f"[gopay-qris] {method.upper()} {urlsplit(url).path} body={body_text[:260] if body_text else '-'}")
+        r = self._request_ext(
+            method,
+            url,
+            headers=headers,
+            data=body_text.encode("utf-8") if body is not None else None,
+            timeout=DEFAULT_TIMEOUT,
+            retry_label=f"gopay qris {path}",
+        )
+        raw_text = (r.text or "")[:1200]
+        try:
+            data = r.json()
+        except Exception:
+            data = {}
+        self.log(
+            f"[gopay-qris] response {method.upper()} {urlsplit(url).path} "
+            f"status={r.status_code} keys={','.join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__} "
+            f"body={raw_text[:500]!r}"
+        )
+        if r.status_code >= 400:
+            raise GoPayError(f"qris {method.upper()} {path} {r.status_code}: {raw_text[:600]}")
+        return data if isinstance(data, dict) else {}
+
+    def _qris_capture_additional_data(self, explore: dict, amount_value: int | float | str, amount_currency: str) -> dict:
+        additional = dict(explore.get("additional_data") or {})
+        v2 = additional.get("aspiqr_information_v2")
+        if not isinstance(v2, dict):
+            v2 = {}
+            additional["aspiqr_information_v2"] = v2
+        if not isinstance(v2.get("transaction_details"), dict):
+            v2["transaction_details"] = {"amount": {"value": amount_value, "currency_code": amount_currency}}
+        return additional
+
+    def _run_qris_app_payment(self, qris: str, qr_info: dict) -> dict:
+        qris = str(qris or "").strip()
+        if not qris:
+            raise GoPayError("qris string is empty")
+        self.log(f"[gopay-qris] start GoPay APP QRIS payment data_len={len(qris)}")
+
+        explore_resp = self._qris_request("POST", "/v1/explore", {"type": "QR_CODE", "data": qris})
+        explore = explore_resp.get("data") if isinstance(explore_resp.get("data"), dict) else {}
+        payment_id = str(explore.get("payment_id") or _extract_payment_id_from_qris(qris) or "").strip()
+        amount = explore.get("amount") if isinstance(explore.get("amount"), dict) else {}
+        amount_value = amount.get("value", 1)
+        amount_currency = str(amount.get("currency") or "IDR")
+        merchant_info = (explore.get("additional_data") or {}).get("aspiqr_information") or {}
+        merchant_id = str(
+            merchant_info.get("merchant_id")
+            or self._qris_cfg().get("merchant_id")
+            or self.gopay_cfg.get("qris_merchant_id")
+            or "G761482587"
+        )
+        if not payment_id:
+            raise GoPayError(f"qris explore missing payment_id: {json.dumps(explore_resp, ensure_ascii=False)[:500]}")
+        self.log(f"[gopay-qris] explore ok payment_id={payment_id} amount={amount_value} {amount_currency}")
+
+        payment_resp = self._qris_request("POST", "/v1/qris/payments", {
+            "qr_code": qris,
+            "amount": {"value": amount_value, "currency": amount_currency},
+            "channel_type": explore.get("channel_type", "DYNAMIC_QR"),
+            "additional_data": explore.get("additional_data", {}),
+            "metadata": explore.get("metadata", {}),
+        })
+        payment = payment_resp.get("data") if isinstance(payment_resp.get("data"), dict) else {}
+        payment_id = str(payment.get("payment_id") or payment_id)
+        checksum = payment.get("checksum") or explore.get("checksum") or {}
+
+        service_id = str(self._qris_cfg().get("service_id") or self.gopay_cfg.get("qris_service_id") or "1001")
+        checkout_resp = self._qris_request("POST", "/v2/customer/payment-options/checkout/list", {
+            "intent": "EWALLET_QR",
+            "order_pricing": {
+                "payment_method_specific_pricing": [],
+                "default_amount": {"amount": amount_value},
+            },
+            "selected_options_tokens": [],
+            "merchant_id": merchant_id,
+            "frontend_overrides": {
+                "offline_methods": [],
+                "payment_method_rollout": [],
+                "exclude_paylater": False,
+            },
+            "service_id": service_id,
+            "metadata": {"service_type": "QRIS", "service_id": service_id, "merchant_id": merchant_id},
+        })
+        checkout_data = checkout_resp.get("data") if isinstance(checkout_resp.get("data"), dict) else {}
+        selected = checkout_data.get("selected_options") if isinstance(checkout_data.get("selected_options"), list) else []
+        payment_option_token = str((selected[0] or {}).get("token") or "") if selected else ""
+        if not payment_option_token:
+            raise GoPayError(f"qris checkout/list missing selected option token: {json.dumps(checkout_resp, ensure_ascii=False)[:500]}")
+        self.log("[gopay-qris] checkout/list ok selected option token received")
+
+        instructions = [{
+            "token": payment_option_token,
+            "amount": {"value": amount_value, "currency": amount_currency},
+        }]
+        self._qris_request("POST", "/v1/promotions/evaluate", {
+            "order_id": payment_id,
+            "payment_instructions": instructions,
+            "transaction_type": "MERCHANT_TRANSACTION",
+        })
+
+        capture_body = {
+            "payment_instructions": [{**instructions[0], "admin_fee_token": None}],
+            "applied_promo_code": ["NO_PROMO_APPLIED"],
+            "description": None,
+            "payment_method": None,
+            "channel_type": "ONLINE_GATEWAY",
+            "additional_data": self._qris_capture_additional_data(explore, amount_value, amount_currency),
+            "challenge": {},
+            "metadata": payment.get("metadata") or explore.get("metadata", {}),
+            "checksum": checksum,
+            "order_signature": explore.get("order_signature", {}),
+        }
+        capture_resp = self._qris_request("PATCH", f"/v3/payments/{payment_id}/capture", capture_body)
+        capture_data = capture_resp.get("data") if isinstance(capture_resp.get("data"), dict) else {}
+        challenge = (((capture_data.get("challenge") or {}).get("action") or {}).get("value") or {})
+        challenge_id = str(challenge.get("challenge_id") or "")
+        challenge_client_id = str(challenge.get("client_id") or "")
+        if not challenge_id or not challenge_client_id:
+            raise GoPayError(f"qris capture missing PIN challenge: {json.dumps(capture_resp, ensure_ascii=False)[:500]}")
+        self.log(f"[gopay-qris] capture requires PIN challenge_id={challenge_id[:8]}...")
+
+        self._qris_request("GET", f"/api/v2/challenges/{challenge_id}/pin-page")
+        pin_resp = self._qris_request("POST", "/api/v1/users/pin/tokens", {
+            "pin": self.pin,
+            "client_id": challenge_client_id,
+            "challenge_id": challenge_id,
+        })
+        pin_data = pin_resp.get("data") if isinstance(pin_resp.get("data"), dict) else {}
+        pin_token = str(pin_data.get("token") or pin_resp.get("token") or "")
+        if not pin_token:
+            raise GoPayError(f"qris pin token missing: {json.dumps(pin_resp, ensure_ascii=False)[:500]}")
+
+        capture_body["challenge"] = {
+            "type": "GOPAY_PIN_CHALLENGE",
+            "token": pin_token,
+            "challenge_id": challenge_id,
+        }
+        final_resp = self._qris_request("PATCH", f"/v3/payments/{payment_id}/capture", capture_body)
+        self.log(f"[gopay-qris] final capture ok payment_id={payment_id}")
+        return {
+            "payment_id": payment_id,
+            "merchant_id": merchant_id,
+            "amount": amount_value,
+            "currency": amount_currency,
+            "capture": final_resp,
+            "qr_charge": qr_info,
+        }
+
     def _gopay_payment_validate(self, charge_ref: str):
         # midtrans 创建 charge 后 GoPay 后端要数秒才能 fetch；轮询直到 ready
         for i in range(8):
@@ -1234,7 +1631,7 @@ class GoPayCharger:
         elif payload:
             print(f"GOPAY_QR_URL={payload}", flush=True)
         self.log(
-            "[gopay-qr] QR_READY_PAUSE QR charge 已返回，测试模式暂停运行 "
+            "[gopay-qris] QR charge ready, starting GoPay APP payment "
             f"mode={charge_mode or '-'} http={qr_info.get('http_status') or '-'} "
             f"status_code={status_code or '-'} transaction_status={transaction_status or '-'} "
             f"order_id={order_id or '-'} transaction_id={transaction_id or '-'} "
@@ -1242,10 +1639,15 @@ class GoPayCharger:
             f"keys={','.join(response_keys) if response_keys else '-'} "
             f"message={status_message[:160]!r}"
         )
-        return {
-            "state": "qr_ready",
+        qris = self._qris_string_from_info(qr_info, artifact)
+        print(f"GOPAY_QRIS_DATA={qris}", flush=True)
+        qris_result = self._run_qris_app_payment(qris, qr_info)
+        if cs_id:
+            result = self._chatgpt_verify(cs_id, timeout_s=self.qr_wait_timeout)
+        else:
+            result = {"state": "succeeded", "cs_id": cs_id}
+        result.update({
             "snap_token": snap_token,
-            "cs_id": cs_id,
             "qr_payload_type": kind,
             "qr_artifact": artifact,
             "qr_charge_mode": charge_mode,
@@ -1258,7 +1660,9 @@ class GoPayCharger:
             "qr_transaction_status": transaction_status,
             "qr_order_id": order_id,
             "qr_transaction_id": transaction_id,
-        }
+            "qris_payment": qris_result,
+        })
+        return result
 
     def _run_midtrans_and_gopay(self, snap_token: str, cs_id: str) -> dict:
         self._midtrans_load_transaction(snap_token)

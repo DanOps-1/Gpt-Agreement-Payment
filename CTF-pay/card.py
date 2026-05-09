@@ -4519,7 +4519,12 @@ def _drive_gopay_from_redirect(
     )
     raw_gopay_cfg = cfg.get("gopay") or {}
     if _gopay.is_qr_payment_enabled(raw_gopay_cfg):
-        gopay_cfg = dict(raw_gopay_cfg)
+        accounts = _gopay.normalize_gopay_accounts(raw_gopay_cfg)
+        gopay_cfg = (
+            _gopay.pick_gopay_account_config(raw_gopay_cfg, log=_log)
+            if accounts
+            else dict(raw_gopay_cfg)
+        )
         _log("      [gopay-qr] 二维码支付模式已启用，跳过 GoPay 账号绑定流程")
     else:
         gopay_cfg = _gopay.pick_gopay_account_config(raw_gopay_cfg, log=_log)
