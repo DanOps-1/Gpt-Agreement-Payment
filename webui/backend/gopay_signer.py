@@ -9,7 +9,6 @@ from typing import Mapping
 
 DEFAULT_HMAC_KEY = "4&G6DbV&j8QZs~{)(Ila_w_|v@aqJq]E-;*(J9PanZ8sm01kTi{X<iG``]d7P&L"
 DEFAULT_X_E2 = "ED9A2B38749FBDE9ACA61D6A685B7"
-APP_NONCE_MIDDLE_HEX = "0" * 32 + "9826a64441fe4119f016491efd7f0000"
 
 
 def lower_headers(headers: Mapping[str, str]) -> dict[str, str]:
@@ -19,10 +18,6 @@ def lower_headers(headers: Mapping[str, str]) -> dict[str, str]:
 def bearer_token(authorization: str) -> str:
     prefix = "Bearer "
     return authorization[len(prefix):] if authorization.startswith(prefix) else authorization
-
-
-def app_nonce_hex() -> str:
-    return os.urandom(32).hex() + APP_NONCE_MIDDLE_HEX + os.urandom(16).hex()
 
 
 def canonical_message(
@@ -77,7 +72,7 @@ def sign_x_e1(
     timestamp_ms: int | None = None,
 ) -> str:
     timestamp_ms = int(time.time() * 1000) if timestamp_ms is None else timestamp_ms
-    nonce_hex = app_nonce_hex() if nonce_hex is None else nonce_hex.lower()
+    nonce_hex = os.urandom(80).hex() if nonce_hex is None else nonce_hex.lower()
     if len(nonce_hex) != 160 or any(c not in "0123456789abcdef" for c in nonce_hex):
         raise ValueError("nonce must be exactly 160 lowercase hex chars")
     msg = canonical_message(

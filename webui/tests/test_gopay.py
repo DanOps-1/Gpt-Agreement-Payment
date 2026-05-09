@@ -656,14 +656,6 @@ def test_qris_headers_prefer_auto_unbind_over_stale_headers(monkeypatch):
     assert signed[0]["headers"]["x-phonemodel"] == "OPPO, PGEM10"
 
 
-def test_gopay_signer_uses_app_nonce_shape():
-    nonce = gopay._signed_gopay_headers.__globals__["app_nonce_hex"]()
-
-    assert len(nonce) == 160
-    assert nonce[64:96] == "0" * 32
-    assert nonce[96:128] == "9826a64441fe4119f016491efd7f0000"
-
-
 def test_midtrans_linking_429_retries_past_406_limit(monkeypatch):
     sleeps: list[float] = []
     monkeypatch.setattr(gopay.time, "sleep", lambda s: sleeps.append(float(s)))
