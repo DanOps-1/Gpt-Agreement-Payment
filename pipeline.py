@@ -3898,26 +3898,39 @@ def _cpa_extra_for_server_import(account: dict, email: str) -> dict:
 
 
 def _email_data_for_server_import(account: dict, email: str) -> str:
-    outlook = {}
     lookup_email = str(email or account.get("email") or "").strip()
+    outlook = {}
     if lookup_email:
         try:
             outlook = get_db().get_outlook_mail_account(lookup_email)
         except Exception:
             outlook = {}
     if outlook:
+        client_id = str(outlook.get("client_id") or "").strip()
+        mail_token = str(outlook.get("refresh_token") or "").strip()
+        if client_id and mail_token:
+            return "----".join([
+                str(outlook.get("email") or lookup_email).strip(),
+                str(outlook.get("password") or account.get("password") or ""),
+                client_id,
+                mail_token,
+            ])
+
+    client_id = str(account.get("client_id") or "").strip()
+    mail_token = str(
+        account.get("outlook_refresh_token")
+        or account.get("mail_refresh_token")
+        or account.get("email_refresh_token")
+        or ""
+    ).strip()
+    if client_id and mail_token:
         return "----".join([
-            str(outlook.get("email") or lookup_email).strip(),
-            str(outlook.get("password") or ""),
-            str(outlook.get("client_id") or "").strip(),
-            str(outlook.get("refresh_token") or "").strip(),
+            lookup_email,
+            str(account.get("password") or ""),
+            client_id,
+            mail_token,
         ])
-    return "----".join([
-        str(email or account.get("email") or "").strip(),
-        str(account.get("password") or ""),
-        str(account.get("client_id") or account.get("access_token") or "").strip(),
-        str(account.get("refresh_token") or "").strip(),
-    ])
+    raise ValueError("missing outlook email data: email/password/client_id/mail_refresh_token")
 
 
 def _mask_server_import_token(value: str, keep: int = 4) -> str:
@@ -3974,9 +3987,15 @@ def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | 
             print(f"[push-server] {email} 无 refresh_token，跳过")
             return "no_rt"
 
+    try:
+        email_data = _email_data_for_server_import(account, email)
+    except ValueError as e:
+        print(f"[push-server] {email} 无法生成 email_data: {e}")
+        return "no_email_data"
+
     item = {
         "uuid": str(uuid.uuid4()),
-        "email_data": _email_data_for_server_import(account, email),
+        "email_data": email_data,
         "extra": json.dumps(_cpa_extra_for_server_import(account, email), ensure_ascii=False, separators=(",", ":")),
     }
     try:

@@ -69,7 +69,7 @@ def _jwt_exp_iso(access_token: str) -> str:
 
 
 def _cpa_auth_file_body(account: dict) -> dict:
-    email = str(account.get("email") or "").strip().lower()
+    email = str(account.get("email") or "").strip()
     at = str(account.get("access_token") or "").strip()
     rt = str(account.get("refresh_token") or "").strip()
     id_tok = str(account.get("id_token") or "").strip() or at
@@ -131,12 +131,39 @@ def _load_pay_cfg() -> dict:
 
 
 def _email_data_for_server_push(account: dict) -> str:
-    return "----".join([
-        str(account.get("email") or "").strip().lower(),
-        str(account.get("password") or ""),
-        str(account.get("access_token") or "").strip(),
-        str(account.get("refresh_token") or "").strip(),
-    ])
+    email = str(account.get("email") or "").strip()
+    outlook = {}
+    if email:
+        try:
+            outlook = get_db().get_outlook_mail_account(email)
+        except Exception:
+            outlook = {}
+    if outlook:
+        client_id = str(outlook.get("client_id") or "").strip()
+        mail_token = str(outlook.get("refresh_token") or "").strip()
+        if client_id and mail_token:
+            return "----".join([
+                str(outlook.get("email") or email).strip(),
+                str(outlook.get("password") or account.get("password") or ""),
+                client_id,
+                mail_token,
+            ])
+
+    client_id = str(account.get("client_id") or "").strip()
+    mail_token = str(
+        account.get("outlook_refresh_token")
+        or account.get("mail_refresh_token")
+        or account.get("email_refresh_token")
+        or ""
+    ).strip()
+    if client_id and mail_token:
+        return "----".join([
+            email,
+            str(account.get("password") or ""),
+            client_id,
+            mail_token,
+        ])
+    raise ValueError("missing outlook email data: email/password/client_id/mail_refresh_token")
 
 
 def _server_push_payload(account: dict, uuid_value: str = "") -> dict:
@@ -234,7 +261,7 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     skipped = [
         {
             "id": acc.get("id"),
-            "email": str(acc.get("email") or "").strip().lower(),
+            "email": str(acc.get("email") or "").strip(),
             "status": "no_rt",
             "error": "refresh_token missing",
         }
@@ -244,7 +271,22 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     if not ready_accounts:
         return skipped
 
-    items = [_account_import_item(acc) for acc in ready_accounts]
+    items: list[dict] = []
+    item_accounts: list[dict] = []
+    email_data_errors: list[dict] = []
+    for acc in ready_accounts:
+        try:
+            items.append(_account_import_item(acc))
+            item_accounts.append(acc)
+        except ValueError as e:
+            email_data_errors.append({
+                "id": acc.get("id"),
+                "email": str(acc.get("email") or "").strip(),
+                "status": "no_email_data",
+                "error": str(e),
+            })
+    if not items:
+        return [*skipped, *email_data_errors]
     try:
         resp = client.post(
             url,
@@ -252,10 +294,11 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
             headers=_server_import_headers(token),
         )
     except httpx.HTTPError as e:
-        return [
-            {"id": acc.get("id"), "email": str(acc.get("email") or "").strip().lower(), "status": "error", "error": str(e)}
-            for acc in ready_accounts
+        transport_errors = [
+            {"id": acc.get("id"), "email": str(acc.get("email") or "").strip(), "status": "error", "error": str(e)}
+            for acc in item_accounts
         ]
+        return [*skipped, *email_data_errors, *transport_errors]
 
     text = resp.text[:500]
     try:
@@ -277,14 +320,14 @@ def _push_account_import_server(client: httpx.Client, req: ServerPushRequest, ac
     pushed = [
         {
             "id": acc.get("id"),
-            "email": str(acc.get("email") or "").strip().lower(),
+            "email": str(acc.get("email") or "").strip(),
             "status": "ok" if ok else "fail",
             "http_status": resp.status_code,
             "error": error,
         }
-        for acc in ready_accounts
+        for acc in item_accounts
     ]
-    return [*skipped, *pushed]
+    return [*skipped, *email_data_errors, *pushed]
 
 
 def _log_server_push_failures(results: list[dict]) -> None:
@@ -294,7 +337,7 @@ def _log_server_push_failures(results: list[dict]) -> None:
     runner._append_log(f"[inventory:server-push] failed={len(failures)}")
     for item in failures:
         aid = item.get("id") or ""
-        email = str(item.get("email") or "").strip().lower() or "-"
+        email = str(item.get("email") or "").strip() or "-"
         status = str(item.get("status") or "unknown")
         http_status = item.get("http_status")
         error = str(item.get("error") or item.get("reason") or "").strip()
