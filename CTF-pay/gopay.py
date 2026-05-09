@@ -341,6 +341,13 @@ def _safe_qris_preview(qris: str) -> str:
     return f"{text[:18]}...{text[-10:]}"
 
 
+def _json_for_log(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    except Exception:
+        return str(value)
+
+
 def _qris_error_code(data: Any) -> str:
     if not isinstance(data, dict):
         return ""
@@ -1562,17 +1569,11 @@ class GoPayCharger:
         url = self._qris_url(path)
         body_text = _json_dumps_compact(body) if body is not None else ""
         headers = self._qris_signed_headers(method, url, body_text)
-        body_preview = body_text[:260] if body_text else "-"
-        if path == "/v1/explore" and isinstance(body, dict):
-            body_preview = _json_dumps_compact({
-                "type": body.get("type"),
-                "data_len": len(str(body.get("data") or "")),
-                "data_preview": _safe_qris_preview(str(body.get("data") or "")),
-            })
-        self.log(
-            f"[gopay-qris] {method.upper()} {urlsplit(url).path} "
-            f"body={body_preview} headers={_safe_qris_header_summary(headers)}"
-        )
+        self.log("[gopay-qris] === request start ===")
+        self.log(f"[gopay-qris] method={method.upper()} url={url}")
+        self.log(f"[gopay-qris] headers={_json_for_log(headers)}")
+        self.log(f"[gopay-qris] body={body_text if body_text else ''}")
+        self.log("[gopay-qris] === request end ===")
         r = self._request_ext(
             method,
             url,
