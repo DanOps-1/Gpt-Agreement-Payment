@@ -110,6 +110,8 @@ LINK_429_RETRY_SLEEP_MAX_S = 3.0
 CHARGE_RETRY_LIMIT = 4
 CHARGE_RETRY_SLEEP_S = 2.0
 QR_WAIT_TIMEOUT_S = 300.0
+QRIS_EXPLORE_RETRY_LIMIT = 3
+QRIS_EXPLORE_RETRY_SLEEP_S = 2.0
 GOPAY_CUSTOMER_BASE_URL = "https://customer.gopayapi.com"
 TRANSIENT_REQUEST_RETRY_LIMIT = 3
 TRANSIENT_REQUEST_RETRY_MIN_S = 1.0
@@ -304,6 +306,50 @@ def _extract_payment_id_from_qris(qris: str) -> str:
 def _looks_like_qris_payload(value: str) -> bool:
     text = str(value or "").strip()
     return bool(text.startswith("000201") and len(text) >= 80 and text[-4:].isalnum())
+
+
+def _header_value(headers: Any, name: str) -> str:
+    try:
+        items = headers.items()
+    except Exception:
+        return ""
+    for key, value in items:
+        if str(key).lower() == name.lower():
+            return str(value)
+    return ""
+
+
+def _safe_qris_header_summary(headers: dict[str, str]) -> str:
+    names = sorted(str(k).lower() for k in headers)
+    sensitive = {"authorization", "x-e1", "x-m1", "x-passkey", "x-devicetoken", "cookie"}
+    visible = [name for name in names if name not in sensitive]
+    auth = _header_value(headers, "authorization")
+    x_e2 = _header_value(headers, "x-e2")
+    return (
+        f"fields={','.join(visible)} "
+        f"auth_tail={(auth[-6:] if auth else '-')} "
+        f"x-e2_tail={(x_e2[-6:] if x_e2 else '-')} "
+        f"has_passkey={bool(_header_value(headers, 'x-passkey'))} "
+        f"has_devicetoken={bool(_header_value(headers, 'x-devicetoken'))}"
+    )
+
+
+def _safe_qris_preview(qris: str) -> str:
+    text = str(qris or "").strip()
+    if len(text) <= 32:
+        return text
+    return f"{text[:18]}...{text[-10:]}"
+
+
+def _qris_error_code(data: Any) -> str:
+    if not isinstance(data, dict):
+        return ""
+    err = data.get("error") if isinstance(data.get("error"), dict) else {}
+    if err.get("code"):
+        return str(err.get("code") or "")
+    errors = data.get("errors") if isinstance(data.get("errors"), list) else []
+    first = errors[0] if errors and isinstance(errors[0], dict) else {}
+    return str(first.get("code") or "")
 
 
 def _iter_nested_dicts(value: Any, depth: int = 0) -> Any:
@@ -1516,7 +1562,17 @@ class GoPayCharger:
         url = self._qris_url(path)
         body_text = _json_dumps_compact(body) if body is not None else ""
         headers = self._qris_signed_headers(method, url, body_text)
-        self.log(f"[gopay-qris] {method.upper()} {urlsplit(url).path} body={body_text[:260] if body_text else '-'}")
+        body_preview = body_text[:260] if body_text else "-"
+        if path == "/v1/explore" and isinstance(body, dict):
+            body_preview = _json_dumps_compact({
+                "type": body.get("type"),
+                "data_len": len(str(body.get("data") or "")),
+                "data_preview": _safe_qris_preview(str(body.get("data") or "")),
+            })
+        self.log(
+            f"[gopay-qris] {method.upper()} {urlsplit(url).path} "
+            f"body={body_preview} headers={_safe_qris_header_summary(headers)}"
+        )
         r = self._request_ext(
             method,
             url,
@@ -1536,8 +1592,39 @@ class GoPayCharger:
             f"body={raw_text[:500]!r}"
         )
         if r.status_code >= 400:
-            raise GoPayError(f"qris {method.upper()} {path} {r.status_code}: {raw_text[:600]}")
+            detail = ""
+            if isinstance(data, dict):
+                errors = data.get("errors") if isinstance(data.get("errors"), list) else []
+                first = errors[0] if errors and isinstance(errors[0], dict) else {}
+                err = data.get("error") if isinstance(data.get("error"), dict) else {}
+                detail = (
+                    f" code={_qris_error_code(data) or '-'}"
+                    f" message={err.get('description') or first.get('message') or '-'}"
+                )
+            raise GoPayError(f"qris {method.upper()} {path} {r.status_code}{detail}: {raw_text[:600]}")
         return data if isinstance(data, dict) else {}
+
+    def _qris_explore(self, qris: str) -> dict:
+        retry_limit = max(1, int(self.gopay_cfg.get("qris_explore_retries") or QRIS_EXPLORE_RETRY_LIMIT))
+        last: Exception | None = None
+        for attempt in range(1, retry_limit + 1):
+            try:
+                return self._qris_request("POST", "/v1/explore", {"type": "QR_CODE", "data": qris})
+            except GoPayError as exc:
+                last = exc
+                text = str(exc)
+                retryable = (
+                    "qris POST /v1/explore 400" in text
+                    and ("code=1000" in text or "GoPay-1000" in text or "Internal server error" in text)
+                )
+                if not retryable or attempt >= retry_limit:
+                    raise
+                sleep_s = max(0.2, float(self.gopay_cfg.get("qris_explore_retry_sleep_s") or QRIS_EXPLORE_RETRY_SLEEP_S))
+                self.log(f"[gopay-qris] /v1/explore GoPay-1000, retry {attempt}/{retry_limit} after {sleep_s:.1f}s")
+                time.sleep(sleep_s)
+        if last:
+            raise last
+        raise GoPayError("qris explore retry exhausted")
 
     def _qris_capture_additional_data(self, explore: dict, amount_value: int | float | str, amount_currency: str) -> dict:
         additional = dict(explore.get("additional_data") or {})
@@ -1555,7 +1642,7 @@ class GoPayCharger:
             raise GoPayError("qris string is empty")
         self.log(f"[gopay-qris] start GoPay APP QRIS payment data_len={len(qris)}")
 
-        explore_resp = self._qris_request("POST", "/v1/explore", {"type": "QR_CODE", "data": qris})
+        explore_resp = self._qris_explore(qris)
         explore = explore_resp.get("data") if isinstance(explore_resp.get("data"), dict) else {}
         payment_id = str(explore.get("payment_id") or _extract_payment_id_from_qris(qris) or "").strip()
         amount = explore.get("amount") if isinstance(explore.get("amount"), dict) else {}

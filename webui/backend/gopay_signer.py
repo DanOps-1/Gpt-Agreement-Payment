@@ -99,10 +99,11 @@ def signed_headers(
 ) -> dict[str, str]:
     headers = {str(k): str(v) for k, v in baseline_headers.items()}
     for name in list(headers):
-        if name.lower() in ("x-e1", "x-e2", "host", "content-length"):
+        if name.lower() in ("x-e1", "host", "content-length"):
             headers.pop(name, None)
     headers["host"] = host
-    headers["x-e2"] = DEFAULT_X_E2
+    if "x-e2" not in lower_headers(headers):
+        headers["x-e2"] = DEFAULT_X_E2
     headers["x-e1"] = sign_x_e1(headers, method=method, host=host, path=path, body=body, key=key)
     if body and "content-type" not in lower_headers(headers):
         headers["content-type"] = "application/json"
