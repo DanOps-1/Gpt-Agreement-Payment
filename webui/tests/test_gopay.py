@@ -358,6 +358,7 @@ def test_qr_payment_mode_does_not_require_gopay_account():
 
 def test_qr_payment_uses_qris_charge(monkeypatch):
     logs: list[str] = []
+    verify_calls: list[str] = []
     charger = gopay.GoPayCharger(
         requests.Session(),
         {
@@ -379,15 +380,32 @@ def test_qr_payment_uses_qris_charge(monkeypatch):
             "payload_type": "qr_string",
             "charge_mode": "qris",
             "snap_token": snap_token,
+            "http_status": 201,
+            "response_headers": {"content-type": "application/json"},
+            "response_keys": ["order_id", "qr_string", "status_code", "transaction_status"],
+            "response": {
+                "order_id": "setatt_test",
+                "qr_string": "000201010212QRISDATA",
+                "status_code": "201",
+                "status_message": "Your Transaction is being processed",
+                "transaction_status": "pending",
+            },
         },
     )
     monkeypatch.setattr(charger, "_save_qr_artifact", lambda qr_info: "output/gopay_qr/test.png")
+    monkeypatch.setattr(charger, "_chatgpt_verify", lambda cs_id, timeout_s=60.0: verify_calls.append(cs_id) or {"state": "unexpected"})
 
-    result = charger._run_midtrans_qr(SNAP_TOKEN, "")
+    result = charger._run_midtrans_qr(SNAP_TOKEN, "cs_live_test")
 
     assert result["state"] == "qr_ready"
     assert result["qr_charge_mode"] == "qris"
     assert result["qr_payload_type"] == "qr_string"
+    assert result["cs_id"] == "cs_live_test"
+    assert result["qr_http_status"] == 201
+    assert result["qr_status_code"] == "201"
+    assert result["qr_transaction_status"] == "pending"
+    assert verify_calls == []
+    assert any("QR_READY_PAUSE" in line for line in logs)
     assert any("二维码已生成" in line for line in logs)
 
 

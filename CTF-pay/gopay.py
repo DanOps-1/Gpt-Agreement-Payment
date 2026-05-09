@@ -1026,13 +1026,19 @@ class GoPayCharger:
                     data = r.json()
                 except Exception:
                     data = {}
+                headers_log = json.dumps(_safe_headers_for_log(r.headers), ensure_ascii=False, separators=(",", ":"))
                 keys_log = ",".join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__
                 payload, kind = self._extract_qr_payload(data)
+                status_code = str(data.get("status_code") or "") if isinstance(data, dict) else ""
+                status_message = str(data.get("status_message") or "") if isinstance(data, dict) else ""
+                transaction_status = str(data.get("transaction_status") or "") if isinstance(data, dict) else ""
                 self.log(
                     "[gopay-qr] midtrans charge response "
                     f"mode={label} attempt={attempt}/{CHARGE_RETRY_LIMIT} "
-                    f"status={r.status_code} keys={keys_log} payload_type={kind or '-'} "
-                    f"body={raw_text[:300]!r}"
+                    f"status={r.status_code} headers={headers_log} keys={keys_log} "
+                    f"midtrans_status={status_code or '-'} transaction_status={transaction_status or '-'} "
+                    f"payload_type={kind or '-'} payload_preview={payload[:180]!r} "
+                    f"message={status_message[:160]!r} body={raw_text!r}"
                 )
                 r.raise_for_status()
 
@@ -1042,6 +1048,9 @@ class GoPayCharger:
                         "payload_type": kind,
                         "charge_mode": label,
                         "snap_token": snap_token,
+                        "http_status": r.status_code,
+                        "response_headers": _safe_headers_for_log(r.headers),
+                        "response_keys": sorted(data.keys()) if isinstance(data, dict) else [],
                         "response": data,
                     }
 
@@ -1210,6 +1219,13 @@ class GoPayCharger:
         payload = str(qr_info.get("payload") or "")
         kind = str(qr_info.get("payload_type") or "")
         charge_mode = str(qr_info.get("charge_mode") or "")
+        response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
+        response_keys = qr_info.get("response_keys") or (sorted(response.keys()) if isinstance(response, dict) else [])
+        status_code = str(response.get("status_code") or "") if isinstance(response, dict) else ""
+        status_message = str(response.get("status_message") or "") if isinstance(response, dict) else ""
+        transaction_status = str(response.get("transaction_status") or "") if isinstance(response, dict) else ""
+        order_id = str(response.get("order_id") or "") if isinstance(response, dict) else ""
+        transaction_id = str(response.get("transaction_id") or "") if isinstance(response, dict) else ""
         if artifact:
             self.log(f"[gopay-qr] 二维码已生成: {artifact}")
             print(f"GOPAY_QR_FILE={artifact}", flush=True)
@@ -1217,22 +1233,31 @@ class GoPayCharger:
             print(f"GOPAY_QR_DATA={payload}", flush=True)
         elif payload:
             print(f"GOPAY_QR_URL={payload}", flush=True)
-        if cs_id:
-            self.log(f"[gopay-qr] 已发起 {charge_mode or 'qris'} charge，请扫码完成支付，最多等待 {int(self.qr_wait_timeout)}s ...")
-            result = self._chatgpt_verify(cs_id, timeout_s=self.qr_wait_timeout)
-            result.update({
-                "snap_token": snap_token,
-                "qr_payload_type": kind,
-                "qr_artifact": artifact,
-                "qr_charge_mode": charge_mode,
-            })
-            return result
+        self.log(
+            "[gopay-qr] QR_READY_PAUSE QR charge 已返回，测试模式暂停运行 "
+            f"mode={charge_mode or '-'} http={qr_info.get('http_status') or '-'} "
+            f"status_code={status_code or '-'} transaction_status={transaction_status or '-'} "
+            f"order_id={order_id or '-'} transaction_id={transaction_id or '-'} "
+            f"payload_type={kind or '-'} artifact={artifact or '-'} "
+            f"keys={','.join(response_keys) if response_keys else '-'} "
+            f"message={status_message[:160]!r}"
+        )
         return {
             "state": "qr_ready",
             "snap_token": snap_token,
+            "cs_id": cs_id,
             "qr_payload_type": kind,
             "qr_artifact": artifact,
             "qr_charge_mode": charge_mode,
+            "qr_payload_preview": payload[:240],
+            "qr_http_status": qr_info.get("http_status"),
+            "qr_response_headers": qr_info.get("response_headers") or {},
+            "qr_response_keys": response_keys,
+            "qr_status_code": status_code,
+            "qr_status_message": status_message,
+            "qr_transaction_status": transaction_status,
+            "qr_order_id": order_id,
+            "qr_transaction_id": transaction_id,
         }
 
     def _run_midtrans_and_gopay(self, snap_token: str, cs_id: str) -> dict:
