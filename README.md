@@ -90,7 +90,7 @@ python -m webui.server
 ```bash
 git clone https://github.com/DanOps-1/Gpt-Agreement-Payment
 cd Gpt-Agreement-Payment
-pip install requests curl_cffi playwright camoufox browserforge mitmproxy pybase64
+pip install requests curl_cffi playwright camoufox browserforge mitmproxy pybase64 opencv-python-headless
 playwright install firefox
 camoufox fetch
 ```

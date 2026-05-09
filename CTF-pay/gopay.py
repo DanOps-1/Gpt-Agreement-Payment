@@ -1335,6 +1335,12 @@ class GoPayCharger:
                     return m.group(1).strip()
 
         decoders = []
+        unavailable: list[str] = []
+        try:
+            import cv2  # type: ignore
+            decoders.append(("opencv", lambda: self._decode_qr_with_opencv(cv2, path)))
+        except Exception as exc:
+            unavailable.append(f"opencv={type(exc).__name__}: {str(exc)[:120]}")
         try:
             from pyzbar.pyzbar import decode as pyzbar_decode  # type: ignore
             from PIL import Image  # type: ignore
@@ -1344,12 +1350,7 @@ class GoPayCharger:
                 if getattr(item, "data", None)
             ]))
         except Exception as exc:
-            self.log(f"[gopay-qris] pyzbar unavailable: {type(exc).__name__}: {str(exc)[:120]}")
-        try:
-            import cv2  # type: ignore
-            decoders.append(("opencv", lambda: self._decode_qr_with_opencv(cv2, path)))
-        except Exception as exc:
-            self.log(f"[gopay-qris] opencv unavailable: {type(exc).__name__}: {str(exc)[:120]}")
+            unavailable.append(f"pyzbar={type(exc).__name__}: {str(exc)[:120]}")
         for name, decoder in decoders:
             try:
                 for value in decoder():
@@ -1359,31 +1360,57 @@ class GoPayCharger:
                         return value
             except Exception as exc:
                 self.log(f"[gopay-qris] {name} decode failed: {type(exc).__name__}: {str(exc)[:120]}")
+        if unavailable:
+            self.log(f"[gopay-qris] unavailable QR decoders: {'; '.join(unavailable)}")
         self.log(f"[gopay-qris] QR image decode produced no data; artifact={path}")
         return ""
 
     def _decode_qr_with_opencv(self, cv2: Any, path: Path) -> list[str]:
-        img = cv2.imread(str(path))
+        img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         if img is None:
             self.log(f"[gopay-qris] opencv could not read image: {path}")
             return []
 
         detector = cv2.QRCodeDetector()
-        candidates = [img]
+        candidates = []
         try:
             h, w = img.shape[:2]
-            if h and w and min(h, w) < 640:
-                scale = max(2, int(640 / max(1, min(h, w))))
-                candidates.append(cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC))
-        except Exception:
-            pass
-        try:
+            channels = int(img.shape[2]) if len(img.shape) > 2 else 1
+            self.log(f"[gopay-qris] opencv image shape={w}x{h} channels={channels}")
+
+            if channels == 4:
+                alpha = img[:, :, 3]
+                bgr = img[:, :, :3]
+                white = 255 * (1 - (alpha[:, :, None] / 255.0))
+                img = (bgr * (alpha[:, :, None] / 255.0) + white).astype("uint8")
+            elif channels == 1:
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            candidates.append(gray)
-            candidates.append(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1])
-            candidates.append(cv2.copyMakeBorder(gray, 40, 40, 40, 40, cv2.BORDER_CONSTANT, value=255))
+            variants = [img, gray]
+            otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            variants.extend([
+                otsu,
+                255 - gray,
+                255 - otsu,
+                cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 2),
+            ])
+
+            for variant in variants:
+                for border in (0, 16, 32, 64):
+                    framed = (
+                        cv2.copyMakeBorder(variant, border, border, border, border, cv2.BORDER_CONSTANT, value=255)
+                        if border else variant
+                    )
+                    candidates.append(framed)
+                    vh, vw = framed.shape[:2]
+                    for target in (480, 720, 1024, 1440):
+                        if min(vh, vw) < target:
+                            scale = target / max(1, min(vh, vw))
+                            candidates.append(cv2.resize(framed, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST))
+                            candidates.append(cv2.resize(framed, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC))
         except Exception:
-            pass
+            candidates.append(img)
 
         values: list[str] = []
         for candidate in candidates:
@@ -1411,15 +1438,21 @@ class GoPayCharger:
             if decoded:
                 return decoded
         response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
+        qr_field_details: list[str] = []
         for obj in _iter_nested_dicts(response):
             for key in ("qr_string", "qris", "qris_string", "qr_content", "qr_code"):
-                value = str(obj.get(key) or "").strip()
+                raw_value = obj.get(key)
+                value = str(raw_value or "").strip()
                 if value:
                     return value
+                if key in obj:
+                    qr_field_details.append(f"{key}:{type(raw_value).__name__}:len={len(str(raw_value or ''))}")
         keys = qr_info.get("response_keys") or (sorted(response.keys()) if isinstance(response, dict) else [])
         raise GoPayError(
             "QRIS payload not found: unable to decode QR to string "
-            f"(payload_type={kind or '-'} artifact={artifact or '-'} response_keys={','.join(keys) if keys else '-'})"
+            f"(payload_type={kind or '-'} artifact={artifact or '-'} response_keys={','.join(keys) if keys else '-'}; "
+            f"qr_fields={','.join(qr_field_details) if qr_field_details else '-'}; "
+            "install a QR decoder in the same Python env: pip install opencv-python-headless)"
         )
 
     def _qris_cfg(self) -> dict:

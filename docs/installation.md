@@ -37,7 +37,7 @@ sudo curl -sSfL \
 git clone https://github.com/DanOps-1/Gpt-Agreement-Payment
 cd Gpt-Agreement-Payment
 
-pip install requests curl_cffi playwright camoufox browserforge mitmproxy pybase64
+pip install requests curl_cffi playwright camoufox browserforge mitmproxy pybase64 opencv-python-headless
 
 # Playwright + Camoufox 浏览器二进制
 playwright install firefox
