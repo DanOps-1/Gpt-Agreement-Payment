@@ -3880,7 +3880,7 @@ def _server_import_cfg(card_cfg: dict) -> dict:
 
 
 def _cpa_extra_for_server_import(account: dict, email: str) -> dict:
-    email = _norm_email(email or account.get("email"))
+    email = str(email or account.get("email") or "").strip()
     at = str(account.get("access_token") or "").strip()
     rt = str(account.get("refresh_token") or "").strip()
     id_tok = str(account.get("id_token") or "").strip() or at
@@ -3898,10 +3898,24 @@ def _cpa_extra_for_server_import(account: dict, email: str) -> dict:
 
 
 def _email_data_for_server_import(account: dict, email: str) -> str:
+    outlook = {}
+    lookup_email = str(email or account.get("email") or "").strip()
+    if lookup_email:
+        try:
+            outlook = get_db().get_outlook_mail_account(lookup_email)
+        except Exception:
+            outlook = {}
+    if outlook:
+        return "----".join([
+            str(outlook.get("email") or lookup_email).strip(),
+            str(outlook.get("password") or ""),
+            str(outlook.get("client_id") or "").strip(),
+            str(outlook.get("refresh_token") or "").strip(),
+        ])
     return "----".join([
-        _norm_email(email or account.get("email")),
+        str(email or account.get("email") or "").strip(),
         str(account.get("password") or ""),
-        str(account.get("access_token") or "").strip(),
+        str(account.get("client_id") or account.get("access_token") or "").strip(),
         str(account.get("refresh_token") or "").strip(),
     ])
 
@@ -3932,7 +3946,7 @@ def _server_import_headers(token: str) -> dict:
 def _push_plus_account_to_server(email: str, card_cfg: dict, *, account: dict | None = None) -> str:
     import httpx
 
-    email = _norm_email(email)
+    email = str(email or "").strip()
     if not email:
         return "skipped"
     account = dict(account or _find_latest_registered_account_for_email(email) or {})

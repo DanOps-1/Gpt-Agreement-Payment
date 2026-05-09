@@ -171,6 +171,10 @@ def _email(value: Any) -> str:
     return _text(value).strip().lower()
 
 
+def _email_raw(value: Any) -> str:
+    return _text(value).strip()
+
+
 class Database:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -323,7 +327,7 @@ class Database:
         return row is not None
 
     def add_registered_account(self, row: dict) -> bool:
-        email = _email(row.get("email"))
+        email = _email_raw(row.get("email"))
         if not email:
             return False
         ts = _text(row.get("ts")) or time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -731,21 +735,22 @@ class Database:
             parts = [p.strip() for p in _text(line).strip().split("----", 3)]
             if len(parts) != 4 or not parts[0] or not parts[2] or not parts[3]:
                 return None
-            return (_email(parts[0]), parts[1], parts[2], parts[3])
+            return (_email_raw(parts[0]), parts[1], parts[2], parts[3])
 
         parsed = [x for x in (parse(line) for line in lines) if x]
-        unique_emails = {email for email, *_ in parsed}
+        unique_emails = {_email(email) for email, *_ in parsed}
         with self._conn() as c:
             existing_emails = set()
             if unique_emails:
                 placeholders = ",".join("?" for _ in unique_emails)
                 rows = c.execute(
-                    f"SELECT email FROM outlook_mail_accounts WHERE email IN ({placeholders})",
+                    f"SELECT email FROM outlook_mail_accounts WHERE lower(email) IN ({placeholders})",
                     tuple(unique_emails),
                 ).fetchall()
                 existing_emails = {_email(row["email"]) for row in rows}
             imported = updated = 0
             for email, password, client_id, refresh_token in parsed:
+                email_key = _email(email)
                 cur = c.execute(
                     """
                     INSERT INTO outlook_mail_accounts(
@@ -753,6 +758,7 @@ class Database:
                       reserved_at, used_at, last_error, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, 'available', 0, 0, '', ?, ?)
                     ON CONFLICT(email) DO UPDATE SET
+                      email=excluded.email,
                       password=excluded.password,
                       client_id=excluded.client_id,
                       refresh_token=excluded.refresh_token,
@@ -765,11 +771,11 @@ class Database:
                     (email, password, client_id, refresh_token, now, now),
                 )
                 if cur.rowcount:
-                    if email in existing_emails:
+                    if email_key in existing_emails:
                         updated += 1
                     else:
                         imported += 1
-                        existing_emails.add(email)
+                        existing_emails.add(email_key)
             total = c.execute("SELECT COUNT(*) FROM outlook_mail_accounts").fetchone()[0]
             available = c.execute("SELECT COUNT(*) FROM outlook_mail_accounts WHERE status='available'").fetchone()[0]
             reserved = c.execute("SELECT COUNT(*) FROM outlook_mail_accounts WHERE status='reserved'").fetchone()[0]
@@ -845,6 +851,24 @@ class Database:
                 (now, _text(reason)[:500], target),
             )
         return bool(cur.rowcount)
+
+    def get_outlook_mail_account(self, email: str) -> dict:
+        target = _email(email)
+        if not target:
+            return {}
+        with self._conn() as c:
+            row = c.execute(
+                """
+                SELECT id, email, password, client_id, refresh_token, status,
+                       reserved_at, used_at, last_error
+                FROM outlook_mail_accounts
+                WHERE lower(email) = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (target,),
+            ).fetchone()
+        return dict(row) if row else {}
 
     def user_count(self) -> int:
         with self._conn() as c:

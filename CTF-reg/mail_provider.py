@@ -410,10 +410,10 @@ class MailProvider:
 
     def _outlook_account_for_email(self, email_addr: str) -> OutlookAccount:
         target = str(email_addr or "").strip().lower()
-        if self._current_outlook and self._current_outlook.email == target:
+        if self._current_outlook and self._current_outlook.email.lower() == target:
             return self._current_outlook
         for acc in self._outlook_accounts:
-            if acc.email == target:
+            if acc.email.lower() == target:
                 self._current_outlook = acc
                 return acc
         if self._outlook_source == "db":
