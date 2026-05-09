@@ -212,6 +212,14 @@ xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal --da
 - [OpenAI CLIP](https://github.com/openai/CLIP) — 启发式 solver 的视觉骨架
 - [gost](https://github.com/go-gost/gost) — SOCKS5 中继
 
+### 代码贡献者
+
+感谢以下朋友贡献代码（按 PR 时间）：
+
+- [@Lium-7768](https://github.com/Lium-7768) — [#12](https://github.com/DanOps-1/Gpt-Agreement-Payment/pull/12) Align GoPay step visibility to hide 06 and 13
+- [@DragonBaiMo](https://github.com/DragonBaiMo) — [#15](https://github.com/DanOps-1/Gpt-Agreement-Payment/pull/15) 算法化 persona 生成器 + 邮箱姓名同源
+- [@laochendeai](https://github.com/laochendeai) — [#21](https://github.com/DanOps-1/Gpt-Agreement-Payment/pull/21) detect blocking challenge pages
+
 ## 社区
 
 | 渠道 | 用途 |
@@ -242,6 +250,13 @@ xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal --da
 | bensema | 0.66 元 |
 | Earth NPC | 0.01 元 |
 | 小水獭 | 0.01 元 |
+| 至上松一 | 6.66 元 |
+| 书忆江南 | 5 元 |
+| A. | 10 元 |
+| 辛昊 | 5 元 |
+| Galaxy-n | 101 元 |
+| 朴朴配送员 | 66 元 |
+| acedia | 9.1 元 |
 
 心意比金额更珍贵，每一份支持都是项目继续维护的动力 🙏
 
