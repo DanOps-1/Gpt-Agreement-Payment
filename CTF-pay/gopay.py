@@ -2059,16 +2059,55 @@ class GoPayCharger:
 
     def _wait_qris_midtrans_terminal(self, qr_info: dict, capture_resp: dict | None = None) -> dict:
         capture_status = self._qris_capture_terminal_status(capture_resp or {})
-        if capture_status.get("ok"):
-            return {"ok": True, "status": capture_status.get("status") or "paid", "source": "gopay_capture", "body": capture_resp or {}}
         response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
+        snap_token = str(qr_info.get("snap_token") or "").strip()
         tx_id = str(response.get("transaction_id") or "").strip()
         order_id = str(response.get("order_id") or "").strip()
+        terminal = {"settlement", "capture", "settled", "success"}
+        if snap_token:
+            url = f"https://app.midtrans.com/snap/v1/transactions/{snap_token}/status"
+            headers = {
+                "Accept": "application/json",
+                "x-source": "snap",
+                "x-source-app-type": "redirection",
+                "x-source-version": "2.3.0",
+                "Referer": f"https://app.midtrans.com/snap/v4/redirection/{snap_token}",
+            }
+            for attempt in range(1, 7):
+                try:
+                    r = self._request_ext(
+                        "get",
+                        url,
+                        headers=headers,
+                        timeout=DEFAULT_TIMEOUT,
+                        retry_label="midtrans snap qris status",
+                    )
+                    data = r.json() if r.text else {}
+                    status = str(
+                        (data or {}).get("transaction_status")
+                        or (data or {}).get("status")
+                        or (data or {}).get("transaction_status_code")
+                        or ""
+                    ).lower()
+                    self.log(
+                        f"[gopay-qris] midtrans snap status attempt={attempt} "
+                        f"http={r.status_code} transaction_status={status or '-'}"
+                    )
+                    if r.status_code == 200 and status in terminal:
+                        return {"ok": True, "status": status, "source": "midtrans_snap_status", "body": data}
+                    if capture_status.get("ok") and r.status_code in (400, 401, 403, 404):
+                        break
+                except Exception as exc:
+                    self.log(f"[gopay-qris] midtrans snap status check failed: {type(exc).__name__}: {str(exc)[:120]}")
+                    if capture_status.get("ok"):
+                        break
+                time.sleep(2)
+        if capture_status.get("ok"):
+            return {"ok": True, "status": capture_status.get("status") or "paid", "source": "gopay_capture", "body": capture_resp or {}}
         candidates = [
             f"https://api.midtrans.com/v2/{tx_id}/status" if tx_id else "",
             f"https://api.midtrans.com/v2/{order_id}/status" if order_id else "",
         ]
-        terminal = {"settlement", "capture", "settled", "success"}
         for attempt in range(1, 7):
             for url in [u for u in candidates if u]:
                 try:
