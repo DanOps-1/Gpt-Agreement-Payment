@@ -316,8 +316,88 @@ class MailProvider:
                 (now, now, int(row["id"])),
             )
             c.execute("COMMIT")
+            self._mark_account_pool_claimed(c, row, now)
         self._current_outlook_db_id = int(row["id"])
         return OutlookAccount(row["email"], row["password"], row["client_id"], row["refresh_token"])
+
+    def _mark_account_pool_claimed(self, c: sqlite3.Connection, row: sqlite3.Row, now: float) -> None:
+        """Best-effort mirror of Outlook reservation into the planning pool."""
+        try:
+            email = str(row["email"] or "").strip().lower()
+            if not email:
+                return
+            existing = c.execute(
+                "SELECT id, pool_status FROM account_pool_items WHERE lower(email)=?",
+                (email,),
+            ).fetchone()
+            if existing:
+                c.execute(
+                    """
+                    UPDATE account_pool_items
+                    SET email_password=COALESCE(NULLIF(email_password, ''), ?),
+                        mail_client_id=COALESCE(NULLIF(mail_client_id, ''), ?),
+                        mail_refresh_token=COALESCE(NULLIF(mail_refresh_token, ''), ?),
+                        email_source=COALESCE(NULLIF(email_source, ''), 'outlook_mail_pool'),
+                        pool_status=CASE
+                          WHEN pool_status IN ('email_unused', 'registration_failed', 'quarantined')
+                          THEN 'in_progress'
+                          ELSE pool_status
+                        END,
+                        source_outlook_mail_id=?,
+                        reserved_at=?,
+                        attempt_count=attempt_count+1,
+                        last_stage='mail_reserved',
+                        last_error='',
+                        updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        str(row["password"] or ""),
+                        str(row["client_id"] or ""),
+                        str(row["refresh_token"] or ""),
+                        int(row["id"]),
+                        now,
+                        now,
+                        int(existing["id"]),
+                    ),
+                )
+                to_status = "in_progress" if existing["pool_status"] in ("email_unused", "registration_failed", "quarantined") else existing["pool_status"]
+                c.execute(
+                    """
+                    INSERT INTO account_pool_events(item_id, ts, from_status, to_status, stage, reason)
+                    VALUES (?, ?, ?, ?, 'mail_reserved', 'Outlook mailbox reserved by registration task')
+                    """,
+                    (int(existing["id"]), now, str(existing["pool_status"] or ""), to_status),
+                )
+                return
+            cur = c.execute(
+                """
+                INSERT INTO account_pool_items(
+                  email, email_password, mail_client_id, mail_refresh_token,
+                  email_source, pool_status, source_outlook_mail_id,
+                  reserved_at, attempt_count, last_stage, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 'outlook_mail_pool', 'in_progress', ?, ?, 1, 'mail_reserved', ?, ?)
+                """,
+                (
+                    email,
+                    str(row["password"] or ""),
+                    str(row["client_id"] or ""),
+                    str(row["refresh_token"] or ""),
+                    int(row["id"]),
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            c.execute(
+                """
+                INSERT INTO account_pool_events(item_id, ts, from_status, to_status, stage, reason)
+                VALUES (?, ?, '', 'in_progress', 'mail_reserved', 'Outlook mailbox reserved by registration task')
+                """,
+                (int(cur.lastrowid), now),
+            )
+        except Exception:
+            pass
 
     def _mark_outlook_db_account(self, status: str, error: str = "") -> None:
         if not self._current_outlook_db_id:

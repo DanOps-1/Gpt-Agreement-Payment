@@ -9,6 +9,7 @@ from ..auth import CurrentUser
 from ..config_health import build_config_health
 from ..config_writer import write_configs
 from ..db import get_db
+from ..account_pool import import_email_lines
 from .. import settings as s
 from .. import gopay_auto_unbind
 
@@ -168,10 +169,16 @@ def import_outlook_mail_pool(req: OutlookMailPoolImportRequest, user: str = Curr
     if not lines:
         raise HTTPException(status_code=400, detail="Outlook 账号内容为空")
     result = get_db().import_outlook_mail_accounts(lines)
+    pool_result = import_email_lines(
+        lines,
+        source="outlook_mail_pool_import",
+        import_batch="outlook_mail_pool",
+    )
     reg_path = _resolve_reg_config_path()
     return {
         "ok": True,
         "result": result,
+        "pool_result": pool_result,
         "path": str(s.DB_PATH),
         "reg_config_path": str(reg_path),
     }

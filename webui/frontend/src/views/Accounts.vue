@@ -6,6 +6,8 @@
         <h1>账号管理</h1>
       </div>
       <div class="top-actions">
+        <TermBtn variant="ghost" @click="router.push('/pool')">账号规划池</TermBtn>
+        <TermBtn variant="ghost" :loading="migratingPool" @click="migrateToPool">迁移到规划池</TermBtn>
         <TermBtn variant="ghost" @click="router.push('/run')">返回运行页</TermBtn>
         <TermBtn variant="ghost" :loading="loading" @click="refreshInventory">刷新</TermBtn>
       </div>
@@ -312,6 +314,7 @@ const router = useRouter();
 const message = useMessage();
 const dialog = useDialog();
 const loading = ref(false);
+const migratingPool = ref(false);
 const inventory = ref<InventoryResponse>({ accounts: [], counts: {} });
 const managerSelectedIds = ref<Set<number>>(new Set());
 const rtCheck = ref<RtCheckResult | null>(null);
@@ -424,6 +427,19 @@ async function refreshInventory() {
     message.error(`加载账号库存失败：${e?.response?.data?.detail || e?.message || e}`);
   } finally {
     loading.value = false;
+  }
+}
+
+async function migrateToPool() {
+  migratingPool.value = true;
+  try {
+    const r = await api.post("/pool/migrate/legacy");
+    const d = r.data || {};
+    message.success(`规划池迁移完成：新增 ${d.created || 0}，更新 ${d.updated || 0}，跳过 ${d.skipped || 0}`);
+  } catch (e: any) {
+    message.error(`迁移到规划池失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    migratingPool.value = false;
   }
 }
 

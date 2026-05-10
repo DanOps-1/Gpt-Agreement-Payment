@@ -149,6 +149,70 @@ CREATE TABLE IF NOT EXISTS outlook_mail_accounts (
 );
 CREATE INDEX IF NOT EXISTS idx_outlook_mail_accounts_status_id
   ON outlook_mail_accounts(status, id);
+
+CREATE TABLE IF NOT EXISTS account_pool_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  email_password TEXT DEFAULT '',
+  mail_client_id TEXT DEFAULT '',
+  mail_refresh_token TEXT DEFAULT '',
+  email_source TEXT DEFAULT '',
+  import_batch TEXT DEFAULT '',
+  chatgpt_email TEXT DEFAULT '' COLLATE NOCASE,
+  account_password TEXT DEFAULT '',
+  session_token TEXT DEFAULT '',
+  access_token TEXT DEFAULT '',
+  id_token TEXT DEFAULT '',
+  device_id TEXT DEFAULT '',
+  csrf_token TEXT DEFAULT '',
+  cookie_header TEXT DEFAULT '',
+  refresh_token TEXT DEFAULT '',
+  account_id TEXT DEFAULT '',
+  team_account_id TEXT DEFAULT '',
+  team_gpt_account_pk TEXT DEFAULT '',
+  invite_permission TEXT DEFAULT '',
+  plan_type TEXT DEFAULT '',
+  payment_status TEXT DEFAULT '',
+  payment_channel TEXT DEFAULT '',
+  payment_session_id TEXT DEFAULT '',
+  email_domain TEXT DEFAULT '',
+  pool_status TEXT NOT NULL DEFAULT 'email_unused',
+  task_id TEXT DEFAULT '',
+  round_id TEXT DEFAULT '',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_stage TEXT DEFAULT '',
+  last_error TEXT DEFAULT '',
+  source_registered_account_id INTEGER DEFAULT 0,
+  source_card_result_id INTEGER DEFAULT 0,
+  source_outlook_mail_id INTEGER DEFAULT 0,
+  reserved_at REAL DEFAULT 0,
+  registered_at REAL DEFAULT 0,
+  activated_at REAL DEFAULT 0,
+  rt_obtained_at REAL DEFAULT 0,
+  failed_at REAL DEFAULT 0,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_account_pool_items_status_updated
+  ON account_pool_items(pool_status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_account_pool_items_round_task
+  ON account_pool_items(round_id, task_id);
+
+CREATE TABLE IF NOT EXISTS account_pool_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL,
+  ts REAL NOT NULL,
+  from_status TEXT DEFAULT '',
+  to_status TEXT NOT NULL,
+  stage TEXT DEFAULT '',
+  reason TEXT DEFAULT '',
+  task_id TEXT DEFAULT '',
+  round_id TEXT DEFAULT '',
+  payload TEXT DEFAULT '',
+  FOREIGN KEY (item_id) REFERENCES account_pool_items(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_account_pool_events_item_ts
+  ON account_pool_events(item_id, ts DESC);
 """
 
 
@@ -233,6 +297,79 @@ class Database:
         )
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_outlook_mail_accounts_status_id ON outlook_mail_accounts(status, id)"
+        )
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS account_pool_items (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+              email_password TEXT DEFAULT '',
+              mail_client_id TEXT DEFAULT '',
+              mail_refresh_token TEXT DEFAULT '',
+              email_source TEXT DEFAULT '',
+              import_batch TEXT DEFAULT '',
+              chatgpt_email TEXT DEFAULT '' COLLATE NOCASE,
+              account_password TEXT DEFAULT '',
+              session_token TEXT DEFAULT '',
+              access_token TEXT DEFAULT '',
+              id_token TEXT DEFAULT '',
+              device_id TEXT DEFAULT '',
+              csrf_token TEXT DEFAULT '',
+              cookie_header TEXT DEFAULT '',
+              refresh_token TEXT DEFAULT '',
+              account_id TEXT DEFAULT '',
+              team_account_id TEXT DEFAULT '',
+              team_gpt_account_pk TEXT DEFAULT '',
+              invite_permission TEXT DEFAULT '',
+              plan_type TEXT DEFAULT '',
+              payment_status TEXT DEFAULT '',
+              payment_channel TEXT DEFAULT '',
+              payment_session_id TEXT DEFAULT '',
+              email_domain TEXT DEFAULT '',
+              pool_status TEXT NOT NULL DEFAULT 'email_unused',
+              task_id TEXT DEFAULT '',
+              round_id TEXT DEFAULT '',
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              last_stage TEXT DEFAULT '',
+              last_error TEXT DEFAULT '',
+              source_registered_account_id INTEGER DEFAULT 0,
+              source_card_result_id INTEGER DEFAULT 0,
+              source_outlook_mail_id INTEGER DEFAULT 0,
+              reserved_at REAL DEFAULT 0,
+              registered_at REAL DEFAULT 0,
+              activated_at REAL DEFAULT 0,
+              rt_obtained_at REAL DEFAULT 0,
+              failed_at REAL DEFAULT 0,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL
+            )
+            """
+        )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_account_pool_items_status_updated ON account_pool_items(pool_status, updated_at DESC)"
+        )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_account_pool_items_round_task ON account_pool_items(round_id, task_id)"
+        )
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS account_pool_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              item_id INTEGER NOT NULL,
+              ts REAL NOT NULL,
+              from_status TEXT DEFAULT '',
+              to_status TEXT NOT NULL,
+              stage TEXT DEFAULT '',
+              reason TEXT DEFAULT '',
+              task_id TEXT DEFAULT '',
+              round_id TEXT DEFAULT '',
+              payload TEXT DEFAULT '',
+              FOREIGN KEY (item_id) REFERENCES account_pool_items(id) ON DELETE CASCADE
+            )
+            """
+        )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_account_pool_events_item_ts ON account_pool_events(item_id, ts DESC)"
         )
 
     # ──────────────────────────────────────────
@@ -610,7 +747,7 @@ class Database:
         with self._conn() as c:
             rows = c.execute(
                 """
-                SELECT ts, status, chatgpt_email, email, session_id, channel, entity,
+                SELECT id, ts, status, chatgpt_email, email, session_id, channel, entity,
                        config, error, refresh_token, team_account_id,
                        invite_permission, team_gpt_account_pk, email_domain
                 FROM card_results

@@ -39,6 +39,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from webui.backend.db import get_db
+from webui.backend.account_pool import (
+    get_rotation_config,
+    import_email_lines,
+    pending_activation_count,
+    claim_pending_activation_account,
+    transition_item_by_email,
+)
 from webui.backend.sub2api_client import looks_like_api_key, resolve_admin_jwt
 
 ROOT = Path(__file__).resolve().parent
@@ -775,6 +782,11 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
                         _mark_outlook_mail_account_failed(failed_email, fail_reason or "registration_timeout")
                     else:
                         _release_outlook_mail_account(failed_email, "registration_timeout")
+                    _pool_registration_failed(
+                        failed_email,
+                        fail_reason or "registration_timeout",
+                        task_id=log_label,
+                    )
                 raise RegistrationError("注册超时")
     finally:
         proc.wait()
@@ -788,6 +800,11 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
                 _mark_outlook_mail_account_failed(failed_email, fail_reason or "registration_failed")
             else:
                 _release_outlook_mail_account(failed_email, "registration_failed")
+            _pool_registration_failed(
+                failed_email,
+                fail_reason or "registration_failed",
+                task_id=log_label,
+            )
         raise RegistrationError(f"注册失败 (exit={proc.returncode}): {last_lines}")
 
     if result_json is None:
@@ -798,6 +815,11 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
                 _mark_outlook_mail_account_failed(failed_email, fail_reason or "registration_no_credentials")
             else:
                 _release_outlook_mail_account(failed_email, "registration_no_credentials")
+            _pool_registration_failed(
+                failed_email,
+                fail_reason or "registration_no_credentials",
+                task_id=log_label,
+            )
         raise RegistrationError("注册完成但未获取到凭证")
 
     email = result_json.get("email", "?")
@@ -806,6 +828,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
         entry = dict(result_json)
         entry["ts"] = datetime.now(timezone.utc).isoformat()
         get_db().add_registered_account(entry)
+        _pool_registration_success(entry, task_id=log_label)
     except Exception as e:
         print(f"[register] 保存凭证失败: {e}")
     return result_json
@@ -1140,6 +1163,14 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
         except RegistrationError as e:
             record["registration"] = {"status": "error", "error": str(e)[:200]}
             record["payment"] = {"status": "skipped"}
+            failed_email = _extract_registered_email_from_logs([str(e)])
+            if failed_email:
+                _pool_registration_failed(
+                    failed_email,
+                    str(e)[:200],
+                    task_id=log_label,
+                    email_domain=picked_domain,
+                )
             _append_result(record)
             raise
         reg_acc = _find_latest_registered_account_for_email(reg.get("email", ""))
@@ -1168,6 +1199,14 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
             }
         except PaymentError as e:
             record["payment"] = {"status": "error", "email": reg.get("email", ""), "error": str(e)[:200]}
+            _pool_payment_result(
+                reg,
+                {"status": "error", "raw": {}, "error": str(e)[:200]},
+                card_cfg or {},
+                task_id=log_label,
+                email_domain=picked_domain,
+                reason=str(e)[:200],
+            )
             _release_outlook_mail_account(reg.get("email", ""), "payment_error")
             if getattr(e, "code", "") == "gopay_account_unavailable":
                 record["account_removed"] = True
@@ -1180,6 +1219,13 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
 
         # Step 3: 支付成功 → gpt-team 导入 + invite 探测
         pay_status = pay_result.get("status", "unknown")
+        _pool_payment_result(
+            reg,
+            pay_result,
+            card_cfg or {},
+            task_id=log_label,
+            email_domain=picked_domain,
+        )
         if pay_status != "succeeded":
             _release_outlook_mail_account(reg.get("email", ""), f"payment_state={pay_status}")
         if pay_status == "succeeded" and team_client:
@@ -1265,6 +1311,9 @@ def singlexn(card_config_path, count, delay=30, **kwargs):
     gopay_otp_file = kwargs.get("gopay_otp_file", "")
     cardw_config_path = kwargs.get("cardw_config_path")
     push_server = bool(kwargs.get("push_server", False))
+    rotation_cfg = get_rotation_config()
+    rotation_enabled = bool(rotation_cfg.get("enabled")) and not is_register_only and not is_pay_only
+    rotation_interval = int(rotation_cfg.get("interval") or 100)
 
     print(f"\n[singlexn] === single x {count} 串行 ===")
     results = []
@@ -1310,6 +1359,15 @@ def singlexn(card_config_path, count, delay=30, **kwargs):
             pass
         if i < count - 1 and delay > 0:
             time.sleep(delay)
+        if rotation_enabled and (i + 1) % rotation_interval == 0:
+            _run_pool_rotation(
+                card_config_path,
+                use_paypal=use_paypal,
+                use_gopay=use_gopay,
+                gopay_otp_file=gopay_otp_file,
+                push_server=push_server,
+                label=f"singlexn-{i + 1}",
+            )
     print(f"\n[singlexn] 完成: {ok_count}/{count} 成功")
     return results
 
@@ -1476,6 +1534,9 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
     use_gopay = bool(kwargs.pop("use_gopay", False))
     gopay_otp_file = kwargs.pop("gopay_otp_file", "")
     push_server = bool(kwargs.get("push_server", False))
+    rotation_cfg = get_rotation_config()
+    rotation_enabled = bool(rotation_cfg.get("enabled")) and not is_register_only and not is_pay_only
+    rotation_interval = int(rotation_cfg.get("interval") or 100)
     if use_gopay:
         use_paypal = False
     kwargs["use_paypal"] = use_paypal
@@ -1508,6 +1569,15 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
             print(f"[batch] 进度 {i+1}/{count}  累计 ok={ok_count}")
             if i < count - 1 and delay > 0:
                 time.sleep(delay)
+            if rotation_enabled and (i + 1) % rotation_interval == 0:
+                _run_pool_rotation(
+                    card_config_path,
+                    use_paypal=use_paypal,
+                    use_gopay=use_gopay,
+                    gopay_otp_file=gopay_otp_file,
+                    push_server=push_server,
+                    label=f"batch-{i + 1}",
+                )
         print(f"\n[batch] register-only 完成: {ok_count}/{count} 成功")
         return results
 
@@ -1673,6 +1743,15 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
             print(f"  {mark} {acc['email']} → {status}  invite={perm}  (累计 {ok_so_far}/{len(results)})")
             if i < len(reg_ok) - 1:
                 time.sleep(delay)
+            if rotation_enabled and (i + 1) % rotation_interval == 0:
+                _run_pool_rotation(
+                    card_config_path,
+                    use_paypal=use_paypal,
+                    use_gopay=use_gopay,
+                    gopay_otp_file=gopay_otp_file,
+                    push_server=push_server,
+                    label=f"batch-paypal-stage-{i + 1}",
+                )
 
     elif workers <= 1:
         # 全串行
@@ -1702,6 +1781,17 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
             for future in as_completed(futures):
                 for r in future.result():
                     results[int(r.get("batch_index", 0))] = r
+        if rotation_enabled:
+            completed = sum(1 for r in results if r)
+            if completed and completed % rotation_interval == 0:
+                _run_pool_rotation(
+                    card_config_path,
+                    use_paypal=use_paypal,
+                    use_gopay=use_gopay,
+                    gopay_otp_file=gopay_otp_file,
+                    push_server=push_server,
+                    label=f"batch-parallel-{completed}",
+                )
 
     # 汇总
     print(f"\n{'='*60}")
@@ -1738,6 +1828,136 @@ def _append_result(record):
         get_db().add_pipeline_result(record)
     except Exception:
         pass
+
+
+def _pool_plan_type(card_cfg: dict | None = None) -> str:
+    card_cfg = card_cfg or {}
+    plan_cfg = ((card_cfg.get("fresh_checkout") or {}).get("plan") or {})
+    plan_name = str(plan_cfg.get("plan_name") or "").lower()
+    plan_type = str(plan_cfg.get("plan_type") or "").lower()
+    if "team" in plan_name or plan_type == "team":
+        return "team"
+    if "plus" in plan_name or plan_type == "plus":
+        return "plus"
+    return ""
+
+
+def _pool_update(email: str, to_status: str, stage: str, reason: str = "",
+                 payload: dict | None = None, **fields) -> None:
+    try:
+        transition_item_by_email(
+            email,
+            to_status=to_status,
+            stage=stage,
+            reason=reason,
+            payload=payload,
+            **fields,
+        )
+    except Exception as e:
+        print(f"[pool] 更新规划池失败: {email or '-'} stage={stage}: {e}")
+
+
+def _pool_registration_success(reg: dict, *, task_id: str = "", round_id: str = "",
+                               email_domain: str = "") -> None:
+    email = _norm_email(reg.get("email", ""))
+    if not email:
+        return
+    _pool_update(
+        email,
+        "registered_pending_plus",
+        "registration_success",
+        "registered account waiting for Plus activation",
+        payload={"email": email},
+        email=email,
+        chatgpt_email=email,
+        account_password=reg.get("password", ""),
+        session_token=reg.get("session_token", ""),
+        access_token=reg.get("access_token", ""),
+        id_token=reg.get("id_token", ""),
+        device_id=reg.get("device_id", ""),
+        csrf_token=reg.get("csrf_token", ""),
+        cookie_header=reg.get("cookie_header", ""),
+        refresh_token=reg.get("refresh_token", ""),
+        task_id=task_id,
+        round_id=round_id,
+        email_domain=email_domain,
+    )
+
+
+def _pool_registration_failed(email: str, reason: str, *, task_id: str = "", round_id: str = "",
+                              email_domain: str = "") -> None:
+    email = _norm_email(email)
+    if not email:
+        return
+    _pool_update(
+        email,
+        "registration_failed",
+        "registration_failed",
+        reason,
+        email=email,
+        task_id=task_id,
+        round_id=round_id,
+        email_domain=email_domain,
+    )
+
+
+def _pool_payment_result(reg: dict, pay_result: dict, card_cfg: dict | None = None,
+                         *, task_id: str = "", round_id: str = "", email_domain: str = "",
+                         reason: str = "") -> None:
+    email = _norm_email(reg.get("email", ""))
+    if not email:
+        return
+    raw = pay_result.get("raw") if isinstance(pay_result.get("raw"), dict) else {}
+    status = str(pay_result.get("status") or raw.get("state") or "unknown")
+    session_id = str(raw.get("session_id") or "")
+    rt = (
+        str(reg.get("refresh_token") or "").strip()
+        or _find_latest_refresh_token_for_email(email, session_id)
+        or _find_latest_refresh_token_for_email(email)
+    )
+    if status == "succeeded":
+        to_status = "plus_with_rt" if rt else "plus_missing_rt"
+        stage = "payment_succeeded_with_rt" if rt else "payment_succeeded_missing_rt"
+        reason = reason or ("Plus activated and RT obtained" if rt else "Plus activated but RT missing")
+    else:
+        to_status = "registered_pending_plus"
+        stage = "payment_not_succeeded"
+        reason = reason or f"payment_status={status}"
+    _pool_update(
+        email,
+        to_status,
+        stage,
+        reason,
+        payload={"payment": pay_result},
+        email=email,
+        chatgpt_email=email,
+        refresh_token=rt,
+        plan_type=_pool_plan_type(card_cfg),
+        payment_status=status,
+        payment_channel=str(raw.get("channel") or ""),
+        payment_session_id=session_id,
+        email_domain=email_domain,
+        task_id=task_id,
+        round_id=round_id,
+    )
+
+
+def _pool_rt_result(email: str, refresh_token: str, *, stage: str = "rt_obtained",
+                    reason: str = "", session_id: str = "", card_cfg: dict | None = None) -> None:
+    email = _norm_email(email)
+    if not email:
+        return
+    _pool_update(
+        email,
+        "plus_with_rt" if refresh_token else "plus_missing_rt",
+        stage,
+        reason or ("RT obtained" if refresh_token else "RT missing"),
+        email=email,
+        chatgpt_email=email,
+        refresh_token=refresh_token,
+        plan_type=_pool_plan_type(card_cfg),
+        payment_session_id=session_id,
+    )
 
 
 def _release_outlook_mail_account(email: str, reason: str) -> None:
@@ -1877,9 +2097,76 @@ def _release_pay_only_account_claim(account: dict | None) -> None:
         _PAY_ONLY_IN_FLIGHT_EMAILS.discard(email)
 
 
+def _run_pool_rotation(card_config_path, *, use_paypal=False, use_gopay=False,
+                       gopay_otp_file=None, push_server=False,
+                       max_items: int | None = None, label: str = "rotation") -> list:
+    pending = pending_activation_count()
+    if pending <= 0:
+        print(f"[pool-rotation] 待激活池为空，跳过轮转")
+        return []
+    limit = pending if max_items is None else max(0, min(int(max_items), pending))
+    print(f"\n[pool-rotation] 开始处理待激活池：pending={pending} limit={limit}")
+    results = []
+    for i in range(limit):
+        item = claim_pending_activation_account(
+            task_id=f"{label}:{i + 1}",
+            round_id=label,
+        )
+        if not item:
+            print("[pool-rotation] 待激活池已清空")
+            break
+        account = _registered_account_from_pool_item(item)
+        email = _norm_email(account.get("email"))
+        if not email or not (account.get("session_token") or account.get("access_token")):
+            _pool_update(
+                email or item.get("email", ""),
+                "registered_pending_plus",
+                "rotation_skip_no_auth",
+                "missing session_token/access_token",
+            )
+            continue
+        print(f"[pool-rotation] [{i + 1}/{limit}] 处理待激活账号: {email}")
+        try:
+            result = pay_only(
+                card_config_path,
+                use_paypal=use_paypal,
+                use_gopay=use_gopay,
+                gopay_otp_file=gopay_otp_file,
+                push_server=push_server,
+                log_label=f"{label}:{i + 1}",
+                account_override=account,
+                prefer_recent=False,
+            )
+        except Exception as e:
+            result = {"status": "error", "email": email, "error": str(e)[:200]}
+            print(f"[pool-rotation] {email} 异常: {e}")
+        results.append(result)
+    left = pending_activation_count()
+    print(f"[pool-rotation] 完成：processed={len(results)} left={left}")
+    return results
+
+
+def _registered_account_from_pool_item(item: dict) -> dict:
+    if not item:
+        return {}
+    return {
+        "id": int(item.get("source_registered_account_id") or 0),
+        "email": item.get("chatgpt_email") or item.get("email") or "",
+        "password": item.get("account_password") or item.get("email_password") or "",
+        "session_token": item.get("session_token") or "",
+        "access_token": item.get("access_token") or "",
+        "id_token": item.get("id_token") or "",
+        "device_id": item.get("device_id") or "",
+        "csrf_token": item.get("csrf_token") or "",
+        "cookie_header": item.get("cookie_header") or "",
+        "refresh_token": item.get("refresh_token") or "",
+        "_pool_item_id": item.get("id"),
+    }
+
+
 def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
              gopay_otp_file=None, timeout_pay=600, prefer_recent=True,
-             push_server=False, log_label=""):
+             push_server=False, log_label="", account_override: dict | None = None):
     """Retry payment only.
 
     Default behavior is now:
@@ -1891,7 +2178,7 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
     This preserves the old config-token path while preventing freshly
     registered-but-unpaid accounts from being wasted.
     """
-    account = _claim_recent_registered_account_for_pay_only() if prefer_recent else None
+    account = dict(account_override or {}) or (_claim_recent_registered_account_for_pay_only() if prefer_recent else None)
     email = _norm_email(account.get("email")) if account else ""
     try:
         card_cfg = _read_card_cfg(card_config_path)
@@ -1950,6 +2237,14 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         raw = result.get("raw") if isinstance(result.get("raw"), dict) else {}
         pay_email = _norm_email(email or raw.get("chatgpt_email") or raw.get("email"))
         record["payment"] = {"status": status, "email": pay_email}
+        if pay_email:
+            _pool_payment_result(
+                account or {"email": pay_email},
+                result,
+                card_cfg or {},
+                task_id=log_label,
+                email_domain=record.get("domain", ""),
+            )
         cpa_cfg = _cpa_cfg_for_card_payment(card_cfg or {})
         if status == "succeeded" and cpa_cfg.get("enabled"):
             try:
@@ -1988,6 +2283,15 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         return result
     except PaymentError as e:
         record["payment"] = {"status": "error", "email": email, "error": str(e)[:200]}
+        if email:
+            _pool_payment_result(
+                account or {"email": email},
+                {"status": "error", "raw": {}, "error": str(e)[:200]},
+                card_cfg or {},
+                task_id=log_label,
+                email_domain=record.get("domain", ""),
+                reason=str(e)[:200],
+            )
         if getattr(e, "code", "") == "gopay_account_unavailable" and account:
             record["account_removed"] = True
             _delete_registered_account_for_payment_failure(
@@ -3448,6 +3752,14 @@ def _ensure_account_refresh_token_for_server_push(email: str, card_cfg: dict, ac
     except Exception as e:
         print(f"[push-server] {email} 保存 RT 失败: {e}")
     _set_account_oauth_status(email, "succeeded")
+    _pool_rt_result(
+        email,
+        rt,
+        stage="auto_server_push_rt",
+        reason="RT obtained for server push",
+        session_id=str(account.get("device_id") or ""),
+        card_cfg=card_cfg or {},
+    )
     return rt, account, "ok"
 
 
@@ -4229,6 +4541,19 @@ def _team_probe_after_payment(pay_record, team_client, pool, domain):
         "team_gpt_account_pk": probe.get("account_id"),
         "email_domain": domain,
     })
+    _pool_update(
+        email,
+        "plus_with_rt",
+        "team_probe",
+        f"invite={st}",
+        payload=probe,
+        chatgpt_email=email,
+        refresh_token=rt,
+        account_id=probe.get("account_id") or "",
+        team_gpt_account_pk=probe.get("account_id") or "",
+        invite_permission=st,
+        email_domain=domain,
+    )
     # 更新域池
     if pool and domain:
         pool.mark_result(domain, st if st in ("ok", "no_permission") else "unknown")
@@ -4418,6 +4743,14 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
             }
             try:
                 get_db().add_card_result(res_entry)
+                _pool_rt_result(
+                    mem_email,
+                    rt,
+                    stage="self_dealer_member",
+                    reason="self dealer member received RT",
+                    session_id=sid,
+                    card_cfg=card_cfg or {},
+                )
             except Exception as e:
                 print(f"[self-dealer] 写支付记录失败: {e}")
 
@@ -4537,6 +4870,14 @@ def free_register_loop(card_config_path, cardw_config_path=None, count: int = 0)
             if rt:
                 print(f"[free] [{iteration}] register {email} → succeeded rt_len={len(rt)}")
                 _set_account_oauth_status(email, "succeeded")
+                _pool_rt_result(
+                    email,
+                    rt,
+                    stage="free_register_rt",
+                    reason="free register RT obtained",
+                    session_id=sid,
+                    card_cfg=card_cfg or {},
+                )
                 if cpa_cfg.get("enabled"):
                     cpa_st = _cpa_import_after_team(
                         email, sid, cpa_cfg, refresh_token=rt, is_free=True,
@@ -4668,6 +5009,14 @@ def free_backfill_rt_loop(card_config_path, cardw_config_path=None, account_ids=
             except Exception as e:
                 print(f"[free] [{i}/{len(todo)}] save rt failed: {e}")
             _set_account_oauth_status(email, "succeeded")
+            _pool_rt_result(
+                email,
+                rt,
+                stage="free_backfill_rt",
+                reason="manual/free RT backfill succeeded",
+                session_id=sid,
+                card_cfg=card_cfg or {},
+            )
             if cpa_cfg.get("enabled"):
                 cpa_st = _cpa_import_after_team(
                     email, sid, cpa_cfg, refresh_token=rt, is_free=True,
