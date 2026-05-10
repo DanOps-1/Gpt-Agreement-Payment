@@ -1627,6 +1627,14 @@ class GoPayCharger:
             return "", "empty+body-md5"
         return body_text, "body"
 
+    def _qris_debug_logs(self) -> bool:
+        qris_cfg = self._qris_cfg()
+        return _truthy_cfg(
+            qris_cfg.get("debug_logs")
+            or self.gopay_cfg.get("qris_debug_logs")
+            or self.gopay_cfg.get("debug_qris")
+        )
+
     def _qris_signed_headers(
         self,
         method: str,
@@ -1673,28 +1681,30 @@ class GoPayCharger:
             sign_path = f"{sign_path}?{parsed.query}"
         body_for_signature, body_signature_source = self._qris_body_for_signature(method, sign_path, body, body_text)
         headers = self._qris_signed_headers(method, url, body_text, body_for_signature=body_for_signature)
-        self.log("[gopay-qris] === request start ===")
-        self.log(f"[gopay-qris] method={method.upper()} url={url}")
-        self.log(f"[gopay-qris] headers={_json_for_log(headers)}")
-        self.log(
-            "[gopay-qris] x-e1 body_signature_source="
-            f"{body_signature_source} "
-            f"signature_len={len(body_for_signature.encode('utf-8'))}"
-        )
-        xe1 = _header_value(headers, "x-e1")
-        try:
-            nonce = xe1.split(":", 2)[1] if xe1 else ""
-            marker = nonce[96:128] if len(nonce) == 160 else ""
-            zero_segment = len(nonce) == 160 and nonce[64:96] == ("0" * 32)
+        debug_logs = self._qris_debug_logs()
+        if debug_logs:
+            self.log("[gopay-qris] === request start ===")
+            self.log(f"[gopay-qris] method={method.upper()} url={url}")
+            self.log(f"[gopay-qris] headers={_json_for_log(headers)}")
             self.log(
-                "[gopay-qris] x-e1 nonce_shape="
-                f"zero={zero_segment} "
-                f"marker={marker or '-'}"
+                "[gopay-qris] x-e1 body_signature_source="
+                f"{body_signature_source} "
+                f"signature_len={len(body_for_signature.encode('utf-8'))}"
             )
-        except Exception:
-            pass
-        self.log(f"[gopay-qris] body={body_text if body_text else ''}")
-        self.log("[gopay-qris] === request end ===")
+            xe1 = _header_value(headers, "x-e1")
+            try:
+                nonce = xe1.split(":", 2)[1] if xe1 else ""
+                marker = nonce[96:128] if len(nonce) == 160 else ""
+                zero_segment = len(nonce) == 160 and nonce[64:96] == ("0" * 32)
+                self.log(
+                    "[gopay-qris] x-e1 nonce_shape="
+                    f"zero={zero_segment} "
+                    f"marker={marker or '-'}"
+                )
+            except Exception:
+                pass
+            self.log(f"[gopay-qris] body={body_text if body_text else ''}")
+            self.log("[gopay-qris] === request end ===")
         r = self._request_ext(
             method,
             url,
@@ -1708,11 +1718,15 @@ class GoPayCharger:
             data = r.json()
         except Exception:
             data = {}
-        self.log(
-            f"[gopay-qris] response {method.upper()} {urlsplit(url).path} "
-            f"status={r.status_code} keys={','.join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__} "
-            f"body={raw_text[:500]!r}"
-        )
+        response_keys = ",".join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__
+        if debug_logs or r.status_code >= 400:
+            self.log(
+                f"[gopay-qris] response {method.upper()} {urlsplit(url).path} "
+                f"status={r.status_code} keys={response_keys} "
+                f"body={raw_text[:500]!r}"
+            )
+        else:
+            self.log(f"[gopay-qris] {method.upper()} {urlsplit(url).path} -> {r.status_code}")
         if allow_pin_challenge and r.status_code >= 400 and self._qris_has_pin_challenge(data):
             self.log(f"[gopay-qris] response {method.upper()} {urlsplit(url).path} returned PIN challenge status={r.status_code}")
             return data
@@ -1775,6 +1789,60 @@ class GoPayCharger:
         ).strip().lower()
         return status in ("success", "succeeded", "capture", "captured", "completed", "paid")
 
+    def _qris_pin_token(self, challenge_id: str, client_id: str) -> str:
+        self._qris_request("GET", f"/api/v2/challenges/{challenge_id}/pin-page")
+        pin_resp = self._qris_request("POST", "/api/v1/users/pin/tokens", {
+            "pin": self.pin,
+            "client_id": client_id,
+            "challenge_id": challenge_id,
+        })
+        pin_data = pin_resp.get("data") if isinstance(pin_resp.get("data"), dict) else {}
+        pin_token = str(pin_data.get("token") or pin_resp.get("token") or "")
+        if not pin_token:
+            raise GoPayError(f"qris pin token missing: {json.dumps(pin_resp, ensure_ascii=False)[:500]}")
+        return pin_token
+
+    def _qris_capture_with_pin_loop(self, payment_id: str, capture_body: dict) -> dict:
+        max_attempts = max(1, int(self.gopay_cfg.get("qris_capture_pin_attempts") or 3))
+        current_body = dict(capture_body)
+        last_resp: dict = {}
+        for attempt in range(1, max_attempts + 1):
+            resp = self._qris_request(
+                "PATCH",
+                f"/v3/payments/{payment_id}/capture",
+                current_body,
+                allow_pin_challenge=True,
+            )
+            last_resp = resp
+            if self._qris_capture_succeeded(resp):
+                self.log(f"[gopay-qris] capture succeeded attempt={attempt}/{max_attempts}")
+                return resp
+            if not self._qris_has_pin_challenge(resp):
+                raise GoPayError(
+                    "qris capture did not succeed: "
+                    + self._qris_error_summary(resp)
+                    + f" body={json.dumps(resp, ensure_ascii=False)[:600]}"
+                )
+
+            capture_data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
+            challenge = (((capture_data.get("challenge") or {}).get("action") or {}).get("value") or {})
+            challenge_id = str(challenge.get("challenge_id") or "")
+            challenge_client_id = str(challenge.get("client_id") or "")
+            self.log(f"[gopay-qris] capture requires PIN attempt={attempt}/{max_attempts} challenge_id={challenge_id[:8]}...")
+            pin_token = self._qris_pin_token(challenge_id, challenge_client_id)
+            current_body = dict(current_body)
+            current_body["challenge"] = {
+                "type": "GOPAY_PIN_CHALLENGE",
+                "token": pin_token,
+                "challenge_id": challenge_id,
+            }
+
+        raise GoPayError(
+            "qris capture PIN attempts exhausted: "
+            + self._qris_error_summary(last_resp)
+            + f" body={json.dumps(last_resp, ensure_ascii=False)[:600]}"
+        )
+
     def _follow_qris_finish_redirect(self, qr_info: dict) -> None:
         response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
         finish_url = str(
@@ -1800,6 +1868,35 @@ class GoPayCharger:
             )
         except Exception as exc:
             self.log(f"[gopay-qris] finish redirect failed: {type(exc).__name__}: {str(exc)[:160]}")
+
+    def _wait_qris_midtrans_terminal(self, qr_info: dict) -> dict:
+        response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
+        tx_id = str(response.get("transaction_id") or "").strip()
+        order_id = str(response.get("order_id") or "").strip()
+        candidates = [
+            f"https://api.midtrans.com/v2/{tx_id}/status" if tx_id else "",
+            f"https://api.midtrans.com/v2/{order_id}/status" if order_id else "",
+        ]
+        terminal = {"settlement", "capture", "settled", "success"}
+        for attempt in range(1, 7):
+            for url in [u for u in candidates if u]:
+                try:
+                    r = self._request_ext(
+                        "get",
+                        url,
+                        headers=self._midtrans_basic_auth(),
+                        timeout=DEFAULT_TIMEOUT,
+                        retry_label="midtrans qris status",
+                    )
+                    data = r.json() if r.text else {}
+                    status = str((data or {}).get("transaction_status") or (data or {}).get("status") or "").lower()
+                    self.log(f"[gopay-qris] midtrans status attempt={attempt} http={r.status_code} transaction_status={status or '-'}")
+                    if r.status_code == 200 and status in terminal:
+                        return {"ok": True, "status": status, "body": data}
+                except Exception as exc:
+                    self.log(f"[gopay-qris] midtrans status check failed: {type(exc).__name__}: {str(exc)[:120]}")
+            time.sleep(2)
+        return {"ok": False, "status": "unknown"}
 
     def _qris_explore(self, qris: str) -> dict:
         retry_limit = max(1, int(self.gopay_cfg.get("qris_explore_retries") or QRIS_EXPLORE_RETRY_LIMIT))
@@ -1913,44 +2010,9 @@ class GoPayCharger:
             "checksum": checksum,
             "order_signature": explore.get("order_signature", {}),
         }
-        capture_resp = self._qris_request(
-            "PATCH",
-            f"/v3/payments/{payment_id}/capture",
-            capture_body,
-            allow_pin_challenge=True,
-        )
-        capture_data = capture_resp.get("data") if isinstance(capture_resp.get("data"), dict) else {}
-        challenge = (((capture_data.get("challenge") or {}).get("action") or {}).get("value") or {})
-        challenge_id = str(challenge.get("challenge_id") or "")
-        challenge_client_id = str(challenge.get("client_id") or "")
-        if not challenge_id or not challenge_client_id:
-            raise GoPayError(f"qris capture missing PIN challenge: {json.dumps(capture_resp, ensure_ascii=False)[:500]}")
-        self.log(f"[gopay-qris] capture requires PIN challenge_id={challenge_id[:8]}...")
-
-        self._qris_request("GET", f"/api/v2/challenges/{challenge_id}/pin-page")
-        pin_resp = self._qris_request("POST", "/api/v1/users/pin/tokens", {
-            "pin": self.pin,
-            "client_id": challenge_client_id,
-            "challenge_id": challenge_id,
-        })
-        pin_data = pin_resp.get("data") if isinstance(pin_resp.get("data"), dict) else {}
-        pin_token = str(pin_data.get("token") or pin_resp.get("token") or "")
-        if not pin_token:
-            raise GoPayError(f"qris pin token missing: {json.dumps(pin_resp, ensure_ascii=False)[:500]}")
-
-        capture_body["challenge"] = {
-            "type": "GOPAY_PIN_CHALLENGE",
-            "token": pin_token,
-            "challenge_id": challenge_id,
-        }
-        final_resp = self._qris_request("PATCH", f"/v3/payments/{payment_id}/capture", capture_body)
-        if not self._qris_capture_succeeded(final_resp):
-            raise GoPayError(
-                "qris final capture did not succeed: "
-                + self._qris_error_summary(final_resp)
-                + f" body={json.dumps(final_resp, ensure_ascii=False)[:600]}"
-            )
+        final_resp = self._qris_capture_with_pin_loop(payment_id, capture_body)
         self.log(f"[gopay-qris] final capture ok payment_id={payment_id}")
+        midtrans_status = self._wait_qris_midtrans_terminal(qr_info)
         self._follow_qris_finish_redirect(qr_info)
         return {
             "payment_id": payment_id,
@@ -1958,6 +2020,7 @@ class GoPayCharger:
             "amount": amount_value,
             "currency": amount_currency,
             "capture": final_resp,
+            "midtrans_status": midtrans_status,
             "qr_charge": qr_info,
         }
 
@@ -2054,6 +2117,34 @@ class GoPayCharger:
             time.sleep(2)
         return {"state": "verify_timeout", "cs_id": cs_id, "verify_http_200_seen": saw_http_200}
 
+    def _chatgpt_accounts_check(self) -> dict:
+        try:
+            offset_min = -int(round((time.timezone if time.localtime().tm_isdst == 0 else time.altzone) / 60))
+        except Exception:
+            offset_min = 0
+        try:
+            r = self.cs.get(
+                "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27",
+                params={"timezone_offset_min": offset_min},
+                headers={"accept": "application/json", "origin": "https://chatgpt.com"},
+                timeout=DEFAULT_TIMEOUT,
+            )
+            data = r.json() if r.text else {}
+            active_hint = ""
+            blob = json.dumps(data, ensure_ascii=False).lower() if isinstance(data, dict) else ""
+            if "plus" in blob or "paid" in blob or "active" in blob:
+                active_hint = "possible_active"
+            self.log(f"[gopay] accounts/check status={r.status_code} active_hint={active_hint or '-'}")
+            return {
+                "status_code": r.status_code,
+                "active_hint": active_hint,
+                "body_keys": sorted(data.keys()) if isinstance(data, dict) else [],
+                "body": data if isinstance(data, dict) else {},
+            }
+        except Exception as exc:
+            self.log(f"[gopay] accounts/check failed: {type(exc).__name__}: {str(exc)[:160]}")
+            return {"error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
     # ───── Top-level driver ─────
 
     def run(self, stripe_pk: str, billing: Optional[dict] = None) -> dict:
@@ -2112,6 +2203,7 @@ class GoPayCharger:
             result = self._chatgpt_verify(cs_id, timeout_s=self.qr_wait_timeout)
         else:
             result = {"state": "succeeded", "cs_id": cs_id}
+        accounts_check = self._chatgpt_accounts_check() if cs_id else {}
         result.update({
             "snap_token": snap_token,
             "qr_payload_type": kind,
@@ -2127,6 +2219,7 @@ class GoPayCharger:
             "qr_order_id": order_id,
             "qr_transaction_id": transaction_id,
             "qris_payment": qris_result,
+            "accounts_check": accounts_check,
         })
         return result
 

@@ -210,6 +210,10 @@ def test_full_flow_succeeds():
         "https://chatgpt.com/checkout/verify",
         json={"state": "verified"},
     )
+    responses.get(
+        "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27",
+        json={"account": {"planType": "plus", "isActive": True}},
+    )
 
     charger = build_charger()
     result = charger.run(stripe_pk=STRIPE_PK)
@@ -753,26 +757,62 @@ def test_qris_request_returns_pin_challenge_on_461(monkeypatch):
     assert challenge["client_id"] == "client-id"
 
 
-def test_qris_final_capture_rejects_second_pin_challenge(monkeypatch):
+def test_qris_capture_pin_loop_reuses_461_challenge_until_success(monkeypatch):
     charger = build_charger()
-    final_resp = {
-        "data": {
-            "challenge": {
-                "action": {
-                    "type": "GOPAY_PIN_CHALLENGE",
-                    "value": {
-                        "challenge_id": "challenge-id",
-                        "client_id": "client-id",
-                    },
-                }
-            }
-        },
-        "success": False,
-        "errors": [{"code": "GoPay-125", "message": "retry"}],
-    }
+    calls: list[tuple[str, str, dict | None]] = []
 
-    assert not charger._qris_capture_succeeded(final_resp)
-    assert charger._qris_has_pin_challenge(final_resp)
+    def challenge(cid: str) -> dict:
+        return {
+            "data": {
+                "challenge": {
+                    "action": {
+                        "type": "GOPAY_PIN_CHALLENGE",
+                        "value": {"challenge_id": cid, "client_id": "client-id"},
+                    }
+                }
+            },
+            "success": False,
+            "errors": [{"code": "GoPay-125", "message": "retry"}],
+        }
+
+    responses = [challenge("challenge-1"), challenge("challenge-2"), {"success": True, "data": {"status": "CAPTURED"}}]
+
+    def fake_qris_request(method, path, body=None, **kwargs):
+        calls.append((method, path, body))
+        if path.endswith("/capture"):
+            return responses.pop(0)
+        if path == "/api/v1/users/pin/tokens":
+            return {"data": {"token": f"token-{body['challenge_id']}"}}
+        return {}
+
+    monkeypatch.setattr(charger, "_qris_request", fake_qris_request)
+
+    resp = charger._qris_capture_with_pin_loop("payment-id", {"challenge": {}})
+
+    assert resp["success"] is True
+    capture_bodies = [body for _method, path, body in calls if path.endswith("/capture")]
+    assert capture_bodies[1]["challenge"]["token"] == "token-challenge-1"
+    assert capture_bodies[2]["challenge"]["token"] == "token-challenge-2"
+
+
+def test_wait_qris_midtrans_terminal_accepts_settlement(monkeypatch):
+    charger = build_charger()
+
+    class Resp:
+        status_code = 200
+        text = '{"transaction_status":"settlement"}'
+
+        def json(self):
+            return {"transaction_status": "settlement"}
+
+    monkeypatch.setattr(charger, "_request_ext", lambda *a, **k: Resp())
+
+    result = charger._wait_qris_midtrans_terminal({
+        "response": {"transaction_id": "tx-id", "order_id": "order-id"}
+    })
+
+    assert result["ok"] is True
+    assert result["status"] == "settlement"
 
 
 def test_qris_headers_prefer_auto_unbind_over_stale_headers(monkeypatch):
