@@ -1629,10 +1629,18 @@ class GoPayCharger:
         path = parsed.path or "/"
         if parsed.query:
             path = f"{path}?{parsed.query}"
-        key = str(self._qris_cfg().get("hmac_key") or self.gopay_cfg.get("qris_hmac_key") or "")
+        qris_cfg = self._qris_cfg()
+        key = str(qris_cfg.get("hmac_key") or self.gopay_cfg.get("qris_hmac_key") or "")
+        nonce_marker = str(
+            qris_cfg.get("nonce_marker")
+            or self.gopay_cfg.get("qris_nonce_marker")
+            or ""
+        ).strip()
         kwargs = {"method": method.upper(), "host": parsed.netloc, "path": path, "body": body_text}
         if key:
             kwargs["key"] = key
+        if nonce_marker:
+            kwargs["nonce_marker_hex"] = nonce_marker
         return _signed_gopay_headers(self._qris_base_headers(), **kwargs)
 
     def _qris_request(self, method: str, path: str, body: dict | None = None) -> dict:
@@ -1642,6 +1650,18 @@ class GoPayCharger:
         self.log("[gopay-qris] === request start ===")
         self.log(f"[gopay-qris] method={method.upper()} url={url}")
         self.log(f"[gopay-qris] headers={_json_for_log(headers)}")
+        xe1 = _header_value(headers, "x-e1")
+        try:
+            nonce = xe1.split(":", 2)[1] if xe1 else ""
+            marker = nonce[96:128] if len(nonce) == 160 else ""
+            zero_segment = len(nonce) == 160 and nonce[64:96] == ("0" * 32)
+            self.log(
+                "[gopay-qris] x-e1 nonce_shape="
+                f"zero={zero_segment} "
+                f"marker={marker or '-'}"
+            )
+        except Exception:
+            pass
         self.log(f"[gopay-qris] body={body_text if body_text else ''}")
         self.log("[gopay-qris] === request end ===")
         r = self._request_ext(

@@ -75,3 +75,24 @@ def test_nonce_marker_from_x_e1_extracts_huawei_app_nonce_marker():
         "0000000000000000000000000000000071cf9b42ccb56d0ee0047d38fc7f0000"
         "5168f68a16231bd86dbec8b8206896d1:D:1778386476175"
     ) == "71cf9b42ccb56d0ee0047d38fc7f0000"
+
+
+def test_signed_headers_explicit_nonce_marker_overrides_captured_x_e1_marker():
+    captured_oppo_x_e1 = (
+        "34a45c2cfa97540affba7683d8bd2dbd3109a364ae31c505961c2de6a07f29a2:"
+        "029ecdb91c58f1314ddadd0654007ec9fc8fa55dabec4a988d45dbbe8a1afa45"
+        "000000000000000000000000000000009826a64441fe4119f016491efd7f0000"
+        "c38392edf1b34cc84d1e7d496b67a4fa:D:1778385895260"
+    )
+    headers = signed_headers(
+        {**BASELINE_HEADERS, "x-e1": captured_oppo_x_e1},
+        method="POST",
+        host="customer.gopayapi.com",
+        path="/v1/explore",
+        body='{"type":"QR_CODE","data":"000201010212QRISDATA"}',
+        nonce_marker_hex="71cf9b42ccb56d0ee0047d38fc7f0000",
+    )
+
+    nonce_hex = headers["x-e1"].split(":")[1]
+    assert nonce_hex[64:96] == "0" * 32
+    assert nonce_hex[96:128] == "71cf9b42ccb56d0ee0047d38fc7f0000"

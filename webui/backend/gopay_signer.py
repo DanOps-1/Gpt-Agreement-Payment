@@ -126,6 +126,7 @@ def signed_headers(
     path: str,
     body: str,
     key: str = DEFAULT_HMAC_KEY,
+    nonce_marker_hex: str | None = None,
 ) -> dict[str, str]:
     headers = {str(k): str(v) for k, v in baseline_headers.items()}
     captured_x_e1 = ""
@@ -144,7 +145,7 @@ def signed_headers(
         path=path,
         body=body,
         key=key,
-        nonce_marker_hex=nonce_marker_from_x_e1(captured_x_e1),
+        nonce_marker_hex=nonce_marker_hex or nonce_marker_from_x_e1(captured_x_e1),
     )
     if body and "content-type" not in lower_headers(headers):
         headers["content-type"] = "application/json"
