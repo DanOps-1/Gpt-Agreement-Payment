@@ -1400,8 +1400,23 @@ class GoPayCharger:
                 path.write_bytes(raw)
                 self.log(f"[gopay-qr] saved data-url QR image: {path} bytes={len(raw)}")
                 return str(path)
+
+            def download_qr_image_with_retries():
+                for attempt in range(1, 4):
+                    try:
+                        resp = self.ext.get(payload, headers=self._midtrans_basic_auth(), timeout=DEFAULT_TIMEOUT)
+                    except Exception as exc:
+                        self.log(f"[gopay-qr] QR image download error attempt={attempt}/3 {type(exc).__name__}: {str(exc)[:160]}")
+                        if attempt >= 3:
+                            raise
+                    else:
+                        if 200 <= resp.status_code < 300 or attempt >= 3:
+                            return resp
+                        self.log(f"[gopay-qr] QR image download failed attempt={attempt}/3 status={resp.status_code}: {payload[:160]}")
+                    time.sleep(1)
+
             try:
-                r = self.ext.get(payload, headers=self._midtrans_basic_auth(), timeout=DEFAULT_TIMEOUT)
+                r = download_qr_image_with_retries()
                 if 200 <= r.status_code < 300:
                     content_type = str(r.headers.get("content-type") or "").lower()
                     suffix = _data_image_suffix(content_type, r.content)

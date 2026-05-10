@@ -6974,9 +6974,26 @@ def confirm_payment(
 
     url = f"{STRIPE_API}/v1/payment_pages/{session_id}/confirm"
     _log("[5/6] 确认支付 (confirm) ...")
-    _log_request("POST", url, data=data, tag="[5/6] confirm")
-    resp = session.post(url, data=data, headers=_stripe_headers())
-    _log_response(resp, tag="[5/6] confirm")
+    def _post_confirm_with_retries(tag: str):
+        for attempt in range(1, 4):
+            attempt_tag = tag if attempt == 1 else f"{tag}(retry{attempt - 1})"
+            _log(f"      confirm request attempt={attempt}/3")
+            _log_request("POST", url, data=data, tag=attempt_tag)
+            try:
+                confirm_resp = session.post(url, data=data, headers=_stripe_headers())
+                _log_response(confirm_resp, tag=attempt_tag)
+                return confirm_resp
+            except Exception as exc:
+                _log(f"      confirm request error attempt={attempt}/3 {type(exc).__name__}: {str(exc)[:180]}")
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                if attempt >= 3:
+                    raise
+                time.sleep(1)
+
+    resp = _post_confirm_with_retries("[5/6] confirm")
     if (
         resp.status_code == 400
         and "consent[terms_of_service]" not in data
@@ -6985,9 +7002,7 @@ def confirm_payment(
         _log("      confirm 提示需要接受 merchant terms of service，自动补 consent 后重试一次 ...")
         data["consent[terms_of_service]"] = "accepted"
         ctx["include_terms_of_service_consent"] = True
-        _log_request("POST", url, data=data, tag="[5/6] confirm(retry_tos)")
-        resp = session.post(url, data=data, headers=_stripe_headers())
-        _log_response(resp, tag="[5/6] confirm(retry_tos)")
+        resp = _post_confirm_with_retries("[5/6] confirm(retry_tos)")
     if resp.status_code != 200:
         raise RuntimeError(f"confirm 失败 [{resp.status_code}]: {resp.text[:500]}")
 
