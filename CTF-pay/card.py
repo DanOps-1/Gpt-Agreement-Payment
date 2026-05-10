@@ -8793,8 +8793,15 @@ def run(
 
     gopay_qr_result = init_ctx.get("gopay_qr_result")
     if isinstance(gopay_qr_result, dict):
-        _log(f"\n日志已保存到: {LOG_FILE}")
-        return gopay_qr_result
+        if gopay_qr_result.get("state") == "qr_ready":
+            _log(f"\n日志已保存到: {LOG_FILE}")
+            return gopay_qr_result
+        if gopay_qr_result.get("state") == "succeeded":
+            init_ctx["gopay_verified_result"] = gopay_qr_result
+            _log("      GoPay QR 已完成 ChatGPT 校验，继续执行 RT/记录收尾 ...")
+        else:
+            _log(f"\n日志已保存到: {LOG_FILE}")
+            return gopay_qr_result
 
     gopay_verified_result = init_ctx.get("gopay_verified_result")
     if isinstance(gopay_verified_result, dict):
