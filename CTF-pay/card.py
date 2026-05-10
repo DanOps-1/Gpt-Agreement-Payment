@@ -4553,7 +4553,19 @@ def _drive_gopay_from_redirect(
     )
     _log(f"      [gopay] 从 redirect 接管 → {redirect_url[:80]}...")
     result = charger.run_from_redirect(redirect_url, cs_id=session_id)
-    _log(f"      [gopay] 完成: {result}")
+    if isinstance(result, dict):
+        summary_parts = [
+            f"state={result.get('state', '-')}",
+            f"cs_id={result.get('cs_id') or session_id or '-'}",
+        ]
+        qris_payment = result.get("qris_payment") if isinstance(result.get("qris_payment"), dict) else {}
+        if qris_payment.get("payment_id"):
+            summary_parts.append(f"qris_payment_id={qris_payment.get('payment_id')}")
+        if result.get("qr_transaction_id"):
+            summary_parts.append(f"qr_transaction_id={result.get('qr_transaction_id')}")
+        _log("      [gopay] 完成: " + " ".join(summary_parts))
+    else:
+        _log("      [gopay] 完成: state=unknown")
     return result if isinstance(result, dict) else {"state": "unknown", "raw": result}
 
 

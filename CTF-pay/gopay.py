@@ -1944,14 +1944,25 @@ class GoPayCharger:
                 candidates.append(url)
 
         deeplink_url = str(response.get("deeplink_url") or "").strip()
+        callback_url = ""
         if deeplink_url:
             query = parse_qs(urlsplit(deeplink_url).query, keep_blank_values=True)
             callback_url = str((query.get("callback_url") or [""])[0] or "").strip()
             if callback_url:
                 add(self._qris_success_callback_url(callback_url, response))
                 add(callback_url)
-        add(response.get("finish_200_redirect_url"))
-        add(response.get("finish_redirect_url"))
+        finish_200_redirect_url = str(response.get("finish_200_redirect_url") or "").strip()
+        finish_redirect_url = str(response.get("finish_redirect_url") or "").strip()
+        add(finish_200_redirect_url)
+        add(finish_redirect_url)
+        self.log(
+            "[gopay-qris] finish candidates "
+            f"deeplink_url={'yes' if deeplink_url else 'no'} "
+            f"callback_url={'yes' if callback_url else 'no'} "
+            f"finish_200_redirect_url={'yes' if finish_200_redirect_url else 'no'} "
+            f"finish_redirect_url={'yes' if finish_redirect_url else 'no'} "
+            f"count={len(candidates)}"
+        )
         return candidates
 
     def _qris_success_callback_url(self, callback_url: str, response: dict) -> str:
