@@ -48,7 +48,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 import requests
 
@@ -1891,22 +1891,97 @@ class GoPayCharger:
                 timeout=DEFAULT_TIMEOUT,
                 retry_label="gopay qris finish redirect",
             )
+            final_url = str(getattr(r, "url", finish_url))
+            return_result = self._visit_qris_embedded_return_url(final_url)
             self.log(
                 "[gopay-qris] finish redirect visited "
                 f"status={getattr(r, 'status_code', '?')} "
-                f"url={str(getattr(r, 'url', finish_url))[:160]}"
+                f"url={final_url[:160]}"
+                + (
+                    f" return_status={return_result.get('status_code')}"
+                    if return_result.get("attempted")
+                    else ""
+                )
             )
-            final_url = str(getattr(r, "url", finish_url))
             redirect_failed = "redirect_status=failed" in final_url.lower()
             return {
-                "ok": 200 <= int(getattr(r, "status_code", 0) or 0) < 400 and not redirect_failed,
+                "ok": (
+                    200 <= int(getattr(r, "status_code", 0) or 0) < 400
+                    and not redirect_failed
+                ) or bool(return_result.get("ok")),
                 "status_code": getattr(r, "status_code", None),
                 "url": final_url,
                 "redirect_failed": redirect_failed,
+                "return_url": return_result,
             }
         except Exception as exc:
             self.log(f"[gopay-qris] finish redirect failed: {type(exc).__name__}: {str(exc)[:160]}")
             return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+    def _visit_qris_embedded_return_url(self, url: str) -> dict:
+        return_url = self._extract_qris_embedded_return_url(url)
+        if not return_url:
+            return {"attempted": False, "reason": "missing"}
+        try:
+            host = urlsplit(return_url).netloc.lower()
+            if host.endswith(("pay.openai.com", "chatgpt.com")):
+                r = self.cs.get(
+                    return_url,
+                    allow_redirects=True,
+                    timeout=DEFAULT_TIMEOUT,
+                    headers={"accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+                )
+            else:
+                r = self._request_ext(
+                    "get",
+                    return_url,
+                    allow_redirects=True,
+                    timeout=DEFAULT_TIMEOUT,
+                    retry_label="gopay qris embedded return",
+                )
+            final_url = str(getattr(r, "url", return_url))
+            status_code = int(getattr(r, "status_code", 0) or 0)
+            return {
+                "attempted": True,
+                "ok": 200 <= status_code < 400,
+                "status_code": status_code,
+                "url": final_url,
+            }
+        except Exception as exc:
+            self.log(f"[gopay-qris] embedded return failed: {type(exc).__name__}: {str(exc)[:160]}")
+            return {"attempted": True, "ok": False, "url": return_url, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+    def _extract_qris_embedded_return_url(self, url: str) -> str:
+        parsed = urlsplit(str(url or ""))
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        fragment_query = parse_qs(parsed.fragment, keep_blank_values=True)
+        outer_query = {**query}
+        for key, value in fragment_query.items():
+            outer_query.setdefault(key, value)
+        candidates = []
+        candidates.extend(query.get("return_url") or [])
+        candidates.extend(query.get("redirect") or [])
+        candidates.extend(query.get("redirect_url") or [])
+        for candidate in candidates:
+            candidate = str(candidate or "").strip()
+            if candidate.startswith(("https://pay.openai.com/", "https://chatgpt.com/checkout/verify")):
+                return self._merge_qris_return_query(candidate, outer_query)
+        return ""
+
+    def _merge_qris_return_query(self, return_url: str, outer_query: dict) -> str:
+        parsed = urlsplit(return_url)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        for key in (
+            "redirect_status",
+            "returned_from_redirect",
+            "setup_intent",
+            "setup_intent_client_secret",
+            "payment_intent",
+            "payment_intent_client_secret",
+        ):
+            if key not in query and outer_query.get(key):
+                query[key] = outer_query[key]
+        return parsed._replace(query=urlencode(query, doseq=True)).geturl()
 
     def _qris_capture_terminal_status(self, capture_resp: dict) -> dict:
         payload = capture_resp.get("data") if isinstance(capture_resp.get("data"), dict) else {}

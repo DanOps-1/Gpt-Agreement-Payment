@@ -882,6 +882,46 @@ def test_follow_qris_finish_redirect_marks_redirect_status_failed(monkeypatch):
     assert result["redirect_failed"] is True
 
 
+def test_follow_qris_finish_redirect_visits_embedded_return_url(monkeypatch):
+    charger = build_charger()
+    calls: list[str] = []
+    embedded = "https://pay.openai.com/c/pay/cs_live_test?returned_from_redirect=true"
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self, url: str):
+            self.url = url
+
+    def fake_request(_method, url, **_kwargs):
+        calls.append(url)
+        return Resp(
+            "https://checkout.stripe.com/c/pay/cs_live_test"
+            "?redirect_status=failed&setup_intent=seti_test&return_url="
+            + embedded.replace(":", "%3A").replace("/", "%2F").replace("?", "%3F").replace("=", "%3D")
+            + "#setup_intent_client_secret=seti_secret_test"
+        )
+
+    def fake_cs_get(url, **_kwargs):
+        calls.append(url)
+        return Resp(url)
+
+    monkeypatch.setattr(charger, "_request_ext", fake_request)
+    monkeypatch.setattr(charger.cs, "get", fake_cs_get)
+
+    result = charger._follow_qris_finish_redirect({
+        "response": {"finish_200_redirect_url": "https://pm-redirects.stripe.com/return/test"}
+    })
+
+    assert calls[0] == "https://pm-redirects.stripe.com/return/test"
+    assert calls[1].startswith(embedded + "&")
+    assert "setup_intent=seti_test" in calls[1]
+    assert "setup_intent_client_secret=seti_secret_test" in calls[1]
+    assert result["ok"] is True
+    assert result["redirect_failed"] is True
+    assert result["return_url"]["attempted"] is True
+
+
 def test_wait_qris_midtrans_terminal_uses_capture_success_without_status_poll(monkeypatch):
     charger = build_charger()
     calls: list[str] = []
