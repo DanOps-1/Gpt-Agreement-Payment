@@ -2317,8 +2317,21 @@ class GoPayCharger:
                 timeout=DEFAULT_TIMEOUT,
                 allow_redirects=True,
             )
-            self.log(f"[gopay] payments/success notified status={r.status_code}")
-            return {"ok": 200 <= int(r.status_code or 0) < 400, "status_code": r.status_code, "url": str(getattr(r, "url", ""))}
+            body_preview = (r.text or "")[:500].replace("\r", "\\r").replace("\n", "\\n")
+            content_type = str(r.headers.get("content-type") or "")
+            final_url = str(getattr(r, "url", ""))
+            self.log(
+                "[gopay] payments/success response "
+                f"status={r.status_code} content_type={content_type or '-'} "
+                f"url={final_url[:240]} body={body_preview!r}"
+            )
+            return {
+                "ok": 200 <= int(r.status_code or 0) < 400,
+                "status_code": r.status_code,
+                "url": final_url,
+                "content_type": content_type,
+                "body_preview": body_preview,
+            }
         except Exception as exc:
             self.log(f"[gopay] payments/success notify failed: {type(exc).__name__}: {str(exc)[:160]}")
             return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
@@ -2328,6 +2341,15 @@ class GoPayCharger:
         deadline = time.time() + max(1.0, float(timeout_s or 60.0))
         saw_http_200 = False
         success_notify = self._chatgpt_payments_success(cs_id)
+        if qris_info and success_notify.get("ok") is True:
+            self.log("[gopay-qris] payments/success accepted, continuing to RT/finalization")
+            return {
+                "state": "succeeded",
+                "cs_id": cs_id,
+                "verify_http_200_seen": False,
+                "payments_success": success_notify,
+                "accounts_check": {},
+            }
         last_accounts_check: dict = {}
         return_retry_interval = max(5.0, float(self.gopay_cfg.get("qris_finish_redirect_retry_s") or 8.0))
         next_return_retry = 0.0
