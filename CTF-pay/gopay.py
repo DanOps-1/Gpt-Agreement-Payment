@@ -1955,12 +1955,18 @@ class GoPayCharger:
         finish_redirect_url = str(response.get("finish_redirect_url") or "").strip()
         add(finish_200_redirect_url)
         add(finish_redirect_url)
+        def short_url(value: str, limit: int = 500) -> str:
+            value = str(value or "").strip()
+            if not value:
+                return "-"
+            return value if len(value) <= limit else value[:limit] + "...<truncated>"
+
         self.log(
             "[gopay-qris] finish candidates "
-            f"deeplink_url={'yes' if deeplink_url else 'no'} "
-            f"callback_url={'yes' if callback_url else 'no'} "
-            f"finish_200_redirect_url={'yes' if finish_200_redirect_url else 'no'} "
-            f"finish_redirect_url={'yes' if finish_redirect_url else 'no'} "
+            f"deeplink_url={short_url(deeplink_url)!r} "
+            f"callback_url={short_url(callback_url)!r} "
+            f"finish_200_redirect_url={short_url(finish_200_redirect_url)!r} "
+            f"finish_redirect_url={short_url(finish_redirect_url)!r} "
             f"count={len(candidates)}"
         )
         return candidates
