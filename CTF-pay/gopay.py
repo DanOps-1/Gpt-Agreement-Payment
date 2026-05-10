@@ -1623,13 +1623,7 @@ class GoPayCharger:
         return urljoin(base.rstrip("/") + "/", path.lstrip("/"))
 
     def _qris_body_for_signature(self, method: str, path: str, body: dict | None, body_text: str) -> tuple[str, str]:
-        if (
-            method.upper() == "POST"
-            and path.split("?", 1)[0] == "/v1/explore"
-            and isinstance(body, dict)
-            and isinstance(body.get("data"), str)
-            and body.get("type") == "QR_CODE"
-        ):
+        if body_text and method.upper() in ("POST", "PUT", "PATCH"):
             return "", "empty+body-md5"
         return body_text, "body"
 

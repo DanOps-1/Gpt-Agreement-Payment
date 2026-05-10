@@ -630,6 +630,12 @@ def test_qris_request_resigns_x_e1_per_body(monkeypatch):
     assert signed[0]["body_text"] == signed[0]["body"]
     assert signed[0]["headers"]["authorization"] == "Bearer token"
 
+    charger._qris_request("POST", "/v1/qris/payments", {"qr_code": "000201010212QRISDATA"})
+
+    assert signed[1]["path"] == "/v1/qris/payments"
+    assert signed[1]["body_for_signature"] == ""
+    assert signed[1]["body_text"] == signed[1]["body"]
+
 
 def test_qris_request_reuses_auto_unbind_raw_headers(monkeypatch):
     signed: list[dict] = []
