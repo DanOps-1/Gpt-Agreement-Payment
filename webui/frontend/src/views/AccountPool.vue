@@ -74,7 +74,47 @@
       <input v-model="moveReason" placeholder="移动原因" />
       <button class="btn ghost" type="button" :disabled="!selectedIds.length || !moveTarget || moving" @click="moveSelected">批量移动</button>
       <button class="btn ghost" type="button" :disabled="claiming" @click="claimPreview">领取未激活邮箱</button>
+      <select v-model="downloadTarget">
+        <option value="cpa">下载 CPA</option>
+        <option value="sub2api">下载 sub2api</option>
+      </select>
+      <button class="btn ghost" type="button" :disabled="!selectedIds.length || downloading" @click="downloadSelected">批量下载</button>
       <span class="bulk-info">已选 {{ selectedIds.length }} 个</span>
+    </section>
+
+    <section class="upload-panel">
+      <div class="upload-targets">
+        <label><input v-model="uploadTargets" type="checkbox" value="cpa" /> CPA</label>
+        <label><input v-model="uploadTargets" type="checkbox" value="sub2api" /> sub2api</label>
+        <label><input v-model="uploadTargets" type="checkbox" value="server" /> 服务器</label>
+        <span class="muted">队列上传，每组 10 个</span>
+      </div>
+      <input v-model="serverImport.url" placeholder="服务器导入 URL" />
+      <input v-model="serverImport.token" type="password" placeholder="服务器凭证" autocomplete="off" />
+      <button class="btn" type="button" :disabled="!selectedIds.length || !uploadTargets.length || uploading" @click="uploadSelected">
+        队列上传
+      </button>
+    </section>
+
+    <section v-if="uploadResult" class="result-panel">
+      <div v-for="(target, name) in uploadResult.targets" :key="String(name)">
+        <strong>{{ uploadTargetLabel(String(name)) }}</strong>
+        <span>total={{ target.summary.total || 0 }} ok={{ target.summary.ok || 0 }} fail={{ target.summary.fail || 0 }}</span>
+      </div>
+    </section>
+
+    <section class="danger-panel">
+      <div class="delete-targets">
+        <strong>按池子删除</strong>
+        <label v-for="status in deletableStatuses" :key="status.key">
+          <input v-model="deleteStatuses" type="checkbox" :value="status.key" />
+          {{ status.label }} ({{ counts[status.key] || 0 }})
+        </label>
+      </div>
+      <button class="btn danger" type="button" :disabled="!deleteStatuses.length || deletingPools" @click="deleteSelectedPools">
+        删除所选池子账号
+      </button>
+      <span class="muted">未激活池受保护，不会出现在这里</span>
     </section>
 
     <section class="table-shell">
@@ -162,8 +202,8 @@
         <div class="detail-section">
           <h3>流转记录</h3>
           <div v-for="event in detail.events || []" :key="event.id" class="event-row">
-            <strong>{{ event.from_status || 'new' }} → {{ event.to_status }}</strong>
-            <span>{{ event.stage }} · {{ event.reason || '-' }}</span>
+            <strong>{{ statusLabel(event.from_status) || '新建' }} → {{ statusLabel(event.to_status) }}</strong>
+            <span>{{ stageLabel(event.stage) }} · {{ reasonLabel(event.reason) }}</span>
             <small>{{ formatTime(event.ts) }}</small>
           </div>
         </div>
@@ -212,6 +252,9 @@ const importing = ref(false);
 const moving = ref(false);
 const claiming = ref(false);
 const savingRotation = ref(false);
+const downloading = ref(false);
+const uploading = ref(false);
+const deletingPools = ref(false);
 const showImport = ref(false);
 const importText = ref("");
 const items = ref<PoolItem[]>([]);
@@ -227,6 +270,14 @@ const statuses = ref<PoolStatus[]>([
 const selected = ref<Set<number>>(new Set());
 const moveTarget = ref("");
 const moveReason = ref("人工调整");
+const downloadTarget = ref("cpa");
+const uploadTargets = ref<string[]>([]);
+const deleteStatuses = ref<string[]>([]);
+const serverImport = ref({
+  url: "https://mail.shfjkqhk.site/api/email-data",
+  token: "sakuya1.2.3.",
+});
+const uploadResult = ref<any | null>(null);
 const detail = ref<PoolItem | null>(null);
 const filter = ref({
   status: "all",
@@ -243,6 +294,13 @@ const moveStatuses = computed(() => [
   ...statuses.value,
   { key: "quarantined", label: "已隔离" },
 ]);
+const deletableStatuses = computed(() =>
+  [
+    ...statuses.value.filter(status => status.key !== "email_unused"),
+    { key: "in_progress", label: "任务中" },
+    { key: "quarantined", label: "已隔离" },
+  ]
+);
 const selectedIds = computed(() => Array.from(selected.value));
 const pageAllSelected = computed(() => items.value.length > 0 && items.value.every(item => selected.value.has(item.id)));
 const selectedPageCount = computed(() => items.value.filter(item => selected.value.has(item.id)).length);
@@ -407,6 +465,95 @@ async function claimPreview() {
   }
 }
 
+async function downloadSelected() {
+  if (!selectedIds.value.length) {
+    message.warning("请先选择账号");
+    return;
+  }
+  downloading.value = true;
+  try {
+    const r = await api.post(
+      "/pool/accounts/export",
+      { ids: selectedIds.value, target: downloadTarget.value },
+      { responseType: "blob" }
+    );
+    const cd = String(r.headers?.["content-disposition"] || "");
+    const m = /filename="?([^"]+)"?/i.exec(cd);
+    const fallback = downloadTarget.value === "cpa" ? `pool-cpa-${Date.now()}.zip` : `pool-sub2api-${Date.now()}.json`;
+    const name = m?.[1] || fallback;
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    message.success(`已下载 ${selectedIds.value.length} 个账号`);
+  } catch (e: any) {
+    message.error(`下载失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    downloading.value = false;
+  }
+}
+
+async function uploadSelected() {
+  if (!selectedIds.value.length) {
+    message.warning("请先选择账号");
+    return;
+  }
+  if (!uploadTargets.value.length) {
+    message.warning("请选择上传目标");
+    return;
+  }
+  if (uploadTargets.value.includes("server") && (!serverImport.value.url.trim() || !serverImport.value.token.trim())) {
+    message.warning("请填写服务器 URL 和凭证");
+    return;
+  }
+  uploading.value = true;
+  uploadResult.value = null;
+  try {
+    const r = await api.post("/pool/accounts/upload", {
+      ids: selectedIds.value,
+      targets: uploadTargets.value,
+      import_url: serverImport.value.url.trim(),
+      import_token: serverImport.value.token.trim(),
+      group_size: 10,
+    });
+    uploadResult.value = r.data || null;
+    const targets = Object.entries(r.data?.targets || {})
+      .map(([name, data]: any) => `${uploadTargetLabel(name)} ok=${data.summary?.ok || 0} fail=${data.summary?.fail || 0}`)
+      .join("；");
+    message.success(`队列上传完成：${targets || "无结果"}`);
+  } catch (e: any) {
+    message.error(`上传失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    uploading.value = false;
+  }
+}
+
+async function deleteSelectedPools() {
+  if (!deleteStatuses.value.length) return;
+  const labels = deleteStatuses.value.map(statusLabel).join("、");
+  const total = deleteStatuses.value.reduce((sum, key) => sum + Number(counts.value[key] || 0), 0);
+  const ok = window.confirm(`确认删除 ${labels} 中的账号？预计 ${total} 个。未激活池不会被删除。`);
+  if (!ok) return;
+  deletingPools.value = true;
+  try {
+    const r = await api.post("/pool/accounts/delete-by-status", {
+      statuses: deleteStatuses.value,
+    });
+    message.success(`已删除 ${r.data?.deleted || 0} 个账号`);
+    deleteStatuses.value = [];
+    selected.value = new Set();
+    await refresh();
+  } catch (e: any) {
+    message.error(`删除失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    deletingPools.value = false;
+  }
+}
+
 async function openDetail(id: number) {
   try {
     const r = await api.get(`/pool/accounts/${id}`);
@@ -434,6 +581,68 @@ function statusClass(status: string) {
   return "muted-pill";
 }
 
+function statusLabel(status: string) {
+  const found = [...statuses.value, { key: "in_progress", label: "任务中" }, { key: "quarantined", label: "已隔离" }]
+    .find(item => item.key === status);
+  return found?.label || status || "";
+}
+
+function stageLabel(stage: string) {
+  const map: Record<string, string> = {
+    upsert: "写入/更新",
+    email_import: "导入邮箱",
+    legacy_migration: "旧数据迁移",
+    manual_move: "手动移动",
+    claimed: "任务领取",
+    mail_reserved: "邮箱被领取",
+    registration_success: "注册成功",
+    registration_failed: "注册失败",
+    payment_succeeded_with_rt: "支付成功并获取 RT",
+    payment_succeeded_missing_rt: "支付成功但缺少 RT",
+    payment_not_succeeded: "支付未成功",
+    auto_server_push_rt: "自动推送前获取 RT",
+    free_backfill_rt: "补 RT 成功",
+    free_register_rt: "注册后获取 RT",
+    self_dealer_member: "成员账号获取 RT",
+    team_probe: "团队权限检测",
+    already_paid_rt_ok: "已付费账号 RT 检测成功",
+    already_paid_rt_failed: "已付费账号 RT 检测失败",
+    rotation_claimed: "轮转领取",
+    rotation_skip_no_auth: "轮转跳过无凭证",
+  };
+  return map[stage] || stage || "-";
+}
+
+function reasonLabel(reason: string) {
+  if (!reason) return "-";
+  const map: Record<string, string> = {
+    "manual email import": "手动导入邮箱",
+    "manual legacy migration": "手动迁移旧账号",
+    "manual outlook migration": "手动迁移 Outlook 邮箱",
+    "manual move": "手动调整",
+    "task claim": "任务领取",
+    "Outlook mailbox reserved by registration task": "注册任务领取 Outlook 邮箱",
+    "registered account waiting for Plus activation": "已注册，等待激活 Plus",
+    "Plus activated and RT obtained": "Plus 已激活并已获取 RT",
+    "Plus activated but RT missing": "Plus 已激活但缺少 RT",
+    "RT obtained": "已获取 RT",
+    "RT missing": "缺少 RT",
+    "already paid and RT detected": "账号已付费并检测到 RT",
+    "rotation picked pending activation account": "轮转领取待激活账号",
+  };
+  if (reason.startsWith("failed_plus:")) return `Plus 账号 RT 检测失败：${reason.slice("failed_plus:".length)}`;
+  if (reason.startsWith("payment_status=")) return `支付状态：${reason.slice("payment_status=".length)}`;
+  if (reason.startsWith("invite=")) return `邀请权限：${reason.slice("invite=".length)}`;
+  return map[reason] || reason;
+}
+
+function uploadTargetLabel(target: string) {
+  if (target === "cpa") return "CPA";
+  if (target === "sub2api") return "sub2api";
+  if (target === "server") return "服务器";
+  return target;
+}
+
 function formatTime(value: number | string) {
   const n = Number(value || 0);
   if (!n) return "-";
@@ -454,6 +663,8 @@ function formatTime(value: number | string) {
 .toolbar,
 .import-panel,
 .bulk-bar,
+.upload-panel,
+.result-panel,
 .table-shell,
 .pager {
   max-width: 1400px;
@@ -568,6 +779,8 @@ h1 {
 .toolbar,
 .import-panel,
 .bulk-bar,
+.upload-panel,
+.result-panel,
 .table-shell,
 .pager {
   border: 1px solid #d4e3de;
@@ -583,6 +796,7 @@ h1 {
 
 .search-row input,
 .rotation-row input[type="number"],
+.upload-panel input,
 .bulk-bar input,
 .bulk-bar select,
 .import-panel textarea {
@@ -642,6 +856,78 @@ h1 {
 
 .bulk-bar {
   padding: 12px 14px;
+}
+
+.upload-panel,
+.result-panel {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.danger-panel {
+  max-width: 1400px;
+  margin: 0 auto 14px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  border: 1px solid #f0c4c0;
+  background: #fffafa;
+  border-radius: 8px;
+}
+
+.delete-targets {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.delete-targets label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn.danger {
+  background: #b42318;
+  border-color: #b42318;
+  color: #fff;
+}
+
+.upload-targets {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-weight: 700;
+}
+
+.upload-targets label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.upload-panel input {
+  min-width: 220px;
+}
+
+.result-panel {
+  background: #f8fbfa;
+}
+
+.result-panel div {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid #d6e6e0;
+  border-radius: 6px;
 }
 
 .select-all {

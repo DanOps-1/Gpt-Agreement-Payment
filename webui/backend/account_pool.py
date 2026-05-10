@@ -346,6 +346,24 @@ def get_pool_item(item_id: int, *, reveal: bool = False) -> dict:
     return out
 
 
+def get_pool_items_by_ids(ids: list[int], *, reveal: bool = True) -> list[dict]:
+    clean = [int(i) for i in ids if str(i).strip().lstrip("-").isdigit()]
+    if not clean:
+        return []
+    placeholders = ",".join("?" for _ in clean)
+    with get_db()._conn() as c:
+        rows = c.execute(
+            f"""
+            SELECT {', '.join(_ITEM_COLUMNS)}
+            FROM account_pool_items
+            WHERE id IN ({placeholders})
+            ORDER BY id ASC
+            """,
+            clean,
+        ).fetchall()
+    return [_public_item(dict(row), reveal=reveal) for row in rows]
+
+
 def move_items(ids: list[int], *, to_status: str, reason: str = "manual move") -> dict:
     if to_status not in POOL_STATUS_LABELS:
         raise ValueError(f"unknown pool status: {to_status}")
@@ -382,6 +400,36 @@ def move_items(ids: list[int], *, to_status: str, reason: str = "manual move") -
             )
             moved += 1
     return {"requested": len(clean), "moved": moved, "to_status": to_status}
+
+
+def delete_items_by_status(statuses: list[str]) -> dict:
+    requested = [str(s or "").strip() for s in statuses if str(s or "").strip()]
+    protected = {"email_unused"}
+    allowed = [
+        s for s in requested
+        if s in POOL_STATUS_LABELS and s not in protected
+    ]
+    skipped = [
+        s for s in requested
+        if s not in POOL_STATUS_LABELS or s in protected
+    ]
+    if not allowed:
+        return {"requested": requested, "deleted": 0, "statuses": [], "skipped": skipped}
+    placeholders = ",".join("?" for _ in allowed)
+    with get_db()._conn() as c:
+        ids = [
+            int(row["id"])
+            for row in c.execute(
+                f"SELECT id FROM account_pool_items WHERE pool_status IN ({placeholders})",
+                allowed,
+            ).fetchall()
+        ]
+        if not ids:
+            return {"requested": requested, "deleted": 0, "statuses": allowed, "skipped": skipped}
+        id_placeholders = ",".join("?" for _ in ids)
+        c.execute(f"DELETE FROM account_pool_events WHERE item_id IN ({id_placeholders})", ids)
+        cur = c.execute(f"DELETE FROM account_pool_items WHERE id IN ({id_placeholders})", ids)
+    return {"requested": requested, "deleted": int(cur.rowcount), "statuses": allowed, "skipped": skipped}
 
 
 def claim_unused_emails(limit: int, *, task_id: str = "", round_id: str = "") -> list[dict]:
