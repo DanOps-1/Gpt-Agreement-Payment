@@ -1630,7 +1630,7 @@ class GoPayCharger:
             and isinstance(body.get("data"), str)
             and body.get("type") == "QR_CODE"
         ):
-            return body["data"], "json.data"
+            return "", "empty+body-md5"
         return body_text, "body"
 
     def _qris_signed_headers(
@@ -1656,6 +1656,7 @@ class GoPayCharger:
         kwargs = {"method": method.upper(), "host": parsed.netloc, "path": path, "body": body_text}
         if body_for_signature is not None:
             kwargs["body_for_signature"] = body_for_signature
+            kwargs["body_text"] = body_text
         if key:
             kwargs["key"] = key
         if nonce_marker:

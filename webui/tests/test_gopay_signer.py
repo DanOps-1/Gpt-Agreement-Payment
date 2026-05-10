@@ -98,7 +98,7 @@ def test_signed_headers_explicit_nonce_marker_overrides_captured_x_e1_marker():
     assert nonce_hex[96:128] == "71cf9b42ccb56d0ee0047d38fc7f0000"
 
 
-def test_sign_x_e1_can_use_data_field_as_signature_body():
+def test_sign_x_e1_can_use_empty_body_with_actual_body_md5():
     kwargs = {
         "method": "POST",
         "host": "customer.gopayapi.com",
@@ -109,11 +109,13 @@ def test_sign_x_e1_can_use_data_field_as_signature_body():
     }
 
     full_body_signature = sign_x_e1(BASELINE_HEADERS, **kwargs)
-    data_field_signature = sign_x_e1(
+    empty_body_signature = sign_x_e1(
         BASELINE_HEADERS,
         **kwargs,
-        body_for_signature="000201010212QRISDATA",
+        body_for_signature="",
+        body_text=kwargs["body"],
     )
 
-    assert data_field_signature != full_body_signature
-    assert data_field_signature.split(":", 1)[1] == full_body_signature.split(":", 1)[1]
+    assert empty_body_signature != full_body_signature
+    assert empty_body_signature.split(":", 1)[1] == full_body_signature.split(":", 1)[1]
+

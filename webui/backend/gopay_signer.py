@@ -56,6 +56,7 @@ def canonical_message(
     host: str,
     path: str,
     body: str,
+    body_text: str | None = None,
     nonce_hex: str,
     timestamp_ms: int,
 ) -> str:
@@ -75,7 +76,8 @@ def canonical_message(
     missing = [name for name in required if not h.get(name)]
     if missing:
         raise ValueError("GoPay signed headers missing: " + ", ".join(missing))
-    body_md5 = hashlib.md5(body.encode("utf-8")).hexdigest()
+    body_md5_source = body if body_text is None else body_text
+    body_md5 = hashlib.md5(body_md5_source.encode("utf-8")).hexdigest()
     return (
         f"{h['x-apptype']};"
         f"{h['x-phonemodel']}:{bearer_token(h['authorization'])};"
@@ -97,6 +99,7 @@ def sign_x_e1(
     path: str,
     body: str = "",
     body_for_signature: str | None = None,
+    body_text: str | None = None,
     key: str = DEFAULT_HMAC_KEY,
     nonce_hex: str | None = None,
     nonce_marker_hex: str | None = None,
@@ -112,6 +115,7 @@ def sign_x_e1(
         host=host,
         path=path,
         body=body if body_for_signature is None else body_for_signature,
+        body_text=body_text,
         nonce_hex=nonce_hex,
         timestamp_ms=timestamp_ms,
     )
@@ -127,6 +131,7 @@ def signed_headers(
     path: str,
     body: str,
     body_for_signature: str | None = None,
+    body_text: str | None = None,
     key: str = DEFAULT_HMAC_KEY,
     nonce_marker_hex: str | None = None,
 ) -> dict[str, str]:
@@ -147,6 +152,7 @@ def signed_headers(
         path=path,
         body=body,
         body_for_signature=body_for_signature,
+        body_text=body_text,
         key=key,
         nonce_marker_hex=nonce_marker_hex or nonce_marker_from_x_e1(captured_x_e1),
     )
