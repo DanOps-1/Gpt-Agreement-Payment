@@ -922,8 +922,40 @@ def test_follow_qris_finish_redirect_visits_embedded_return_url(monkeypatch):
     assert result["return_url"]["attempted"] is True
 
 
+def test_qris_finish_redirect_prefers_success_callback_from_deeplink(monkeypatch):
+    charger = build_charger()
+    calls: list[str] = []
+    callback = "https://pm-redirects.stripe.com/return/acct/nonce?order_id=setatt_test"
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self, url: str):
+            self.url = url
+
+    def fake_request(_method, url, **_kwargs):
+        calls.append(url)
+        return Resp(url)
+
+    monkeypatch.setattr(charger, "_request_ext", fake_request)
+    monkeypatch.setattr(charger, "_visit_qris_embedded_return_url", lambda _url: {"attempted": False, "reason": "missing"})
+
+    result = charger._follow_qris_finish_redirect({
+        "response": {
+            "order_id": "setatt_test",
+            "deeplink_url": "https://gopay.co.id/app/merchanttransfer?callback_url=" + callback.replace(":", "%3A").replace("/", "%2F").replace("?", "%3F").replace("=", "%3D"),
+            "finish_200_redirect_url": "https://pm-redirects.stripe.com/return/acct/nonce?order_id=setatt_test&status_code=200&transaction_status=capture",
+        }
+    })
+
+    assert calls
+    assert calls[0] == callback + "&status_code=200&transaction_status=capture"
+    assert result["ok"] is True
+
+
 def test_qris_try_gwa_settlement_uses_non_qr_payment_process(monkeypatch):
     charger = build_charger()
+    charger.gopay_cfg["qris_gwa_settlement"] = True
     calls: list[tuple[str, str]] = []
 
     monkeypatch.setattr(charger, "_gopay_payment_validate", lambda ref: calls.append(("validate", ref)))

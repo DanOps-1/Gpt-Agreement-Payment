@@ -1875,14 +1875,26 @@ class GoPayCharger:
 
     def _follow_qris_finish_redirect(self, qr_info: dict) -> dict:
         response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
-        finish_url = str(
-            response.get("finish_200_redirect_url")
-            or response.get("finish_redirect_url")
-            or ""
-        ).strip()
-        if not finish_url:
+        candidates = self._qris_finish_redirect_candidates(response)
+        if not candidates:
             self.log("[gopay-qris] finish redirect missing; skip")
             return {"ok": False, "reason": "missing"}
+        attempts: list[dict] = []
+        best: dict | None = None
+        for finish_url in candidates:
+            attempt = self._visit_qris_finish_url(finish_url)
+            attempts.append(attempt)
+            if attempt.get("ok"):
+                best = attempt
+                break
+            if best is None and attempt.get("return_url", {}).get("ok"):
+                best = attempt
+        result = best or (attempts[-1] if attempts else {"ok": False})
+        result = dict(result)
+        result["attempts"] = attempts
+        return result
+
+    def _visit_qris_finish_url(self, finish_url: str) -> dict:
         try:
             r = self._request_ext(
                 "get",
@@ -1909,6 +1921,7 @@ class GoPayCharger:
                     200 <= int(getattr(r, "status_code", 0) or 0) < 400
                     and not redirect_failed
                 ) or bool(return_result.get("ok")),
+                "requested_url": finish_url,
                 "status_code": getattr(r, "status_code", None),
                 "url": final_url,
                 "redirect_failed": redirect_failed,
@@ -1916,7 +1929,35 @@ class GoPayCharger:
             }
         except Exception as exc:
             self.log(f"[gopay-qris] finish redirect failed: {type(exc).__name__}: {str(exc)[:160]}")
-            return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+            return {"ok": False, "requested_url": finish_url, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+    def _qris_finish_redirect_candidates(self, response: dict) -> list[str]:
+        candidates: list[str] = []
+
+        def add(value: Any) -> None:
+            url = str(value or "").strip()
+            if url and url not in candidates:
+                candidates.append(url)
+
+        deeplink_url = str(response.get("deeplink_url") or "").strip()
+        if deeplink_url:
+            query = parse_qs(urlsplit(deeplink_url).query, keep_blank_values=True)
+            callback_url = str((query.get("callback_url") or [""])[0] or "").strip()
+            if callback_url:
+                add(self._qris_success_callback_url(callback_url, response))
+                add(callback_url)
+        add(response.get("finish_200_redirect_url"))
+        add(response.get("finish_redirect_url"))
+        return candidates
+
+    def _qris_success_callback_url(self, callback_url: str, response: dict) -> str:
+        parsed = urlsplit(str(callback_url or ""))
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        if response.get("order_id") and "order_id" not in query:
+            query["order_id"] = [str(response.get("order_id"))]
+        query["status_code"] = ["200"]
+        query["transaction_status"] = ["capture"]
+        return parsed._replace(query=urlencode(query, doseq=True)).geturl()
 
     def _visit_qris_embedded_return_url(self, url: str) -> dict:
         return_url = self._extract_qris_embedded_return_url(url)
@@ -2180,7 +2221,7 @@ class GoPayCharger:
         return candidates
 
     def _qris_try_gwa_settlement(self, payment_id: str, qr_info: dict) -> dict:
-        if self.gopay_cfg.get("qris_gwa_settlement") is False:
+        if self.gopay_cfg.get("qris_gwa_settlement") is not True:
             return {"ok": False, "skipped": True, "reason": "disabled"}
         attempts: list[dict] = []
         for reference_id in self._qris_gwa_reference_candidates(payment_id, qr_info):
