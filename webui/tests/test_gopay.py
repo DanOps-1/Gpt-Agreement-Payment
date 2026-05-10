@@ -922,6 +922,29 @@ def test_follow_qris_finish_redirect_visits_embedded_return_url(monkeypatch):
     assert result["return_url"]["attempted"] is True
 
 
+def test_qris_try_gwa_settlement_uses_non_qr_payment_process(monkeypatch):
+    charger = build_charger()
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(charger, "_gopay_payment_validate", lambda ref: calls.append(("validate", ref)))
+    monkeypatch.setattr(charger, "_gopay_payment_confirm", lambda ref: calls.append(("confirm", ref)) or ("challenge-id", "client-id"))
+    monkeypatch.setattr(charger, "_tokenize_pin", lambda cid, client: calls.append(("pin", f"{cid}:{client}")) or "pin-token")
+    monkeypatch.setattr(charger, "_gopay_payment_process", lambda ref, token: calls.append(("process", f"{ref}:{token}")))
+
+    result = charger._qris_try_gwa_settlement(
+        "A220260510080647TESTID",
+        {"response": {"deeplink_url": "https://gopay.co.id/app/merchanttransfer?tref=A220260510080647TESTID"}},
+    )
+
+    assert result == {"ok": True, "reference_id": "A220260510080647TESTID"}
+    assert calls == [
+        ("validate", "A220260510080647TESTID"),
+        ("confirm", "A220260510080647TESTID"),
+        ("pin", "challenge-id:client-id"),
+        ("process", "A220260510080647TESTID:pin-token"),
+    ]
+
+
 def test_wait_qris_midtrans_terminal_uses_capture_success_without_status_poll(monkeypatch):
     charger = build_charger()
     calls: list[str] = []

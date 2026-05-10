@@ -2144,6 +2144,7 @@ class GoPayCharger:
         }
         final_resp = self._qris_capture_with_pin_loop(payment_id, capture_body)
         self.log(f"[gopay-qris] final capture ok payment_id={payment_id}")
+        gwa_settlement = self._qris_try_gwa_settlement(payment_id, qr_info)
         finish_redirect = self._follow_qris_finish_redirect(qr_info)
         midtrans_status = self._wait_qris_midtrans_terminal(qr_info, final_resp)
         return {
@@ -2152,10 +2153,52 @@ class GoPayCharger:
             "amount": amount_value,
             "currency": amount_currency,
             "capture": final_resp,
+            "gwa_settlement": gwa_settlement,
             "finish_redirect": finish_redirect,
             "midtrans_status": midtrans_status,
             "qr_charge": qr_info,
         }
+
+    def _qris_gwa_reference_candidates(self, payment_id: str, qr_info: dict) -> list[str]:
+        response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
+        candidates: list[str] = []
+
+        def add(value: Any) -> None:
+            text = str(value or "").strip()
+            if text and text not in candidates:
+                candidates.append(text)
+
+        add(payment_id)
+        deeplink_url = str(response.get("deeplink_url") or "").strip()
+        if deeplink_url:
+            parsed = urlsplit(deeplink_url)
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            add((query.get("tref") or [""])[0])
+            add((query.get("reference_id") or [""])[0])
+        for key in ("reference_id", "payment_id", "transaction_id", "order_id"):
+            add(response.get(key))
+        return candidates
+
+    def _qris_try_gwa_settlement(self, payment_id: str, qr_info: dict) -> dict:
+        if self.gopay_cfg.get("qris_gwa_settlement") is False:
+            return {"ok": False, "skipped": True, "reason": "disabled"}
+        attempts: list[dict] = []
+        for reference_id in self._qris_gwa_reference_candidates(payment_id, qr_info):
+            try:
+                self.log(f"[gopay-qris] trying GWA settlement reference={reference_id[:32]}")
+                self._gopay_payment_validate(reference_id)
+                challenge_id, client_id = self._gopay_payment_confirm(reference_id)
+                if not challenge_id or not client_id:
+                    raise GoPayError("payment/confirm returned no PIN challenge")
+                pin_token = self._tokenize_pin(challenge_id, client_id)
+                self._gopay_payment_process(reference_id, pin_token)
+                self.log(f"[gopay-qris] GWA settlement ok reference={reference_id[:32]}")
+                return {"ok": True, "reference_id": reference_id}
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {str(exc)[:260]}"
+                attempts.append({"reference_id": reference_id, "error": error})
+                self.log(f"[gopay-qris] GWA settlement failed reference={reference_id[:32]}: {error}")
+        return {"ok": False, "attempts": attempts}
 
     def _gopay_payment_validate(self, charge_ref: str):
         # midtrans 创建 charge 后 GoPay 后端要数秒才能 fetch；轮询直到 ready
