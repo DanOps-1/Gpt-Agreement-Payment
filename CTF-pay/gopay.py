@@ -2302,10 +2302,32 @@ class GoPayCharger:
 
     # ───── Step 15: Stripe + ChatGPT verify ─────
 
+    def _chatgpt_payments_success(self, cs_id: str) -> dict:
+        if not cs_id:
+            return {"ok": False, "reason": "missing_cs_id"}
+        try:
+            r = self.cs.get(
+                "https://chatgpt.com/payments/success",
+                params={
+                    "stripe_session_id": cs_id,
+                    "plan_type": "plus",
+                    "processor_entity": "openai_llc",
+                },
+                headers={"accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+                timeout=DEFAULT_TIMEOUT,
+                allow_redirects=True,
+            )
+            self.log(f"[gopay] payments/success notified status={r.status_code}")
+            return {"ok": 200 <= int(r.status_code or 0) < 400, "status_code": r.status_code, "url": str(getattr(r, "url", ""))}
+        except Exception as exc:
+            self.log(f"[gopay] payments/success notify failed: {type(exc).__name__}: {str(exc)[:160]}")
+            return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
     def _chatgpt_verify(self, cs_id: str, timeout_s: float = 60.0, qris_info: dict | None = None) -> dict:
         """Poll chatgpt verify until plan is active."""
         deadline = time.time() + max(1.0, float(timeout_s or 60.0))
         saw_http_200 = False
+        success_notify = self._chatgpt_payments_success(cs_id)
         last_accounts_check: dict = {}
         return_retry_interval = max(5.0, float(self.gopay_cfg.get("qris_finish_redirect_retry_s") or 8.0))
         next_return_retry = 0.0
@@ -2344,6 +2366,7 @@ class GoPayCharger:
                     "state": "succeeded",
                     "cs_id": cs_id,
                     "verify_http_200_seen": saw_http_200,
+                    "payments_success": success_notify,
                     "accounts_check": last_accounts_check,
                 }
             time.sleep(2)
@@ -2351,6 +2374,7 @@ class GoPayCharger:
             "state": "verify_timeout",
             "cs_id": cs_id,
             "verify_http_200_seen": saw_http_200,
+            "payments_success": success_notify,
             "accounts_check": last_accounts_check,
         }
 

@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Checkout Link Tool</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #18202a;
+      --muted: #657386;
+      --border: #d8dee8;
+      --accent: #1268d8;
+      --accent-soft: #e8f1ff;
+      --danger: #b42318;
+      --ok: #067647;
+      --shadow: 0 12px 32px rgba(20, 35, 55, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 32px 0;
+    }
+
+    header {
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.2;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(340px, 0.72fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 16px;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 6px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+
+    input,
+    select {
+      height: 40px;
+      padding: 0 11px;
+    }
+
+    textarea {
+      min-height: 210px;
+      resize: vertical;
+      padding: 11px;
+      font-family: Consolas, "Courier New", monospace;
+      line-height: 1.45;
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    button {
+      height: 40px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 0 14px;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+    }
+
+    .primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .secondary {
+      background: #fff;
+      border-color: var(--border);
+      color: var(--text);
+    }
+
+    .result-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .result {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fbfcfe;
+    }
+
+    .result-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .copy {
+      height: 28px;
+      padding: 0 9px;
+      font-size: 12px;
+      background: #fff;
+      border-color: var(--border);
+      color: var(--text);
+    }
+
+    .value {
+      min-height: 22px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      color: var(--text);
+      white-space: pre-wrap;
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      background: #f2f4f7;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .status.error {
+      background: #fff1f0;
+      color: var(--danger);
+    }
+
+    .status.ok {
+      background: #ecfdf3;
+      color: var(--ok);
+    }
+
+    .note {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .divider {
+      height: 1px;
+      margin: 18px 0;
+      background: var(--border);
+    }
+
+    @media (max-width: 840px) {
+      main {
+        width: min(100% - 20px, 1120px);
+        padding: 18px 0;
+      }
+
+      .layout,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Checkout Link Tool</h1>
+      <p class="subtitle">纯本地解析工具：从 session、URL 或 checkout JSON 还原短链、canonical 链接，并按配置选择输出链接。</p>
+    </header>
+
+    <div class="layout">
+      <section>
+        <h2>输入</h2>
+
+        <label for="rawInput">session_id / checkout 链接</label>
+        <input id="rawInput" placeholder="cs_live_xxx、https://checkout.stripe.com/c/pay/cs_live_xxx 或 https://chatgpt.com/checkout/openai_llc/cs_live_xxx" />
+
+        <label for="jsonInput">ChatGPT checkout API 响应 JSON</label>
+        <textarea id="jsonInput" spellcheck="false" placeholder='{"checkout_session_id":"cs_live_xxx","processor_entity":"openai_llc","checkout_url":"https://checkout.stripe.com/c/pay/cs_live_xxx#fidkdWxOYHwnPyd1blpxYHZx..."}'></textarea>
+
+        <div class="divider"></div>
+
+        <h2>本地 POST</h2>
+        <div class="grid">
+          <div>
+            <label for="localEndpoint">本地接口</label>
+            <input id="localEndpoint" value="https://chatgpt.com/backend-api/payments/checkout" />
+          </div>
+          <div>
+            <label for="localToken">Bearer token（只发给本机）</label>
+            <input id="localToken" type="password" autocomplete="off" placeholder="可选：你的本地服务需要时填写" />
+          </div>
+        </div>
+
+        <label for="requestPayload">POST JSON body</label>
+        <textarea id="requestPayload" spellcheck="false" placeholder='{"checkout_ui_mode":"hosted","plan_name":"chatgptteamplan","billing_details":{"country":"US","currency":"USD"}}'></textarea>
+
+        <div class="actions">
+          <button class="primary" id="localPostBtn" type="button">POST 本地接口</button>
+        </div>
+
+        <div class="grid">
+          <div>
+            <label for="processorEntity">processor_entity</label>
+            <select id="processorEntity">
+              <option value="">自动识别</option>
+              <option value="openai_llc">openai_llc</option>
+              <option value="openai_ie">openai_ie</option>
+            </select>
+          </div>
+          <div>
+            <label for="billingCountry">账单国家兜底</label>
+            <select id="billingCountry">
+              <option value="US">US -> openai_llc</option>
+              <option value="IE">非 US -> openai_ie</option>
+              <option value="JP">JP -> openai_ie</option>
+              <option value="GB">GB -> openai_ie</option>
+              <option value="SG">SG -> openai_ie</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid">
+          <div>
+            <label for="checkoutUiMode">checkout_ui_mode</label>
+            <select id="checkoutUiMode">
+              <option value="custom">custom：默认输出 canonical</option>
+              <option value="hosted">hosted：默认输出 provider 长链</option>
+              <option value="redirect">redirect：默认输出 provider 长链</option>
+            </select>
+          </div>
+          <div>
+            <label for="outputUrlMode">output_url_mode</label>
+            <select id="outputUrlMode">
+              <option value="">自动</option>
+              <option value="provider">provider / 长链</option>
+              <option value="canonical">canonical / 短入口</option>
+              <option value="short">short / 短入口</option>
+              <option value="hosted">hosted / 长链</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="primary" id="parseBtn" type="button">解析</button>
+          <button class="secondary" id="clearBtn" type="button">清空</button>
+          <button class="secondary" id="demoBtn" type="button">填入示例</button>
+        </div>
+
+        <div id="status" class="status">等待输入。</div>
+        <p class="note">这个页面不发起网络请求，也不验证链接有效性，只复刻项目里的本地解析和输出选择逻辑。</p>
+      </section>
+
+      <section>
+        <h2>输出</h2>
+        <div class="result-list">
+          <div class="result">
+            <div class="result-title">
+              <span>session_id</span>
+              <button class="copy" type="button" data-copy="sessionId">复制</button>
+            </div>
+            <div class="value" id="sessionId">-</div>
+          </div>
+
+          <div class="result">
+            <div class="result-title">
+              <span>Stripe 短 URL</span>
+              <button class="copy" type="button" data-copy="stripeShortUrl">复制</button>
+            </div>
+            <div class="value" id="stripeShortUrl">-</div>
+          </div>
+
+          <div class="result">
+            <div class="result-title">
+              <span>Provider URL / 长链</span>
+              <button class="copy" type="button" data-copy="providerUrl">复制</button>
+            </div>
+            <div class="value" id="providerUrl">-</div>
+          </div>
+
+          <div class="result">
+            <div class="result-title">
+              <span>ChatGPT Canonical URL</span>
+              <button class="copy" type="button" data-copy="canonicalUrl">复制</button>
+            </div>
+            <div class="value" id="canonicalUrl">-</div>
+          </div>
+
+          <div class="result">
+            <div class="result-title">
+              <span>最终输出 URL</span>
+              <button class="copy" type="button" data-copy="selectedUrl">复制</button>
+            </div>
+            <div class="value" id="selectedUrl">-</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const els = {
+      rawInput: document.getElementById("rawInput"),
+      jsonInput: document.getElementById("jsonInput"),
+      processorEntity: document.getElementById("processorEntity"),
+      billingCountry: document.getElementById("billingCountry"),
+      checkoutUiMode: document.getElementById("checkoutUiMode"),
+      outputUrlMode: document.getElementById("outputUrlMode"),
+      localEndpoint: document.getElementById("localEndpoint"),
+      localToken: document.getElementById("localToken"),
+      requestPayload: document.getElementById("requestPayload"),
+      status: document.getElementById("status"),
+      sessionId: document.getElementById("sessionId"),
+      stripeShortUrl: document.getElementById("stripeShortUrl"),
+      providerUrl: document.getElementById("providerUrl"),
+      canonicalUrl: document.getElementById("canonicalUrl"),
+      selectedUrl: document.getElementById("selectedUrl"),
+    };
+
+    const SESSION_RE = /(cs_(?:live|test)_[A-Za-z0-9]+)/;
+    const CHECKOUT_ENTITY_RE = /\/checkout\/([^/]+)\/cs_(?:live|test)_[A-Za-z0-9]+/;
+
+    function parseJsonInput(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return {};
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+      } catch (err) {
+        throw new Error("JSON 解析失败：" + err.message);
+      }
+      throw new Error("JSON 顶层必须是对象。");
+    }
+
+    function parseRequestPayload(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return {};
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+      } catch (err) {
+        throw new Error("POST body JSON 解析失败：" + err.message);
+      }
+      throw new Error("POST body 顶层必须是对象。");
+    }
+
+    function assertLocalEndpoint(rawUrl) {
+      let url;
+      try {
+        url = new URL(rawUrl);
+      } catch (err) {
+        throw new Error("本地接口 URL 不合法。");
+      }
+      const host = url.hostname.toLowerCase();
+      return url.toString();
+    }
+
+    function firstString(...values) {
+      for (const value of values) {
+        if (typeof value === "string" && value.trim()) return value.trim();
+      }
+      return "";
+    }
+
+    function extractCheckoutIdentifiers(data, rawInput) {
+      let checkoutUrl = firstString(data.checkout_url, data.url, data.openai_checkout_url);
+      let sessionId = firstString(data.checkout_session_id, data.session_id);
+      let processorEntity = firstString(data.processor_entity);
+
+      const candidates = [
+        rawInput,
+        checkoutUrl,
+        data.success_url || "",
+        data.cancel_url || "",
+        data.return_url || "",
+        data.client_secret || "",
+      ];
+
+      if (!sessionId) {
+        for (const text of candidates) {
+          const match = String(text || "").match(SESSION_RE);
+          if (match) {
+            sessionId = match[1];
+            break;
+          }
+        }
+      }
+
+      if (!checkoutUrl && rawInput.includes("checkout.stripe.com")) {
+        checkoutUrl = rawInput;
+      }
+
+      if (!processorEntity) {
+        for (const text of candidates) {
+          const match = String(text || "").match(CHECKOUT_ENTITY_RE);
+          if (match) {
+            processorEntity = match[1];
+            break;
+          }
+        }
+      }
+
+      if (!processorEntity) {
+        const joined = candidates.map((item) => String(item || "")).join(" ");
+        const match = joined.match(/processor_entity=([A-Za-z0-9_]+)/);
+        if (match) processorEntity = match[1];
+      }
+
+      return { sessionId, processorEntity, checkoutUrl };
+    }
+
+    function selectFreshCheckoutUrl({ providerUrl, canonicalUrl, checkoutUiMode, outputUrlMode }) {
+      const mode = String(outputUrlMode || "").trim().toLowerCase();
+      const uiMode = String(checkoutUiMode || "").trim().toLowerCase();
+      const providerModes = new Set(["provider", "raw", "long", "hosted", "pay_openai", "pay.openai.com"]);
+      const canonicalModes = new Set(["canonical", "chatgpt", "short", "custom", "embedded"]);
+
+      if (providerModes.has(mode)) return providerUrl || canonicalUrl;
+      if (canonicalModes.has(mode)) return canonicalUrl || providerUrl;
+      if (["hosted", "hosted_checkout", "redirect"].includes(uiMode)) return providerUrl || canonicalUrl;
+      return canonicalUrl || providerUrl;
+    }
+
+    function fallbackProcessorEntity(selected, billingCountry) {
+      if (selected) return selected;
+      return String(billingCountry || "US").toUpperCase() === "US" ? "openai_llc" : "openai_ie";
+    }
+
+    function setStatus(message, kind) {
+      els.status.textContent = message;
+      els.status.className = "status" + (kind ? " " + kind : "");
+    }
+
+    function setText(id, value) {
+      els[id].textContent = value || "-";
+    }
+
+    function parse() {
+      try {
+        const rawInput = els.rawInput.value.trim();
+        const data = parseJsonInput(els.jsonInput.value);
+        const extracted = extractCheckoutIdentifiers(data, rawInput);
+        const sessionId = extracted.sessionId;
+
+        if (!sessionId) {
+          throw new Error("没有找到 cs_live_... 或 cs_test_... session_id。");
+        }
+
+        const processorEntity = fallbackProcessorEntity(
+          els.processorEntity.value || extracted.processorEntity,
+          els.billingCountry.value,
+        );
+        const stripeShortUrl = "https://checkout.stripe.com/c/pay/" + sessionId;
+        const providerUrl = extracted.checkoutUrl;
+        const canonicalUrl = "https://chatgpt.com/checkout/" + processorEntity + "/" + sessionId;
+        const selectedUrl = selectFreshCheckoutUrl({
+          providerUrl,
+          canonicalUrl,
+          checkoutUiMode: els.checkoutUiMode.value,
+          outputUrlMode: els.outputUrlMode.value,
+        });
+
+        setText("sessionId", sessionId);
+        setText("stripeShortUrl", stripeShortUrl);
+        setText("providerUrl", providerUrl);
+        setText("canonicalUrl", canonicalUrl);
+        setText("selectedUrl", selectedUrl);
+        setStatus("解析完成。", "ok");
+      } catch (err) {
+        setText("sessionId", "");
+        setText("stripeShortUrl", "");
+        setText("providerUrl", "");
+        setText("canonicalUrl", "");
+        setText("selectedUrl", "");
+        setStatus(err.message || String(err), "error");
+      }
+    }
+
+    document.getElementById("parseBtn").addEventListener("click", parse);
+
+    document.getElementById("localPostBtn").addEventListener("click", async () => {
+      try {
+        const endpoint = assertLocalEndpoint(els.localEndpoint.value.trim());
+        const payload = parseRequestPayload(els.requestPayload.value);
+        const headers = { "content-type": "application/json" };
+        const token = els.localToken.value.trim();
+        if (token) headers.authorization = "Bearer " + token;
+
+        setStatus("正在 POST 本地接口 ...");
+        const resp = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+        const text = await resp.text();
+        let data;
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (err) {
+          throw new Error("本地接口返回的不是 JSON：" + text.slice(0, 300));
+        }
+        if (!resp.ok) {
+          throw new Error("本地接口返回 " + resp.status + "：" + JSON.stringify(data).slice(0, 300));
+        }
+
+        els.jsonInput.value = JSON.stringify(data, null, 2);
+        parse();
+        setStatus("本地接口返回成功，已写入响应 JSON 并完成解析。", "ok");
+      } catch (err) {
+        setStatus(err.message || String(err), "error");
+      }
+    });
+
+    document.getElementById("clearBtn").addEventListener("click", () => {
+      els.rawInput.value = "";
+      els.jsonInput.value = "";
+      els.processorEntity.value = "";
+      els.billingCountry.value = "US";
+      els.checkoutUiMode.value = "custom";
+      els.outputUrlMode.value = "";
+      els.localToken.value = "";
+      els.requestPayload.value = "";
+      setText("sessionId", "");
+      setText("stripeShortUrl", "");
+      setText("providerUrl", "");
+      setText("canonicalUrl", "");
+      setText("selectedUrl", "");
+      setStatus("等待输入。");
+    });
+
+    document.getElementById("demoBtn").addEventListener("click", () => {
+      els.rawInput.value = "https://chatgpt.com/checkout/openai_llc/cs_live_demo123ABC";
+      els.jsonInput.value = JSON.stringify({
+        checkout_session_id: "cs_live_demo123ABC",
+        processor_entity: "openai_llc",
+        checkout_url: "https://checkout.stripe.com/c/pay/cs_live_demo123ABC#fidkdWxOYHwnPyd1blpxYHZxWjA0S2xVdemoLongFragment",
+      }, null, 2);
+      els.checkoutUiMode.value = "hosted";
+      els.outputUrlMode.value = "provider";
+      els.requestPayload.value = JSON.stringify({
+        checkout_ui_mode: "hosted",
+        plan_name: "chatgptteamplan",
+        billing_details: {
+          country: "US",
+          currency: "USD",
+        },
+      }, null, 2);
+      parse();
+    });
+
+    document.querySelectorAll("[data-copy]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const id = button.getAttribute("data-copy");
+        const value = els[id].textContent;
+        if (!value || value === "-") return;
+        await navigator.clipboard.writeText(value);
+        setStatus("已复制：" + button.previousElementSibling.textContent, "ok");
+      });
+    });
+  </script>
+</body>
+</html>
