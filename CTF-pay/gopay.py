@@ -1706,6 +1706,9 @@ class GoPayCharger:
             f"status={r.status_code} keys={','.join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__} "
             f"body={raw_text[:500]!r}"
         )
+        if r.status_code >= 400 and self._qris_has_pin_challenge(data):
+            self.log(f"[gopay-qris] response {method.upper()} {urlsplit(url).path} returned PIN challenge status={r.status_code}")
+            return data
         if r.status_code >= 400:
             detail = ""
             if isinstance(data, dict):
@@ -1718,6 +1721,18 @@ class GoPayCharger:
                 )
             raise GoPayError(f"qris {method.upper()} {path} {r.status_code}{detail}: {raw_text[:600]}")
         return data if isinstance(data, dict) else {}
+
+    def _qris_has_pin_challenge(self, data: Any) -> bool:
+        if not isinstance(data, dict):
+            return False
+        value = ((((data.get("data") or {}).get("challenge") or {}).get("action") or {}).get("value") or {})
+        action_type = (((data.get("data") or {}).get("challenge") or {}).get("action") or {}).get("type")
+        return (
+            action_type == "GOPAY_PIN_CHALLENGE"
+            and isinstance(value, dict)
+            and bool(value.get("challenge_id"))
+            and bool(value.get("client_id"))
+        )
 
     def _qris_explore(self, qris: str) -> dict:
         retry_limit = max(1, int(self.gopay_cfg.get("qris_explore_retries") or QRIS_EXPLORE_RETRY_LIMIT))

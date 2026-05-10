@@ -689,6 +689,65 @@ def test_qris_request_reuses_auto_unbind_raw_headers(monkeypatch):
     assert signed[0]["body"].startswith('{"type":"QR_CODE"')
 
 
+def test_qris_request_returns_pin_challenge_on_461(monkeypatch):
+    charger = gopay.GoPayCharger(
+        requests.Session(),
+        {
+            "qr_payment": True,
+            "pin": "123456",
+            "qris_headers": {
+                "authorization": "Bearer token",
+                "x-m1": "m1",
+                "x-uniqueid": "unique",
+                "x-phonemake": "Google",
+                "x-phonemodel": "Pixel",
+                "x-deviceos": "Android, 12",
+                "x-appversion": "2.8.0",
+                "x-appid": "com.gojek.gopay",
+                "x-apptype": "GOPAY",
+                "x-platform": "Android",
+            },
+        },
+        otp_provider=lambda: "123456",
+        log=lambda _m: None,
+    )
+
+    def fake_signed(headers, **kwargs):
+        out = dict(headers)
+        out["x-e1"] = "fresh"
+        return out
+
+    class Resp:
+        status_code = 461
+        text = '{"success":false}'
+
+        def json(self):
+            return {
+                "data": {
+                    "challenge": {
+                        "action": {
+                            "type": "GOPAY_PIN_CHALLENGE",
+                            "value": {
+                                "challenge_id": "challenge-id",
+                                "client_id": "client-id",
+                            },
+                        }
+                    }
+                },
+                "success": False,
+                "errors": [{"code": "GoPay-125"}],
+            }
+
+    monkeypatch.setattr(gopay, "_signed_gopay_headers", fake_signed)
+    monkeypatch.setattr(charger, "_request_ext", lambda *a, **k: Resp())
+
+    resp = charger._qris_request("PATCH", "/v3/payments/pay-id/capture", {"challenge": {}})
+
+    challenge = resp["data"]["challenge"]["action"]["value"]
+    assert challenge["challenge_id"] == "challenge-id"
+    assert challenge["client_id"] == "client-id"
+
+
 def test_qris_headers_prefer_auto_unbind_over_stale_headers(monkeypatch):
     signed: list[dict] = []
     raw_request = "\n".join([
