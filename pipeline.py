@@ -856,6 +856,13 @@ class GoPayAccountUnavailableError(PaymentError):
         super().__init__(message, code="gopay_account_unavailable")
 
 
+class AlreadyPaidError(PaymentError):
+    """ChatGPT says the current account is already on a paid plan."""
+
+    def __init__(self, message: str):
+        super().__init__(message, code="already_paid")
+
+
 def _codex_oauth_client_id_from_card_cfg(cfg: dict) -> str:
     """Resolve Codex OAuth client_id for child card.py processes.
 
@@ -1068,6 +1075,13 @@ def pay(card_config_path, session_token=None, access_token=None,
         return {"status": status, "raw": result_json}
 
     if proc.returncode != 0:
+        tail_text = "\n".join(output_tail[-20:])
+        if "user is already paid" in tail_text.lower():
+            detail = next(
+                (x for x in reversed(output_tail) if "user is already paid" in x.lower()),
+                "User is already paid",
+            )
+            raise AlreadyPaidError(detail[:500])
         if gopay_account_unavailable:
             detail = next(
                 (x for x in reversed(output_tail) if "payment/process 400" in x),
@@ -1199,6 +1213,21 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
             }
         except PaymentError as e:
             record["payment"] = {"status": "error", "email": reg.get("email", ""), "error": str(e)[:200]}
+            if getattr(e, "code", "") == "already_paid":
+                ok, rt_status = _handle_already_paid_account(
+                    reg.get("email", ""),
+                    card_cfg or {},
+                    reg_acc or reg,
+                    task_id=log_label,
+                    email_domain=picked_domain,
+                    reason=str(e)[:500],
+                )
+                record["payment"]["status"] = "already_paid"
+                record["already_paid_rt_check"] = rt_status
+                _append_result(record)
+                if ok:
+                    return record
+                raise
             _pool_payment_result(
                 reg,
                 {"status": "error", "raw": {}, "error": str(e)[:200]},
@@ -1960,6 +1989,76 @@ def _pool_rt_result(email: str, refresh_token: str, *, stage: str = "rt_obtained
     )
 
 
+def _handle_already_paid_account(email: str, card_cfg: dict, account: dict | None,
+                                 *, task_id: str = "", email_domain: str = "",
+                                 reason: str = "User is already paid") -> tuple[bool, str]:
+    email = _norm_email(email or (account or {}).get("email"))
+    account = dict(account or {})
+    if not email:
+        return False, "missing_email"
+    rt = (
+        str(account.get("refresh_token") or "").strip()
+        or _find_latest_refresh_token_for_email(email)
+    )
+    if not rt:
+        mail_cfg = _load_oauth_mail_cfg(card_cfg or {})
+        proxy_url = str((card_cfg or {}).get("proxy") or "")
+        cpa_cfg = (card_cfg or {}).get("cpa") or {}
+        sub2api_cfg = (card_cfg or {}).get("sub2api") or {}
+        client_id = str(cpa_cfg.get("oauth_client_id") or sub2api_cfg.get("oauth_client_id") or "").strip()
+        if client_id and not os.environ.get("OAUTH_CODEX_CLIENT_ID"):
+            os.environ["OAUTH_CODEX_CLIENT_ID"] = client_id
+        password = account.get("password") or account.get("account_password") or _password_from_email(email)
+        rt, fail = _exchange_rt_with_classification(email, password, mail_cfg, proxy_url)
+        if not rt:
+            fail_reason = fail or "rt_detection_failed"
+            _set_account_oauth_status(email, "transient_failed", fail_reason)
+            _pool_update(
+                email,
+                "registration_failed",
+                "already_paid_rt_failed",
+                f"failed_plus:{fail_reason}",
+                email=email,
+                chatgpt_email=email,
+                plan_type=_pool_plan_type(card_cfg) or "plus",
+                payment_status="already_paid",
+                task_id=task_id,
+                email_domain=email_domain,
+            )
+            return False, fail_reason
+
+    try:
+        if account.get("id"):
+            get_db().update_registered_account_refresh_token(int(account["id"]), rt)
+        get_db().add_card_result({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "status": "succeeded",
+            "chatgpt_email": email,
+            "email": email,
+            "session_id": str(account.get("device_id") or ""),
+            "channel": "already_paid_rt_check",
+            "error": reason[:500],
+            "refresh_token": rt,
+        })
+    except Exception as e:
+        print(f"[already-paid] {email} 保存 RT 检测结果失败: {e}")
+    _set_account_oauth_status(email, "succeeded")
+    _pool_update(
+        email,
+        "plus_with_rt",
+        "already_paid_rt_ok",
+        "already paid and RT detected",
+        email=email,
+        chatgpt_email=email,
+        refresh_token=rt,
+        plan_type=_pool_plan_type(card_cfg) or "plus",
+        payment_status="already_paid",
+        task_id=task_id,
+        email_domain=email_domain,
+    )
+    return True, "ok"
+
+
 def _release_outlook_mail_account(email: str, reason: str) -> None:
     target = _norm_email(email)
     if not target:
@@ -2283,6 +2382,21 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         return result
     except PaymentError as e:
         record["payment"] = {"status": "error", "email": email, "error": str(e)[:200]}
+        if getattr(e, "code", "") == "already_paid" and email:
+            ok, rt_status = _handle_already_paid_account(
+                email,
+                card_cfg or {},
+                account or {"email": email},
+                task_id=log_label,
+                email_domain=record.get("domain", ""),
+                reason=str(e)[:500],
+            )
+            record["payment"]["status"] = "already_paid"
+            record["already_paid_rt_check"] = rt_status
+            _append_result(record)
+            if ok:
+                return {"status": "already_paid", "email": email, "rt_check": rt_status}
+            raise
         if email:
             _pool_payment_result(
                 account or {"email": email},
