@@ -8798,12 +8798,12 @@ def run(
 
     gopay_verified_result = init_ctx.get("gopay_verified_result")
     if isinstance(gopay_verified_result, dict):
-        _log(f"\n日志已保存到: {LOG_FILE}")
-        return gopay_verified_result
-
-    # Step 6
-    with _http_session_stage_proxy(http, stage_proxy_cfg, "poll"):
-        result = poll_result(http, pk, session_id, stripe_ver)
+        _log("      GoPay 已完成 ChatGPT 校验，跳过 Stripe poll，继续执行 RT/记录收尾 ...")
+        result = gopay_verified_result
+    else:
+        # Step 6
+        with _http_session_stage_proxy(http, stage_proxy_cfg, "poll"):
+            result = poll_result(http, pk, session_id, stripe_ver)
 
     # 记录结果
     chatgpt_email = fresh_cfg.get("_chatgpt_email", card.get("email", ""))
