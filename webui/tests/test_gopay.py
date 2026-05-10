@@ -802,6 +802,49 @@ def test_qris_capture_pin_loop_reuses_461_challenge_until_success(monkeypatch):
     assert capture_bodies[2]["challenge"]["value"]["pin_token"] == "token-challenge-2"
 
 
+def test_qris_capture_marks_wallet_last_used_before_pin_token(monkeypatch):
+    charger = build_charger()
+    calls: list[tuple[str, str, dict | None]] = []
+    responses = [
+        {
+            "data": {
+                "challenge": {
+                    "action": {
+                        "type": "GOPAY_PIN_CHALLENGE",
+                        "value": {"challenge_id": "challenge-1", "client_id": "client-id"},
+                    }
+                }
+            },
+            "success": False,
+            "errors": [{"code": "GoPay-125", "message": "retry"}],
+        },
+        {"success": True, "data": {"status": "PAID"}},
+    ]
+
+    def fake_qris_request(method, path, body=None, **kwargs):
+        calls.append((method, path, body))
+        if path.endswith("/capture"):
+            return responses.pop(0)
+        if path == "/v1/customer/payment-options/settings/last-used":
+            return {"success": True}
+        if path == "/api/v1/users/pin/tokens":
+            return {"data": {"token": "pin-token"}}
+        return {}
+
+    monkeypatch.setattr(charger, "_qris_request", fake_qris_request)
+
+    resp = charger._qris_capture_with_pin_loop(
+        "payment-id",
+        {"challenge": None, "payment_instructions": [{"token": "wallet-token"}]},
+    )
+
+    assert resp["success"] is True
+    paths = [path for _method, path, _body in calls]
+    assert paths.index("/v1/customer/payment-options/settings/last-used") < paths.index("/api/v1/users/pin/tokens")
+    last_used_call = next(body for _method, path, body in calls if path == "/v1/customer/payment-options/settings/last-used")
+    assert last_used_call == {"token": "wallet-token"}
+
+
 def test_wait_qris_midtrans_terminal_accepts_settlement(monkeypatch):
     charger = build_charger()
 
@@ -820,6 +863,23 @@ def test_wait_qris_midtrans_terminal_accepts_settlement(monkeypatch):
 
     assert result["ok"] is True
     assert result["status"] == "settlement"
+
+
+def test_follow_qris_finish_redirect_marks_redirect_status_failed(monkeypatch):
+    charger = build_charger()
+
+    class Resp:
+        status_code = 200
+        url = "https://checkout.stripe.com/c/pay/cs_live_test?redirect_status=failed"
+
+    monkeypatch.setattr(charger, "_request_ext", lambda *a, **k: Resp())
+
+    result = charger._follow_qris_finish_redirect({
+        "response": {"finish_200_redirect_url": "https://pm-redirects.stripe.com/return/test"}
+    })
+
+    assert result["ok"] is False
+    assert result["redirect_failed"] is True
 
 
 def test_wait_qris_midtrans_terminal_uses_capture_success_without_status_poll(monkeypatch):

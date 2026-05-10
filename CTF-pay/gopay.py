@@ -1794,7 +1794,9 @@ class GoPayCharger:
         ).strip().lower()
         return status in ("success", "succeeded", "capture", "captured", "completed", "paid")
 
-    def _qris_pin_token(self, challenge_id: str, client_id: str) -> str:
+    def _qris_pin_token(self, challenge_id: str, client_id: str, payment_option_token: str = "") -> str:
+        if payment_option_token:
+            self._qris_mark_last_used(payment_option_token)
         self._qris_request("GET", f"/api/v2/challenges/{challenge_id}/pin-page")
         pin_resp = self._qris_request("POST", "/api/v1/users/pin/tokens", {
             "pin": self.pin,
@@ -1807,9 +1809,28 @@ class GoPayCharger:
             raise GoPayError(f"qris pin token missing: {json.dumps(pin_resp, ensure_ascii=False)[:500]}")
         return pin_token
 
+    def _qris_mark_last_used(self, payment_option_token: str) -> dict:
+        token = str(payment_option_token or "").strip()
+        if not token:
+            return {"ok": False, "reason": "missing_token"}
+        try:
+            resp = self._qris_request(
+                "PUT",
+                "/v1/customer/payment-options/settings/last-used",
+                {"token": token},
+            )
+            self.log("[gopay-qris] marked wallet payment option as last-used")
+            return {"ok": True, "response": resp}
+        except Exception as exc:
+            self.log(f"[gopay-qris] mark last-used failed: {type(exc).__name__}: {str(exc)[:160]}")
+            return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
     def _qris_capture_with_pin_loop(self, payment_id: str, capture_body: dict) -> dict:
         max_attempts = max(1, int(self.gopay_cfg.get("qris_capture_pin_attempts") or 3))
         current_body = dict(capture_body)
+        instructions = current_body.get("payment_instructions") if isinstance(current_body.get("payment_instructions"), list) else []
+        first_instruction = instructions[0] if instructions and isinstance(instructions[0], dict) else {}
+        payment_option_token = str(first_instruction.get("token") or "")
         last_resp: dict = {}
         for attempt in range(1, max_attempts + 1):
             resp = self._qris_request(
@@ -1834,7 +1855,7 @@ class GoPayCharger:
             challenge_id = str(challenge.get("challenge_id") or "")
             challenge_client_id = str(challenge.get("client_id") or "")
             self.log(f"[gopay-qris] capture requires PIN attempt={attempt}/{max_attempts} challenge_id={challenge_id[:8]}...")
-            pin_token = self._qris_pin_token(challenge_id, challenge_client_id)
+            pin_token = self._qris_pin_token(challenge_id, challenge_client_id, payment_option_token)
             current_body = dict(current_body)
             current_body["challenge"] = {
                 "action": None,
@@ -1875,10 +1896,13 @@ class GoPayCharger:
                 f"status={getattr(r, 'status_code', '?')} "
                 f"url={str(getattr(r, 'url', finish_url))[:160]}"
             )
+            final_url = str(getattr(r, "url", finish_url))
+            redirect_failed = "redirect_status=failed" in final_url.lower()
             return {
-                "ok": 200 <= int(getattr(r, "status_code", 0) or 0) < 400,
+                "ok": 200 <= int(getattr(r, "status_code", 0) or 0) < 400 and not redirect_failed,
                 "status_code": getattr(r, "status_code", None),
-                "url": str(getattr(r, "url", finish_url)),
+                "url": final_url,
+                "redirect_failed": redirect_failed,
             }
         except Exception as exc:
             self.log(f"[gopay-qris] finish redirect failed: {type(exc).__name__}: {str(exc)[:160]}")
