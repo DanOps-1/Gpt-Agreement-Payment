@@ -2098,7 +2098,12 @@ class GoPayCharger:
                         timeout=DEFAULT_TIMEOUT,
                         retry_label="midtrans snap qris status",
                     )
-                    data = r.json() if r.text else {}
+                    raw_text = r.text or ""
+                    body_preview = raw_text[:600].replace("\r", "\\r").replace("\n", "\\n")
+                    try:
+                        data = r.json() if raw_text else {}
+                    except Exception:
+                        data = {}
                     status = str(
                         (data or {}).get("transaction_status")
                         or (data or {}).get("status")
@@ -2107,7 +2112,9 @@ class GoPayCharger:
                     ).lower()
                     self.log(
                         f"[gopay-qris] midtrans snap status attempt={attempt} "
-                        f"method=GET url={url} http={r.status_code} transaction_status={status or '-'}"
+                        f"method=GET url={url} http={r.status_code} "
+                        f"content_type={str(r.headers.get('content-type') or '-')[:80]} "
+                        f"transaction_status={status or '-'} body={body_preview!r}"
                     )
                     if r.status_code == 200 and status in terminal:
                         return {"ok": True, "status": status, "source": "midtrans_snap_status", "body": data}
@@ -2262,8 +2269,8 @@ class GoPayCharger:
         final_resp = self._qris_capture_with_pin_loop(payment_id, capture_body)
         self.log(f"[gopay-qris] final capture ok payment_id={payment_id}")
         gwa_settlement = self._qris_try_gwa_settlement(payment_id, qr_info)
-        finish_redirect = self._follow_qris_finish_redirect(qr_info)
         midtrans_status = self._wait_qris_midtrans_terminal(qr_info, final_resp)
+        finish_redirect = self._follow_qris_finish_redirect(qr_info)
         return {
             "payment_id": payment_id,
             "merchant_id": merchant_id,
@@ -2451,12 +2458,7 @@ class GoPayCharger:
         saw_http_200 = False
         success_notify = self._chatgpt_payments_success(cs_id)
         last_accounts_check: dict = {}
-        return_retry_interval = max(5.0, float(self.gopay_cfg.get("qris_finish_redirect_retry_s") or 8.0))
-        next_return_retry = 0.0
         while time.time() < deadline:
-            if qris_info and time.time() >= next_return_retry:
-                self._follow_qris_finish_redirect(qris_info)
-                next_return_retry = time.time() + return_retry_interval
             r = self.cs.get(
                 "https://chatgpt.com/checkout/verify",
                 params={
