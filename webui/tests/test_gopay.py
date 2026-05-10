@@ -787,12 +787,19 @@ def test_qris_capture_pin_loop_reuses_461_challenge_until_success(monkeypatch):
 
     monkeypatch.setattr(charger, "_qris_request", fake_qris_request)
 
-    resp = charger._qris_capture_with_pin_loop("payment-id", {"challenge": {}})
+    resp = charger._qris_capture_with_pin_loop("payment-id", {"challenge": None})
 
     assert resp["success"] is True
     capture_bodies = [body for _method, path, body in calls if path.endswith("/capture")]
-    assert capture_bodies[1]["challenge"]["token"] == "token-challenge-1"
-    assert capture_bodies[2]["challenge"]["token"] == "token-challenge-2"
+    assert capture_bodies[0]["challenge"] is None
+    assert capture_bodies[1]["challenge"]["action"] is None
+    assert capture_bodies[1]["challenge"]["type"] == "GOPAY_PIN_CHALLENGE"
+    assert capture_bodies[1]["challenge"]["value"]["pin_token"] == "token-challenge-1"
+    assert capture_bodies[1]["challenge"]["metadata"] == {
+        "challenge_id": "challenge-1",
+        "client_id": "client-id",
+    }
+    assert capture_bodies[2]["challenge"]["value"]["pin_token"] == "token-challenge-2"
 
 
 def test_wait_qris_midtrans_terminal_accepts_settlement(monkeypatch):

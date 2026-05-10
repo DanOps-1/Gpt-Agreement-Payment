@@ -1719,7 +1719,12 @@ class GoPayCharger:
         except Exception:
             data = {}
         response_keys = ",".join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__
-        if debug_logs or r.status_code >= 400:
+        is_allowed_pin_challenge = (
+            allow_pin_challenge
+            and r.status_code >= 400
+            and self._qris_has_pin_challenge(data)
+        )
+        if debug_logs or (r.status_code >= 400 and not is_allowed_pin_challenge):
             self.log(
                 f"[gopay-qris] response {method.upper()} {urlsplit(url).path} "
                 f"status={r.status_code} keys={response_keys} "
@@ -1727,7 +1732,7 @@ class GoPayCharger:
             )
         else:
             self.log(f"[gopay-qris] {method.upper()} {urlsplit(url).path} -> {r.status_code}")
-        if allow_pin_challenge and r.status_code >= 400 and self._qris_has_pin_challenge(data):
+        if is_allowed_pin_challenge:
             self.log(f"[gopay-qris] response {method.upper()} {urlsplit(url).path} returned PIN challenge status={r.status_code}")
             return data
         if r.status_code >= 400:
@@ -1832,9 +1837,13 @@ class GoPayCharger:
             pin_token = self._qris_pin_token(challenge_id, challenge_client_id)
             current_body = dict(current_body)
             current_body["challenge"] = {
+                "action": None,
+                "value": {"pin_token": pin_token},
                 "type": "GOPAY_PIN_CHALLENGE",
-                "token": pin_token,
-                "challenge_id": challenge_id,
+                "metadata": {
+                    "challenge_id": challenge_id,
+                    "client_id": challenge_client_id,
+                },
             }
 
         raise GoPayError(
@@ -2005,7 +2014,7 @@ class GoPayCharger:
             "payment_method": None,
             "channel_type": "ONLINE_GATEWAY",
             "additional_data": self._qris_capture_additional_data(explore, amount_value, amount_currency),
-            "challenge": {},
+            "challenge": None,
             "metadata": payment.get("metadata") or explore.get("metadata", {}),
             "checksum": checksum,
             "order_signature": explore.get("order_signature", {}),
