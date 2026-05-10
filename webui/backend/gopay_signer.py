@@ -96,6 +96,7 @@ def sign_x_e1(
     host: str,
     path: str,
     body: str = "",
+    body_for_signature: str | None = None,
     key: str = DEFAULT_HMAC_KEY,
     nonce_hex: str | None = None,
     nonce_marker_hex: str | None = None,
@@ -110,7 +111,7 @@ def sign_x_e1(
         method=method,
         host=host,
         path=path,
-        body=body,
+        body=body if body_for_signature is None else body_for_signature,
         nonce_hex=nonce_hex,
         timestamp_ms=timestamp_ms,
     )
@@ -125,6 +126,7 @@ def signed_headers(
     host: str,
     path: str,
     body: str,
+    body_for_signature: str | None = None,
     key: str = DEFAULT_HMAC_KEY,
     nonce_marker_hex: str | None = None,
 ) -> dict[str, str]:
@@ -144,6 +146,7 @@ def signed_headers(
         host=host,
         path=path,
         body=body,
+        body_for_signature=body_for_signature,
         key=key,
         nonce_marker_hex=nonce_marker_hex or nonce_marker_from_x_e1(captured_x_e1),
     )

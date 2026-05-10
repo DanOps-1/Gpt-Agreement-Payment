@@ -1622,7 +1622,24 @@ class GoPayCharger:
             base = f"https://{base}"
         return urljoin(base.rstrip("/") + "/", path.lstrip("/"))
 
-    def _qris_signed_headers(self, method: str, url: str, body_text: str) -> dict[str, str]:
+    def _qris_body_for_signature(self, method: str, path: str, body: dict | None, body_text: str) -> tuple[str, str]:
+        if (
+            method.upper() == "POST"
+            and path.split("?", 1)[0] == "/v1/explore"
+            and isinstance(body, dict)
+            and isinstance(body.get("data"), str)
+            and body.get("type") == "QR_CODE"
+        ):
+            return body["data"], "json.data"
+        return body_text, "body"
+
+    def _qris_signed_headers(
+        self,
+        method: str,
+        url: str,
+        body_text: str,
+        body_for_signature: str | None = None,
+    ) -> dict[str, str]:
         if _signed_gopay_headers is None:
             raise GoPayError("gopay qris signer unavailable: webui.backend.gopay_signer import failed")
         parsed = urlsplit(url)
@@ -1637,6 +1654,8 @@ class GoPayCharger:
             or ""
         ).strip()
         kwargs = {"method": method.upper(), "host": parsed.netloc, "path": path, "body": body_text}
+        if body_for_signature is not None:
+            kwargs["body_for_signature"] = body_for_signature
         if key:
             kwargs["key"] = key
         if nonce_marker:
@@ -1646,10 +1665,20 @@ class GoPayCharger:
     def _qris_request(self, method: str, path: str, body: dict | None = None) -> dict:
         url = self._qris_url(path)
         body_text = _json_dumps_compact(body) if body is not None else ""
-        headers = self._qris_signed_headers(method, url, body_text)
+        parsed = urlsplit(url)
+        sign_path = parsed.path or "/"
+        if parsed.query:
+            sign_path = f"{sign_path}?{parsed.query}"
+        body_for_signature, body_signature_source = self._qris_body_for_signature(method, sign_path, body, body_text)
+        headers = self._qris_signed_headers(method, url, body_text, body_for_signature=body_for_signature)
         self.log("[gopay-qris] === request start ===")
         self.log(f"[gopay-qris] method={method.upper()} url={url}")
         self.log(f"[gopay-qris] headers={_json_for_log(headers)}")
+        self.log(
+            "[gopay-qris] x-e1 body_signature_source="
+            f"{body_signature_source} "
+            f"signature_len={len(body_for_signature.encode('utf-8'))}"
+        )
         xe1 = _header_value(headers, "x-e1")
         try:
             nonce = xe1.split(":", 2)[1] if xe1 else ""

@@ -626,6 +626,7 @@ def test_qris_request_resigns_x_e1_per_body(monkeypatch):
     assert signed[0]["method"] == "POST"
     assert signed[0]["path"] == "/v1/explore"
     assert '"type":"QR_CODE"' in signed[0]["body"]
+    assert signed[0]["body_for_signature"] == "000201010212QRISDATA"
     assert signed[0]["headers"]["authorization"] == "Bearer token"
 
 

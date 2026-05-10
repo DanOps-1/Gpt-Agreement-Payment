@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from webui.backend.gopay_signer import DEFAULT_X_E2, nonce_marker_from_x_e1, signed_headers
+from webui.backend.gopay_signer import DEFAULT_X_E2, nonce_marker_from_x_e1, sign_x_e1, signed_headers
 
 
 BASELINE_HEADERS = {
@@ -96,3 +96,24 @@ def test_signed_headers_explicit_nonce_marker_overrides_captured_x_e1_marker():
     nonce_hex = headers["x-e1"].split(":")[1]
     assert nonce_hex[64:96] == "0" * 32
     assert nonce_hex[96:128] == "71cf9b42ccb56d0ee0047d38fc7f0000"
+
+
+def test_sign_x_e1_can_use_data_field_as_signature_body():
+    kwargs = {
+        "method": "POST",
+        "host": "customer.gopayapi.com",
+        "path": "/v1/explore",
+        "body": '{"type":"QR_CODE","data":"000201010212QRISDATA"}',
+        "nonce_hex": "1" * 160,
+        "timestamp_ms": 1778387903112,
+    }
+
+    full_body_signature = sign_x_e1(BASELINE_HEADERS, **kwargs)
+    data_field_signature = sign_x_e1(
+        BASELINE_HEADERS,
+        **kwargs,
+        body_for_signature="000201010212QRISDATA",
+    )
+
+    assert data_field_signature != full_body_signature
+    assert data_field_signature.split(":", 1)[1] == full_body_signature.split(":", 1)[1]
