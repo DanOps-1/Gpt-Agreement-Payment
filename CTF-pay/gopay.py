@@ -1657,7 +1657,14 @@ class GoPayCharger:
             kwargs["nonce_marker_hex"] = nonce_marker
         return _signed_gopay_headers(self._qris_base_headers(), **kwargs)
 
-    def _qris_request(self, method: str, path: str, body: dict | None = None) -> dict:
+    def _qris_request(
+        self,
+        method: str,
+        path: str,
+        body: dict | None = None,
+        *,
+        allow_pin_challenge: bool = False,
+    ) -> dict:
         url = self._qris_url(path)
         body_text = _json_dumps_compact(body) if body is not None else ""
         parsed = urlsplit(url)
@@ -1706,7 +1713,7 @@ class GoPayCharger:
             f"status={r.status_code} keys={','.join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__} "
             f"body={raw_text[:500]!r}"
         )
-        if r.status_code >= 400 and self._qris_has_pin_challenge(data):
+        if allow_pin_challenge and r.status_code >= 400 and self._qris_has_pin_challenge(data):
             self.log(f"[gopay-qris] response {method.upper()} {urlsplit(url).path} returned PIN challenge status={r.status_code}")
             return data
         if r.status_code >= 400:
@@ -1733,6 +1740,66 @@ class GoPayCharger:
             and bool(value.get("challenge_id"))
             and bool(value.get("client_id"))
         )
+
+    def _qris_error_summary(self, data: Any) -> str:
+        if not isinstance(data, dict):
+            return type(data).__name__
+        errors = data.get("errors") if isinstance(data.get("errors"), list) else []
+        first = errors[0] if errors and isinstance(errors[0], dict) else {}
+        err = data.get("error") if isinstance(data.get("error"), dict) else {}
+        return (
+            f"success={data.get('success')!r}"
+            f" code={_qris_error_code(data) or '-'}"
+            f" message={err.get('description') or first.get('message') or '-'}"
+        )
+
+    def _qris_capture_succeeded(self, data: Any) -> bool:
+        if not isinstance(data, dict):
+            return False
+        if self._qris_has_pin_challenge(data):
+            return False
+        if data.get("success") is True:
+            return True
+        if data.get("success") is False:
+            return False
+        errors = data.get("errors") if isinstance(data.get("errors"), list) else []
+        if errors:
+            return False
+        payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+        status = str(
+            payload.get("status")
+            or payload.get("state")
+            or payload.get("transaction_status")
+            or payload.get("payment_status")
+            or ""
+        ).strip().lower()
+        return status in ("success", "succeeded", "capture", "captured", "completed", "paid")
+
+    def _follow_qris_finish_redirect(self, qr_info: dict) -> None:
+        response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
+        finish_url = str(
+            response.get("finish_200_redirect_url")
+            or response.get("finish_redirect_url")
+            or ""
+        ).strip()
+        if not finish_url:
+            self.log("[gopay-qris] finish redirect missing; skip")
+            return
+        try:
+            r = self._request_ext(
+                "get",
+                finish_url,
+                allow_redirects=True,
+                timeout=DEFAULT_TIMEOUT,
+                retry_label="gopay qris finish redirect",
+            )
+            self.log(
+                "[gopay-qris] finish redirect visited "
+                f"status={getattr(r, 'status_code', '?')} "
+                f"url={str(getattr(r, 'url', finish_url))[:160]}"
+            )
+        except Exception as exc:
+            self.log(f"[gopay-qris] finish redirect failed: {type(exc).__name__}: {str(exc)[:160]}")
 
     def _qris_explore(self, qris: str) -> dict:
         retry_limit = max(1, int(self.gopay_cfg.get("qris_explore_retries") or QRIS_EXPLORE_RETRY_LIMIT))
@@ -1846,7 +1913,12 @@ class GoPayCharger:
             "checksum": checksum,
             "order_signature": explore.get("order_signature", {}),
         }
-        capture_resp = self._qris_request("PATCH", f"/v3/payments/{payment_id}/capture", capture_body)
+        capture_resp = self._qris_request(
+            "PATCH",
+            f"/v3/payments/{payment_id}/capture",
+            capture_body,
+            allow_pin_challenge=True,
+        )
         capture_data = capture_resp.get("data") if isinstance(capture_resp.get("data"), dict) else {}
         challenge = (((capture_data.get("challenge") or {}).get("action") or {}).get("value") or {})
         challenge_id = str(challenge.get("challenge_id") or "")
@@ -1872,7 +1944,14 @@ class GoPayCharger:
             "challenge_id": challenge_id,
         }
         final_resp = self._qris_request("PATCH", f"/v3/payments/{payment_id}/capture", capture_body)
+        if not self._qris_capture_succeeded(final_resp):
+            raise GoPayError(
+                "qris final capture did not succeed: "
+                + self._qris_error_summary(final_resp)
+                + f" body={json.dumps(final_resp, ensure_ascii=False)[:600]}"
+            )
         self.log(f"[gopay-qris] final capture ok payment_id={payment_id}")
+        self._follow_qris_finish_redirect(qr_info)
         return {
             "payment_id": payment_id,
             "merchant_id": merchant_id,
@@ -1946,6 +2025,7 @@ class GoPayCharger:
     def _chatgpt_verify(self, cs_id: str, timeout_s: float = 60.0) -> dict:
         """Poll chatgpt verify until plan is active."""
         deadline = time.time() + max(1.0, float(timeout_s or 60.0))
+        saw_http_200 = False
         while time.time() < deadline:
             r = self.cs.get(
                 "https://chatgpt.com/checkout/verify",
@@ -1958,10 +2038,21 @@ class GoPayCharger:
                 allow_redirects=True,
             )
             if r.status_code == 200:
-                self.log("[gopay] chatgpt verify ok")
-                return {"state": "succeeded", "cs_id": cs_id}
+                saw_http_200 = True
+                try:
+                    data = r.json()
+                except Exception:
+                    data = {}
+                state = str(data.get("state") or data.get("status") or "").lower() if isinstance(data, dict) else ""
+                if state in ("verified", "succeeded", "success", "active"):
+                    self.log("[gopay] chatgpt verify ok")
+                    return {"state": "succeeded", "cs_id": cs_id}
+                if not data and "checkout/verify" in str(getattr(r, "url", "")):
+                    self.log("[gopay] chatgpt verify returned 200 html/page, waiting for terminal state")
+                elif isinstance(data, dict):
+                    self.log(f"[gopay] chatgpt verify pending state={state or '-'}")
             time.sleep(2)
-        return {"state": "verify_timeout", "cs_id": cs_id}
+        return {"state": "verify_timeout", "cs_id": cs_id, "verify_http_200_seen": saw_http_200}
 
     # ───── Top-level driver ─────
 

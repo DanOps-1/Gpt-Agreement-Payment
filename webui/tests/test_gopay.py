@@ -741,11 +741,38 @@ def test_qris_request_returns_pin_challenge_on_461(monkeypatch):
     monkeypatch.setattr(gopay, "_signed_gopay_headers", fake_signed)
     monkeypatch.setattr(charger, "_request_ext", lambda *a, **k: Resp())
 
-    resp = charger._qris_request("PATCH", "/v3/payments/pay-id/capture", {"challenge": {}})
+    resp = charger._qris_request(
+        "PATCH",
+        "/v3/payments/pay-id/capture",
+        {"challenge": {}},
+        allow_pin_challenge=True,
+    )
 
     challenge = resp["data"]["challenge"]["action"]["value"]
     assert challenge["challenge_id"] == "challenge-id"
     assert challenge["client_id"] == "client-id"
+
+
+def test_qris_final_capture_rejects_second_pin_challenge(monkeypatch):
+    charger = build_charger()
+    final_resp = {
+        "data": {
+            "challenge": {
+                "action": {
+                    "type": "GOPAY_PIN_CHALLENGE",
+                    "value": {
+                        "challenge_id": "challenge-id",
+                        "client_id": "client-id",
+                    },
+                }
+            }
+        },
+        "success": False,
+        "errors": [{"code": "GoPay-125", "message": "retry"}],
+    }
+
+    assert not charger._qris_capture_succeeded(final_resp)
+    assert charger._qris_has_pin_challenge(final_resp)
 
 
 def test_qris_headers_prefer_auto_unbind_over_stale_headers(monkeypatch):
