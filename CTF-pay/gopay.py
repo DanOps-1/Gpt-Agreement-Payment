@@ -654,6 +654,10 @@ class GoPayCharger:
         self.qr_wait_timeout = _float_cfg(gopay_cfg, "qr_wait_timeout", QR_WAIT_TIMEOUT_S)
         self.midtrans_page_url = ""
         self.gopay_activation_link_url = ""
+        self.stop_after_link_pin_url = bool(
+            self.gopay_cfg.get("stop_after_link_pin_url")
+            or self.gopay_cfg.get("debug_stop_after_link_pin_url")
+        )
         self.otp_provider = otp_provider
         self.log = log
         self.proxy_pool = _proxy_list_from_cfg(proxy_cfg, proxy)
@@ -2569,6 +2573,8 @@ class GoPayCharger:
         # ── Linking: OTP + first PIN
         self._gopay_validate_reference(reference_id)
         self._gopay_user_consent(reference_id)
+        if self.gopay_activation_link_url:
+            self.log(f"[gopay-test] OTP page url={self.gopay_activation_link_url}")
         print(
             f"GOPAY_OTP_TARGET phone={self.phone} country_code={self.country_code}",
             flush=True,
@@ -2577,6 +2583,13 @@ class GoPayCharger:
         if not otp:
             raise OTPCancelled("OTP not provided")
         challenge_id, client_id = self._gopay_validate_otp(reference_id, otp)
+        pin_url = (
+            "https://pin-web-client.gopayapi.com/"
+            f"?challenge_id={challenge_id}&client_id={client_id}"
+        )
+        self.log(f"[gopay-test] PIN page url={pin_url}")
+        if self.stop_after_link_pin_url:
+            raise GoPayError("stopped after link PIN page url for testing")
         pin_token = self._tokenize_pin(challenge_id, client_id)
         self._gopay_validate_pin(reference_id, pin_token)
 
