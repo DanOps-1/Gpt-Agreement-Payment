@@ -1927,7 +1927,8 @@ class GoPayCharger:
             self.log(
                 "[gopay-qris] finish redirect visited "
                 f"status={getattr(r, 'status_code', '?')} "
-                f"url={final_url[:160]}"
+                f"requested_url={finish_url[:260]} "
+                f"final_url={final_url[:260]}"
                 + (
                     f" return_status={return_result.get('status_code')}"
                     if return_result.get("attempted")
@@ -1958,6 +1959,10 @@ class GoPayCharger:
             if url and url not in candidates:
                 candidates.append(url)
 
+        finish_200_redirect_url = str(response.get("finish_200_redirect_url") or "").strip()
+        finish_redirect_url = str(response.get("finish_redirect_url") or "").strip()
+        add(finish_redirect_url)
+        add(finish_200_redirect_url)
         deeplink_url = str(response.get("deeplink_url") or "").strip()
         callback_url = ""
         if deeplink_url:
@@ -1966,10 +1971,6 @@ class GoPayCharger:
             if callback_url:
                 add(self._qris_success_callback_url(callback_url, response))
                 add(callback_url)
-        finish_200_redirect_url = str(response.get("finish_200_redirect_url") or "").strip()
-        finish_redirect_url = str(response.get("finish_redirect_url") or "").strip()
-        add(finish_200_redirect_url)
-        add(finish_redirect_url)
         def short_url(value: str, limit: int = 500) -> str:
             value = str(value or "").strip()
             if not value:
@@ -2106,7 +2107,7 @@ class GoPayCharger:
                     ).lower()
                     self.log(
                         f"[gopay-qris] midtrans snap status attempt={attempt} "
-                        f"http={r.status_code} transaction_status={status or '-'}"
+                        f"method=GET url={url} http={r.status_code} transaction_status={status or '-'}"
                     )
                     if r.status_code == 200 and status in terminal:
                         return {"ok": True, "status": status, "source": "midtrans_snap_status", "body": data}
