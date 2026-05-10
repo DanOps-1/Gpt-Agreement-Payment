@@ -1892,7 +1892,7 @@ class GoPayCharger:
             + f" body={json.dumps(last_resp, ensure_ascii=False)[:600]}"
         )
 
-    def _follow_qris_finish_redirect(self, qr_info: dict) -> dict:
+    def _follow_qris_finish_redirect(self, qr_info: dict, force_success_finish: bool = False) -> dict:
         response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
         candidates = self._qris_finish_redirect_candidates(response)
         if not candidates:
@@ -1903,6 +1903,10 @@ class GoPayCharger:
         for finish_url in candidates:
             attempt = self._visit_qris_finish_url(finish_url)
             attempts.append(attempt)
+            if force_success_finish and not self._qris_finish_url_is_success(finish_url):
+                if best is None and attempt.get("ok"):
+                    best = attempt
+                continue
             if attempt.get("ok"):
                 best = attempt
                 break
@@ -1950,6 +1954,13 @@ class GoPayCharger:
         except Exception as exc:
             self.log(f"[gopay-qris] finish redirect failed: {type(exc).__name__}: {str(exc)[:160]}")
             return {"ok": False, "requested_url": finish_url, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+    def _qris_finish_url_is_success(self, url: str) -> bool:
+        parsed = urlsplit(str(url or ""))
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        status_code = str((query.get("status_code") or [""])[0] or "")
+        transaction_status = str((query.get("transaction_status") or [""])[0] or "").lower()
+        return status_code == "200" or transaction_status in {"capture", "settlement", "settled", "success"}
 
     def _qris_finish_redirect_candidates(self, response: dict) -> list[str]:
         candidates: list[str] = []
@@ -2270,7 +2281,7 @@ class GoPayCharger:
         self.log(f"[gopay-qris] final capture ok payment_id={payment_id}")
         gwa_settlement = self._qris_try_gwa_settlement(payment_id, qr_info)
         midtrans_status = self._wait_qris_midtrans_terminal(qr_info, final_resp)
-        finish_redirect = self._follow_qris_finish_redirect(qr_info)
+        finish_redirect = self._follow_qris_finish_redirect(qr_info, force_success_finish=bool(midtrans_status.get("ok")))
         return {
             "payment_id": payment_id,
             "merchant_id": merchant_id,
