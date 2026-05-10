@@ -1852,7 +1852,7 @@ class GoPayCharger:
             + f" body={json.dumps(last_resp, ensure_ascii=False)[:600]}"
         )
 
-    def _follow_qris_finish_redirect(self, qr_info: dict) -> None:
+    def _follow_qris_finish_redirect(self, qr_info: dict) -> dict:
         response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
         finish_url = str(
             response.get("finish_200_redirect_url")
@@ -1861,7 +1861,7 @@ class GoPayCharger:
         ).strip()
         if not finish_url:
             self.log("[gopay-qris] finish redirect missing; skip")
-            return
+            return {"ok": False, "reason": "missing"}
         try:
             r = self._request_ext(
                 "get",
@@ -1875,10 +1875,31 @@ class GoPayCharger:
                 f"status={getattr(r, 'status_code', '?')} "
                 f"url={str(getattr(r, 'url', finish_url))[:160]}"
             )
+            return {
+                "ok": 200 <= int(getattr(r, "status_code", 0) or 0) < 400,
+                "status_code": getattr(r, "status_code", None),
+                "url": str(getattr(r, "url", finish_url)),
+            }
         except Exception as exc:
             self.log(f"[gopay-qris] finish redirect failed: {type(exc).__name__}: {str(exc)[:160]}")
+            return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
 
-    def _wait_qris_midtrans_terminal(self, qr_info: dict) -> dict:
+    def _qris_capture_terminal_status(self, capture_resp: dict) -> dict:
+        payload = capture_resp.get("data") if isinstance(capture_resp.get("data"), dict) else {}
+        status = str(
+            payload.get("status")
+            or payload.get("state")
+            or payload.get("transaction_status")
+            or payload.get("payment_status")
+            or ""
+        ).strip().lower()
+        ok = self._qris_capture_succeeded(capture_resp)
+        return {"ok": ok, "status": status or ("success" if ok else "unknown"), "body": capture_resp}
+
+    def _wait_qris_midtrans_terminal(self, qr_info: dict, capture_resp: dict | None = None) -> dict:
+        capture_status = self._qris_capture_terminal_status(capture_resp or {})
+        if capture_status.get("ok"):
+            return {"ok": True, "status": capture_status.get("status") or "paid", "source": "gopay_capture", "body": capture_resp or {}}
         response = qr_info.get("response") if isinstance(qr_info.get("response"), dict) else {}
         tx_id = str(response.get("transaction_id") or "").strip()
         order_id = str(response.get("order_id") or "").strip()
@@ -1901,11 +1922,14 @@ class GoPayCharger:
                     status = str((data or {}).get("transaction_status") or (data or {}).get("status") or "").lower()
                     self.log(f"[gopay-qris] midtrans status attempt={attempt} http={r.status_code} transaction_status={status or '-'}")
                     if r.status_code == 200 and status in terminal:
-                        return {"ok": True, "status": status, "body": data}
+                        return {"ok": True, "status": status, "source": "midtrans_status", "body": data}
+                    if r.status_code in (401, 403):
+                        self.log("[gopay-qris] midtrans status unauthorized; using GoPay capture result instead")
+                        return {"ok": False, "status": "unauthorized", "source": "midtrans_status"}
                 except Exception as exc:
                     self.log(f"[gopay-qris] midtrans status check failed: {type(exc).__name__}: {str(exc)[:120]}")
             time.sleep(2)
-        return {"ok": False, "status": "unknown"}
+        return {"ok": False, "status": "unknown", "source": "midtrans_status"}
 
     def _qris_explore(self, qris: str) -> dict:
         retry_limit = max(1, int(self.gopay_cfg.get("qris_explore_retries") or QRIS_EXPLORE_RETRY_LIMIT))
@@ -2021,14 +2045,15 @@ class GoPayCharger:
         }
         final_resp = self._qris_capture_with_pin_loop(payment_id, capture_body)
         self.log(f"[gopay-qris] final capture ok payment_id={payment_id}")
-        midtrans_status = self._wait_qris_midtrans_terminal(qr_info)
-        self._follow_qris_finish_redirect(qr_info)
+        finish_redirect = self._follow_qris_finish_redirect(qr_info)
+        midtrans_status = self._wait_qris_midtrans_terminal(qr_info, final_resp)
         return {
             "payment_id": payment_id,
             "merchant_id": merchant_id,
             "amount": amount_value,
             "currency": amount_currency,
             "capture": final_resp,
+            "finish_redirect": finish_redirect,
             "midtrans_status": midtrans_status,
             "qr_charge": qr_info,
         }
@@ -2094,11 +2119,17 @@ class GoPayCharger:
 
     # ───── Step 15: Stripe + ChatGPT verify ─────
 
-    def _chatgpt_verify(self, cs_id: str, timeout_s: float = 60.0) -> dict:
+    def _chatgpt_verify(self, cs_id: str, timeout_s: float = 60.0, qris_info: dict | None = None) -> dict:
         """Poll chatgpt verify until plan is active."""
         deadline = time.time() + max(1.0, float(timeout_s or 60.0))
         saw_http_200 = False
+        last_accounts_check: dict = {}
+        return_retry_interval = max(5.0, float(self.gopay_cfg.get("qris_finish_redirect_retry_s") or 8.0))
+        next_return_retry = 0.0
         while time.time() < deadline:
+            if qris_info and time.time() >= next_return_retry:
+                self._follow_qris_finish_redirect(qris_info)
+                next_return_retry = time.time() + return_retry_interval
             r = self.cs.get(
                 "https://chatgpt.com/checkout/verify",
                 params={
@@ -2123,8 +2154,22 @@ class GoPayCharger:
                     self.log("[gopay] chatgpt verify returned 200 html/page, waiting for terminal state")
                 elif isinstance(data, dict):
                     self.log(f"[gopay] chatgpt verify pending state={state or '-'}")
+            last_accounts_check = self._chatgpt_accounts_check()
+            if str(last_accounts_check.get("active_hint") or "") == "possible_active":
+                self.log("[gopay] accounts/check indicates active plan")
+                return {
+                    "state": "succeeded",
+                    "cs_id": cs_id,
+                    "verify_http_200_seen": saw_http_200,
+                    "accounts_check": last_accounts_check,
+                }
             time.sleep(2)
-        return {"state": "verify_timeout", "cs_id": cs_id, "verify_http_200_seen": saw_http_200}
+        return {
+            "state": "verify_timeout",
+            "cs_id": cs_id,
+            "verify_http_200_seen": saw_http_200,
+            "accounts_check": last_accounts_check,
+        }
 
     def _chatgpt_accounts_check(self) -> dict:
         try:
@@ -2209,10 +2254,10 @@ class GoPayCharger:
         print(f"GOPAY_QRIS_DATA={qris}", flush=True)
         qris_result = self._run_qris_app_payment(qris, qr_info)
         if cs_id:
-            result = self._chatgpt_verify(cs_id, timeout_s=self.qr_wait_timeout)
+            result = self._chatgpt_verify(cs_id, timeout_s=self.qr_wait_timeout, qris_info=qr_info)
         else:
             result = {"state": "succeeded", "cs_id": cs_id}
-        accounts_check = self._chatgpt_accounts_check() if cs_id else {}
+        accounts_check = result.get("accounts_check") if isinstance(result.get("accounts_check"), dict) else (self._chatgpt_accounts_check() if cs_id else {})
         result.update({
             "snap_token": snap_token,
             "qr_payload_type": kind,

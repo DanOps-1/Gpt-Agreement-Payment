@@ -487,7 +487,7 @@ def test_qr_payment_uses_qris_charge(monkeypatch):
     )
     monkeypatch.setattr(charger, "_save_qr_artifact", lambda qr_info: "output/gopay_qr/test.png")
     monkeypatch.setattr(charger, "_run_qris_app_payment", lambda qris, qr_info: qris_calls.append((qris, qr_info)) or {"payment_id": "A120260509150543TEST"})
-    monkeypatch.setattr(charger, "_chatgpt_verify", lambda cs_id, timeout_s=60.0: {"state": "succeeded", "cs_id": cs_id})
+    monkeypatch.setattr(charger, "_chatgpt_verify", lambda cs_id, timeout_s=60.0, **_kwargs: {"state": "succeeded", "cs_id": cs_id})
 
     result = charger._run_midtrans_qr(SNAP_TOKEN, "cs_live_test")
 
@@ -820,6 +820,74 @@ def test_wait_qris_midtrans_terminal_accepts_settlement(monkeypatch):
 
     assert result["ok"] is True
     assert result["status"] == "settlement"
+
+
+def test_wait_qris_midtrans_terminal_uses_capture_success_without_status_poll(monkeypatch):
+    charger = build_charger()
+    calls: list[str] = []
+    monkeypatch.setattr(charger, "_request_ext", lambda *a, **k: calls.append(a[1]) or pytest.fail("status poll should be skipped"))
+
+    result = charger._wait_qris_midtrans_terminal(
+        {"response": {"transaction_id": "tx-id", "order_id": "order-id"}},
+        {"success": True, "data": {"status": "PAID"}},
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "paid"
+    assert result["source"] == "gopay_capture"
+    assert calls == []
+
+
+def test_wait_qris_midtrans_terminal_stops_on_unauthorized(monkeypatch):
+    charger = build_charger()
+    calls: list[str] = []
+
+    class Resp:
+        status_code = 401
+        text = "{}"
+
+        def json(self):
+            return {}
+
+    def fake_request(_method, url, **_kwargs):
+        calls.append(url)
+        return Resp()
+
+    monkeypatch.setattr(charger, "_request_ext", fake_request)
+
+    result = charger._wait_qris_midtrans_terminal({
+        "response": {"transaction_id": "tx-id", "order_id": "order-id"}
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "unauthorized"
+    assert len(calls) == 1
+
+
+def test_chatgpt_verify_accepts_accounts_check_active_after_html(monkeypatch):
+    charger = build_charger()
+    sleeps: list[float] = []
+    return_calls: list[dict] = []
+    monkeypatch.setattr(gopay.time, "sleep", lambda s: sleeps.append(float(s)))
+    monkeypatch.setattr(charger, "_follow_qris_finish_redirect", lambda info: return_calls.append(info) or {"ok": True})
+    monkeypatch.setattr(charger, "_chatgpt_accounts_check", lambda: {"status_code": 200, "active_hint": "possible_active"})
+
+    class Resp:
+        status_code = 200
+        text = "<html></html>"
+        url = "https://chatgpt.com/checkout/verify"
+
+        def json(self):
+            raise ValueError("html")
+
+    monkeypatch.setattr(charger.cs, "get", lambda *a, **k: Resp())
+
+    result = charger._chatgpt_verify("cs_live_test", timeout_s=5, qris_info={"response": {"finish_200_redirect_url": "https://example.test/return"}})
+
+    assert result["state"] == "succeeded"
+    assert result["accounts_check"]["active_hint"] == "possible_active"
+    assert return_calls
+    assert sleeps == []
 
 
 def test_qris_headers_prefer_auto_unbind_over_stale_headers(monkeypatch):
