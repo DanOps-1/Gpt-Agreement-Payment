@@ -2306,6 +2306,39 @@ class GoPayCharger:
         if not cs_id:
             return {"ok": False, "reason": "missing_cs_id"}
         try:
+            referer = (
+                "https://chatgpt.com/checkout/verify?"
+                f"stripe_session_id={cs_id}&processor_entity=openai_llc&plan_type=plus"
+            )
+            headers = {
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "accept-language": self.cs.headers.get("accept-language")
+                or self.cs.headers.get("Accept-Language")
+                or "en-US,en;q=0.9",
+                "cache-control": "max-age=0",
+                "priority": "u=0, i",
+                "referer": referer,
+                "sec-ch-ua": self.cs.headers.get("sec-ch-ua")
+                or self.cs.headers.get("Sec-CH-UA")
+                or '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
+                "sec-ch-ua-mobile": self.cs.headers.get("sec-ch-ua-mobile")
+                or self.cs.headers.get("Sec-CH-UA-Mobile")
+                or "?0",
+                "sec-ch-ua-platform": self.cs.headers.get("sec-ch-ua-platform")
+                or self.cs.headers.get("Sec-CH-UA-Platform")
+                or '"Windows"',
+                "sec-fetch-dest": "document",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-site": "same-origin",
+                "sec-fetch-user": "?1",
+                "upgrade-insecure-requests": "1",
+                "user-agent": self.cs.headers.get("user-agent")
+                or self.cs.headers.get("User-Agent")
+                or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            }
+            auth_header = self.cs.headers.get("authorization") or self.cs.headers.get("Authorization")
+            if auth_header:
+                headers["authorization"] = auth_header
             r = self.cs.get(
                 "https://chatgpt.com/payments/success",
                 params={
@@ -2313,7 +2346,7 @@ class GoPayCharger:
                     "plan_type": "plus",
                     "processor_entity": "openai_llc",
                 },
-                headers={"accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+                headers=headers,
                 timeout=DEFAULT_TIMEOUT,
                 allow_redirects=True,
             )
@@ -2341,15 +2374,6 @@ class GoPayCharger:
         deadline = time.time() + max(1.0, float(timeout_s or 60.0))
         saw_http_200 = False
         success_notify = self._chatgpt_payments_success(cs_id)
-        if qris_info and success_notify.get("ok") is True:
-            self.log("[gopay-qris] payments/success accepted, continuing to RT/finalization")
-            return {
-                "state": "succeeded",
-                "cs_id": cs_id,
-                "verify_http_200_seen": False,
-                "payments_success": success_notify,
-                "accounts_check": {},
-            }
         last_accounts_check: dict = {}
         return_retry_interval = max(5.0, float(self.gopay_cfg.get("qris_finish_redirect_retry_s") or 8.0))
         next_return_retry = 0.0

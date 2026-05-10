@@ -2632,6 +2632,12 @@ def generate_fresh_checkout(
                     except Exception as e:
                         _log(f"      [fresh] route data warmup 异常: {e}")
 
+                auth_cfg["access_token"] = access_token
+                auth_cfg["session_token"] = session_token
+                auth_cfg["cookie_header"] = cookie_header
+                auth_cfg["device_id"] = oai_device_id
+                auth_cfg["user_agent"] = user_agent
+                auth_cfg["accept_language"] = accept_language
                 return {
                     "url": fresh_url,
                     "checkout_session_id": session_id,
