@@ -2155,7 +2155,7 @@ class GoPayCharger:
                 elif isinstance(data, dict):
                     self.log(f"[gopay] chatgpt verify pending state={state or '-'}")
             last_accounts_check = self._chatgpt_accounts_check()
-            if str(last_accounts_check.get("active_hint") or "") == "possible_active":
+            if str(last_accounts_check.get("active_hint") or "") == "active_subscription":
                 self.log("[gopay] accounts/check indicates active plan")
                 return {
                     "state": "succeeded",
@@ -2185,19 +2185,51 @@ class GoPayCharger:
             )
             data = r.json() if r.text else {}
             active_hint = ""
-            blob = json.dumps(data, ensure_ascii=False).lower() if isinstance(data, dict) else ""
-            if "plus" in blob or "paid" in blob or "active" in blob:
-                active_hint = "possible_active"
-            self.log(f"[gopay] accounts/check status={r.status_code} active_hint={active_hint or '-'}")
+            active_plan = ""
+            if isinstance(data, dict):
+                for account_info in self._iter_chatgpt_account_infos(data):
+                    account = account_info.get("account") if isinstance(account_info.get("account"), dict) else {}
+                    entitlement = account_info.get("entitlement") if isinstance(account_info.get("entitlement"), dict) else {}
+                    plan_type = str(account.get("plan_type") or "").strip().lower()
+                    subscription_plan = str(entitlement.get("subscription_plan") or "").strip().lower()
+                    has_active_subscription = entitlement.get("has_active_subscription") is True
+                    if has_active_subscription or (
+                        plan_type
+                        and plan_type not in ("free", "chatgptfreeplan")
+                    ) or (
+                        subscription_plan
+                        and subscription_plan not in ("free", "chatgptfreeplan")
+                        and "free" not in subscription_plan
+                    ):
+                        active_hint = "active_subscription"
+                        active_plan = subscription_plan or plan_type
+                        break
+            self.log(
+                "[gopay] accounts/check "
+                f"status={r.status_code} active_hint={active_hint or '-'} "
+                f"plan={active_plan or '-'}"
+            )
             return {
                 "status_code": r.status_code,
                 "active_hint": active_hint,
+                "active_plan": active_plan,
                 "body_keys": sorted(data.keys()) if isinstance(data, dict) else [],
                 "body": data if isinstance(data, dict) else {},
             }
         except Exception as exc:
             self.log(f"[gopay] accounts/check failed: {type(exc).__name__}: {str(exc)[:160]}")
             return {"error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+    def _iter_chatgpt_account_infos(self, data: dict) -> list[dict]:
+        accounts = data.get("accounts") if isinstance(data.get("accounts"), dict) else {}
+        result: list[dict] = []
+        for value in accounts.values():
+            if isinstance(value, dict):
+                result.append(value)
+        default = data.get("default") if isinstance(data.get("default"), dict) else {}
+        if default:
+            result.append(default)
+        return result
 
     # ───── Top-level driver ─────
 

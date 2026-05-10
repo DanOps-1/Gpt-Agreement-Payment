@@ -8517,6 +8517,9 @@ def run(
                         if isinstance(gopay_result, dict) and gopay_result.get("state") == "qr_ready":
                             init_ctx["gopay_qr_result"] = gopay_result
                             _log("      [gopay-qr] 二维码已生成，跳过支付结果 poll")
+                        elif isinstance(gopay_result, dict) and gopay_result.get("state") == "succeeded":
+                            init_ctx["gopay_verified_result"] = gopay_result
+                            _log("      GoPay 扣款并完成 ChatGPT 校验，跳过 Stripe poll")
                         else:
                             _log("      GoPay 授权 + 扣款完成，继续 poll 结果 ...")
                     else:
@@ -8643,6 +8646,11 @@ def run(
                                     if isinstance(gopay_result, dict) and gopay_result.get("state") == "qr_ready":
                                         init_ctx["gopay_qr_result"] = gopay_result
                                         _log("      [gopay-qr] 二维码已生成，跳过支付结果 poll")
+                                        got_redirect = True
+                                        break
+                                    if isinstance(gopay_result, dict) and gopay_result.get("state") == "succeeded":
+                                        init_ctx["gopay_verified_result"] = gopay_result
+                                        _log("      GoPay 扣款并完成 ChatGPT 校验，跳过 Stripe poll")
                                         got_redirect = True
                                         break
                                     got_redirect = True
@@ -8787,6 +8795,11 @@ def run(
     if isinstance(gopay_qr_result, dict):
         _log(f"\n日志已保存到: {LOG_FILE}")
         return gopay_qr_result
+
+    gopay_verified_result = init_ctx.get("gopay_verified_result")
+    if isinstance(gopay_verified_result, dict):
+        _log(f"\n日志已保存到: {LOG_FILE}")
+        return gopay_verified_result
 
     # Step 6
     with _http_session_stage_proxy(http, stage_proxy_cfg, "poll"):

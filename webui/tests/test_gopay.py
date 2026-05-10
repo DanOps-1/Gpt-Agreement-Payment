@@ -870,7 +870,7 @@ def test_chatgpt_verify_accepts_accounts_check_active_after_html(monkeypatch):
     return_calls: list[dict] = []
     monkeypatch.setattr(gopay.time, "sleep", lambda s: sleeps.append(float(s)))
     monkeypatch.setattr(charger, "_follow_qris_finish_redirect", lambda info: return_calls.append(info) or {"ok": True})
-    monkeypatch.setattr(charger, "_chatgpt_accounts_check", lambda: {"status_code": 200, "active_hint": "possible_active"})
+    monkeypatch.setattr(charger, "_chatgpt_accounts_check", lambda: {"status_code": 200, "active_hint": "active_subscription"})
 
     class Resp:
         status_code = 200
@@ -885,9 +885,70 @@ def test_chatgpt_verify_accepts_accounts_check_active_after_html(monkeypatch):
     result = charger._chatgpt_verify("cs_live_test", timeout_s=5, qris_info={"response": {"finish_200_redirect_url": "https://example.test/return"}})
 
     assert result["state"] == "succeeded"
-    assert result["accounts_check"]["active_hint"] == "possible_active"
+    assert result["accounts_check"]["active_hint"] == "active_subscription"
     assert return_calls
     assert sleeps == []
+
+
+def test_chatgpt_accounts_check_does_not_treat_eligible_offers_as_active(monkeypatch):
+    charger = build_charger()
+
+    class Resp:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {
+                "accounts": {
+                    "acct": {
+                        "account": {"plan_type": "free"},
+                        "entitlement": {
+                            "has_active_subscription": False,
+                            "subscription_plan": "chatgptfreeplan",
+                        },
+                        "eligible_offers": {
+                            "offers": [{"id": "chatgptplusplan"}],
+                            "default_offer_id": "chatgptplusplan",
+                        },
+                    }
+                },
+                "account_ordering": ["acct"],
+            }
+
+    monkeypatch.setattr(charger.cs, "get", lambda *a, **k: Resp())
+
+    result = charger._chatgpt_accounts_check()
+
+    assert result["active_hint"] == ""
+    assert result["active_plan"] == ""
+
+
+def test_chatgpt_accounts_check_detects_active_subscription(monkeypatch):
+    charger = build_charger()
+
+    class Resp:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {
+                "accounts": {
+                    "acct": {
+                        "account": {"plan_type": "plus"},
+                        "entitlement": {
+                            "has_active_subscription": True,
+                            "subscription_plan": "chatgptplusplan",
+                        },
+                    }
+                }
+            }
+
+    monkeypatch.setattr(charger.cs, "get", lambda *a, **k: Resp())
+
+    result = charger._chatgpt_accounts_check()
+
+    assert result["active_hint"] == "active_subscription"
+    assert result["active_plan"] == "chatgptplusplan"
 
 
 def test_qris_headers_prefer_auto_unbind_over_stale_headers(monkeypatch):
