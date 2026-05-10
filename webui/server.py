@@ -31,9 +31,27 @@ def create_app() -> FastAPI:
     app.include_router(run_routes.router)
     app.include_router(cf_kv_routes.router)
     app.include_router(whatsapp_routes.router)
+    # The production frontend is built with base=/webui/, so its API client
+    # calls /webui/api/... .  Register the same API routers under that prefix
+    # before the SPA fallback, while keeping direct /api/... access working.
+    app.include_router(setup_routes.router, prefix="/webui")
+    app.include_router(auth_routes.router, prefix="/webui")
+    app.include_router(wizard_routes.router, prefix="/webui")
+    app.include_router(preflight_routes.router, prefix="/webui")
+    app.include_router(sniff_routes.router, prefix="/webui")
+    app.include_router(config_routes.router, prefix="/webui")
+    app.include_router(inventory_routes.router, prefix="/webui")
+    app.include_router(pool_routes.router, prefix="/webui")
+    app.include_router(run_routes.router, prefix="/webui")
+    app.include_router(cf_kv_routes.router, prefix="/webui")
+    app.include_router(whatsapp_routes.router, prefix="/webui")
 
     @app.get("/api/healthz")
     def healthz():
+        return {"status": "ok"}
+
+    @app.get("/webui/api/healthz")
+    def healthz_webui():
         return {"status": "ok"}
 
     if FRONTEND_DIST.exists():
