@@ -227,6 +227,41 @@ def _reg_mail_provider(reg_cfg: dict) -> str:
     return _text(mail.get("provider")).lower() or "cf"
 
 
+def _account_pool_mail_stats() -> dict:
+    with get_db()._conn() as c:
+        rows = c.execute(
+            """
+            SELECT pool_status, COUNT(*) n
+            FROM account_pool_items
+            GROUP BY pool_status
+            """
+        ).fetchall()
+        usable_unused = c.execute(
+            """
+            SELECT COUNT(*)
+            FROM account_pool_items
+            WHERE pool_status='email_unused'
+              AND mail_client_id != ''
+              AND mail_refresh_token != ''
+            """
+        ).fetchone()[0]
+        total = c.execute("SELECT COUNT(*) FROM account_pool_items").fetchone()[0]
+    stats = {
+        "total": int(total),
+        "usable_unused": int(usable_unused),
+        "email_unused": 0,
+        "in_progress": 0,
+        "plus_with_rt": 0,
+        "plus_missing_rt": 0,
+        "registered_pending_plus": 0,
+        "registration_failed": 0,
+        "quarantined": 0,
+    }
+    for row in rows:
+        stats[str(row["pool_status"])] = int(row["n"])
+    return stats
+
+
 def _check_cloudflare_kv(checks: list[dict], req: dict, reg_cfg: dict) -> None:
     if _requires_email_otp(req) and _reg_mail_provider(reg_cfg) == "outlook":
         _check(
@@ -281,37 +316,41 @@ def _check_registration_config(checks: list[dict], req: dict, reg_cfg: dict) -> 
         source = _text(mail.get("outlook_source")).lower()
         if source == "db":
             try:
-                stats = get_db().outlook_mail_pool_stats()
+                stats = _account_pool_mail_stats()
             except Exception as e:
                 _check(
                     checks,
-                    "outlook_mail_pool",
+                    "account_pool_email_unused",
                     "fail",
-                    "Outlook 邮箱池数据库不可用",
+                    "规划池数据库不可用",
                     details=str(e),
-                    action="在账号管理页重新导入 Outlook 邮箱池",
+                    action="在规划池页面重新导入未激活邮箱",
                 )
                 stats = {}
             if stats:
-                available = int(stats.get("available") or 0)
+                available = int(stats.get("usable_unused") or 0)
+                unused = int(stats.get("email_unused") or 0)
                 total = int(stats.get("total") or 0)
                 if available > 0:
                     _check(
                         checks,
-                        "outlook_mail_pool",
+                        "account_pool_email_unused",
                         "ok",
-                        f"Outlook 邮箱池可用：available={available} total={total}",
+                        f"规划池未激活邮箱可用：可运行={available} 未激活={unused} total={total}",
                         blocking=False,
                     )
                 else:
                     _check(
                         checks,
-                        "outlook_mail_pool",
+                        "account_pool_email_unused",
                         "fail",
-                        "Outlook 邮箱池没有可用账号",
-                        missing=["outlook_mail_accounts.status=available"],
-                        details=f"total={total} reserved={stats.get('reserved', 0)} used={stats.get('used', 0)} failed={stats.get('failed', 0)}",
-                        action="在账号管理页继续导入 Outlook 邮箱，或重置失败账号状态",
+                        "规划池未激活池没有可运行邮箱",
+                        missing=["account_pool_items.pool_status=email_unused 且 mail_client_id/mail_refresh_token 完整"],
+                        details=(
+                            f"total={total} 未激活={unused} 任务中={stats.get('in_progress', 0)} "
+                            f"待激活={stats.get('registered_pending_plus', 0)} 失败={stats.get('registration_failed', 0)}"
+                        ),
+                        action="在规划池页面导入 Outlook 邮箱，格式：邮箱----密码----client_id----refresh_token",
                     )
         else:
             has_inline = isinstance(mail.get("outlook_accounts"), list) and bool(mail.get("outlook_accounts"))
@@ -331,7 +370,7 @@ def _check_registration_config(checks: list[dict], req: dict, reg_cfg: dict) -> 
                     "fail",
                     "Outlook 邮箱账号源未配置",
                     missing=["mail.outlook_source=db 或 mail.outlook_accounts_path"],
-                    action="在账号管理页导入 Outlook 邮箱池",
+                    action="建议使用规划池：在注册配置中设置 mail.outlook_source=db，并在规划池导入未激活邮箱",
                 )
         captcha_key = _text(_get(reg_cfg, "captcha.client_key"))
         if not captcha_key:
