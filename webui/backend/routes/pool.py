@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth import CurrentUser
+from ..account_pool_checker import inspect_pool_items
 from ..account_pool import (
     POOL_STATUS_LABELS,
     claim_unused_emails,
@@ -23,8 +24,10 @@ from ..account_pool import (
     list_pool_items,
     migrate_from_legacy_inventory,
     move_items,
+    prepare_retry_items,
     set_rotation_config,
 )
+from .. import runner
 from .inventory import (
     ServerPushRequest,
     _cpa_auth_file_body,
@@ -80,6 +83,18 @@ class UploadRequest(IdsRequest):
 
 class DeleteByStatusRequest(BaseModel):
     statuses: list[str] = Field(default_factory=list)
+
+
+class CheckRequest(IdsRequest):
+    timeout_s: float = 10.0
+    max_workers: int = 3
+
+
+class RetryRequest(IdsRequest):
+    retry_type: str = Field(pattern="^(registration|payment)$")
+    paypal: bool = True
+    gopay: bool = False
+    push_server: bool = False
 
 
 def _pool_account_for_downstream(item: dict) -> dict:
@@ -283,6 +298,46 @@ def upload_pool_accounts(req: UploadRequest, user: str = CurrentUser):
             "groups": group_reports,
         }
     return response
+
+
+@router.post("/accounts/check")
+def check_pool_accounts(req: CheckRequest, user: str = CurrentUser):
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="ids 涓嶈兘涓虹┖")
+    return inspect_pool_items(req.ids, max_workers=req.max_workers, timeout_s=req.timeout_s)
+
+
+@router.post("/accounts/retry")
+def retry_pool_accounts(req: RetryRequest, user: str = CurrentUser):
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="ids 涓嶈兘涓虹┖")
+    prepared = prepare_retry_items(req.ids, retry_type=req.retry_type, task_id=f"manual-retry-{datetime.now().strftime('%Y%m%d%H%M%S')}")
+    if int(prepared.get("prepared") or 0) <= 0:
+        raise HTTPException(status_code=400, detail="没有符合条件的账号可重新执行")
+    try:
+        if req.retry_type == "registration":
+            run = runner.start(
+                mode="singlexn",
+                paypal=req.paypal,
+                gopay=req.gopay,
+                count=int(prepared.get("prepared") or 1),
+                register_only=False,
+                pay_only=False,
+                push_server=req.push_server,
+            )
+        else:
+            run = runner.start(
+                mode="singlexn",
+                paypal=req.paypal,
+                gopay=req.gopay,
+                count=int(prepared.get("prepared") or 1),
+                register_only=False,
+                pay_only=True,
+                push_server=req.push_server,
+            )
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return {"prepared": prepared, "run": run}
 
 
 @router.post("/accounts/delete-by-status")

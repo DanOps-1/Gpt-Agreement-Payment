@@ -2277,7 +2277,16 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
     This preserves the old config-token path while preventing freshly
     registered-but-unpaid accounts from being wasted.
     """
-    account = dict(account_override or {}) or (_claim_recent_registered_account_for_pay_only() if prefer_recent else None)
+    account = dict(account_override or {})
+    if not account and prefer_recent:
+        pending_item = claim_pending_activation_account(
+            task_id=log_label or "pay-only",
+            round_id="pay-only",
+        )
+        if pending_item:
+            account = _registered_account_from_pool_item(pending_item)
+    if not account and prefer_recent:
+        account = _claim_recent_registered_account_for_pay_only()
     email = _norm_email(account.get("email")) if account else ""
     try:
         card_cfg = _read_card_cfg(card_config_path)

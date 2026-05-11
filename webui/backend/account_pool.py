@@ -638,6 +638,66 @@ def pending_activation_count() -> int:
         )
 
 
+def prepare_retry_items(ids: list[int], *, retry_type: str, task_id: str = "") -> dict:
+    clean = [int(i) for i in ids if str(i).strip().lstrip("-").isdigit()]
+    if retry_type not in {"registration", "payment"}:
+        raise ValueError(f"unknown retry type: {retry_type}")
+    if not clean:
+        return {"requested": 0, "prepared": 0, "retry_type": retry_type}
+    placeholders = ",".join("?" for _ in clean)
+    now = time.time()
+    prepared = 0
+    with get_db()._conn() as c:
+        rows = c.execute(
+            f"SELECT id, pool_status, task_id, round_id FROM account_pool_items WHERE id IN ({placeholders})",
+            clean,
+        ).fetchall()
+        for row in rows:
+            old_status = str(row["pool_status"] or "")
+            if retry_type == "registration":
+                if old_status != "in_progress":
+                    continue
+                to_status = "email_unused"
+                stage = "retry_registration_reset"
+                reason = "retry registration from pool"
+                c.execute(
+                    """
+                    UPDATE account_pool_items
+                    SET pool_status=?, task_id=?, round_id='retry-registration',
+                        reserved_at=0, last_stage=?, last_error='', updated_at=?
+                    WHERE id=?
+                    """,
+                    (to_status, task_id, stage, now, int(row["id"])),
+                )
+            else:
+                if old_status != "registered_pending_plus":
+                    continue
+                to_status = "registered_pending_plus"
+                stage = "retry_payment_queued"
+                reason = "retry payment from pool"
+                c.execute(
+                    """
+                    UPDATE account_pool_items
+                    SET task_id=?, round_id='retry-payment',
+                        last_stage=?, last_error='', updated_at=?
+                    WHERE id=?
+                    """,
+                    (task_id, stage, now, int(row["id"])),
+                )
+            _event(
+                c,
+                int(row["id"]),
+                from_status=old_status,
+                to_status=to_status,
+                stage=stage,
+                reason=reason,
+                task_id=task_id,
+                round_id="retry",
+            )
+            prepared += 1
+    return {"requested": len(clean), "prepared": prepared, "retry_type": retry_type}
+
+
 def claim_pending_activation_account(*, task_id: str = "", round_id: str = "") -> dict:
     now = time.time()
     with get_db()._conn() as c:

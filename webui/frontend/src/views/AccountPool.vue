@@ -7,11 +7,22 @@
       </div>
       <div class="header-actions">
         <button class="btn ghost" type="button" @click="router.push('/run')">运行页</button>
-        <button class="btn ghost" type="button" @click="router.push('/accounts')">旧账号管理</button>
         <button class="btn" type="button" :disabled="loading" @click="refresh">刷新</button>
       </div>
     </header>
 
+    <div class="pool-layout">
+      <aside class="side-tabs">
+        <button :class="{ active: activeTab === 'accounts' }" type="button" @click="activeTab = 'accounts'">
+          <span>????</span>
+          <small>????</small>
+        </button>
+        <button :class="{ active: activeTab === 'checks' }" type="button" @click="activeTab = 'checks'">
+          <span>????</span>
+          <small>Plus / Free / RT</small>
+        </button>
+      </aside>
+      <main class="pool-main">
     <section class="stats-grid">
       <button
         v-for="status in statuses"
@@ -25,7 +36,7 @@
       </button>
     </section>
 
-    <section class="toolbar">
+    <section v-if="activeTab === 'accounts'" class="toolbar">
       <div class="tabs">
         <button :class="{ active: filter.status === 'all' }" type="button" @click="setStatus('all')">全部</button>
         <button v-for="status in statuses" :key="status.key" :class="{ active: filter.status === status.key }" type="button" @click="setStatus(status.key)">
@@ -51,6 +62,7 @@
       </div>
     </section>
 
+    <template v-if="activeTab === 'accounts'">
     <section v-if="showImport" class="import-panel">
       <div class="panel-head">
         <div>
@@ -73,6 +85,8 @@
       </select>
       <input v-model="moveReason" placeholder="移动原因" />
       <button class="btn ghost" type="button" :disabled="!selectedIds.length || !moveTarget || moving" @click="moveSelected">批量移动</button>
+      <button v-if="filter.status === 'in_progress'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('registration')">??????</button>
+      <button v-if="filter.status === 'registered_pending_plus'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('payment')">??????</button>
       <button class="btn ghost" type="button" :disabled="claiming" @click="claimPreview">领取未激活邮箱</button>
       <select v-model="downloadTarget">
         <option value="cpa">下载 CPA</option>
@@ -175,6 +189,58 @@
       <button class="btn ghost" type="button" :disabled="filter.offset + filter.limit >= total" @click="nextPage">下一页</button>
     </footer>
 
+    </template>
+
+    <section v-else class="check-panel">
+      <div class="check-head">
+        <div>
+          <strong>??????</strong>
+          <span>?? RT ???? OAuth token??? plan/account_id???? Codex usage?</span>
+        </div>
+        <div class="check-actions">
+          <select v-model="checkStatusFilter" @change="refreshCheckCandidates">
+            <option value="plus_with_rt">????</option>
+            <option value="plus_missing_rt">????</option>
+            <option value="registered_pending_plus">????</option>
+            <option value="all">??</option>
+          </select>
+          <input v-model="checkQuery" placeholder="???? / account_id" @keydown.enter="refreshCheckCandidates" />
+          <button class="btn ghost" type="button" :disabled="checkingLoading" @click="refreshCheckCandidates">??</button>
+          <button class="btn" type="button" :disabled="!checkSelectedIds.length || checkingAccounts" @click="checkSelectedAccounts">????</button>
+          <button v-if="checkStatusFilter === 'registered_pending_plus'" class="btn" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">??????</button>
+          <button v-if="checkStatusFilter === 'all'" class="btn ghost" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">?????</button>
+        </div>
+      </div>
+      <div class="check-summary">
+        <span>?? {{ checkCandidates.length }}</span>
+        <span>?? {{ checkSelectedIds.length }}</span>
+        <span v-if="checkResult">OK {{ checkResult.summary?.ok || 0 }} / FAIL {{ checkResult.summary?.fail || 0 }} / UNKNOWN {{ checkResult.summary?.unknown || 0 }}</span>
+      </div>
+      <div class="check-list">
+        <label v-for="item in checkCandidates" :key="item.id" class="check-row">
+          <input type="checkbox" :checked="checkSelected.has(item.id)" @change="toggleCheckSelect(item.id)" />
+          <span class="check-email">{{ item.primary_email || item.email }}</span>
+          <span :class="['pill', statusClass(item.pool_status)]">{{ item.status_label }}</span>
+          <span :class="['pill', item.has_refresh_token ? 'ok' : 'muted-pill']">{{ item.has_refresh_token ? '? RT' : '? RT' }}</span>
+          <span class="muted">{{ item.plan_type || '-' }} {{ item.account_id || item.team_account_id || '' }}</span>
+        </label>
+        <div v-if="!checkCandidates.length" class="empty-state">
+          {{ checkingLoading ? '????...' : '???????' }}
+        </div>
+      </div>
+      <div v-if="checkResult" class="check-results">
+        <div v-for="result in checkResult.results || []" :key="result.id" class="check-result-row">
+          <strong>{{ result.email || result.id }}</strong>
+          <span :class="['pill', checkResultClass(result.status)]">{{ checkResultLabel(result.status) }}</span>
+          <span>{{ result.plan || '-' }}</span>
+          <span>{{ result.account_id || '' }}</span>
+          <small>{{ result.message }}</small>
+        </div>
+      </div>
+    </section>
+      </main>
+    </div>
+
     <aside v-if="detail" class="detail-drawer">
       <div class="drawer-card">
         <header>
@@ -255,9 +321,18 @@ const savingRotation = ref(false);
 const downloading = ref(false);
 const uploading = ref(false);
 const deletingPools = ref(false);
+const checkingLoading = ref(false);
+const checkingAccounts = ref(false);
+const retryingAccounts = ref(false);
 const showImport = ref(false);
+const activeTab = ref<"accounts" | "checks">("accounts");
 const importText = ref("");
 const items = ref<PoolItem[]>([]);
+const checkCandidates = ref<PoolItem[]>([]);
+const checkSelected = ref<Set<number>>(new Set());
+const checkResult = ref<any | null>(null);
+const checkStatusFilter = ref("plus_with_rt");
+const checkQuery = ref("");
 const total = ref(0);
 const counts = ref<Record<string, number>>({});
 const statuses = ref<PoolStatus[]>([
@@ -302,6 +377,7 @@ const deletableStatuses = computed(() =>
   ]
 );
 const selectedIds = computed(() => Array.from(selected.value));
+const checkSelectedIds = computed(() => Array.from(checkSelected.value));
 const pageAllSelected = computed(() => items.value.length > 0 && items.value.every(item => selected.value.has(item.id)));
 const selectedPageCount = computed(() => items.value.filter(item => selected.value.has(item.id)).length);
 const pageStart = computed(() => total.value ? filter.value.offset + 1 : 0);
@@ -337,6 +413,12 @@ watch(
 
 onMounted(async () => {
   await Promise.all([refresh(), loadRotation()]);
+});
+
+watch(activeTab, async tab => {
+  if (tab === "checks" && !checkCandidates.value.length) {
+    await refreshCheckCandidates();
+  }
 });
 
 function setStatus(status: string) {
@@ -563,6 +645,87 @@ async function openDetail(id: number) {
   }
 }
 
+async function refreshCheckCandidates() {
+  checkingLoading.value = true;
+  try {
+    const r = await api.get("/pool/accounts", {
+      params: {
+        status: checkStatusFilter.value,
+        q: checkQuery.value,
+        limit: 200,
+        offset: 0,
+      },
+    });
+    checkCandidates.value = r.data?.items || [];
+    checkSelected.value = new Set();
+  } catch (e: any) {
+    message.error(`加载检测账号失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    checkingLoading.value = false;
+  }
+}
+
+function toggleCheckSelect(id: number) {
+  const next = new Set(checkSelected.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  checkSelected.value = next;
+}
+
+async function checkSelectedAccounts() {
+  if (!checkSelectedIds.value.length) {
+    message.warning("请先选择要检测的账号");
+    return;
+  }
+  checkingAccounts.value = true;
+  checkResult.value = null;
+  try {
+    const r = await api.post("/pool/accounts/check", {
+      ids: checkSelectedIds.value,
+      timeout_s: 12,
+      max_workers: 3,
+    });
+    checkResult.value = r.data || null;
+    const s = r.data?.summary || {};
+    message.success(`检测完成：OK ${s.ok || 0} / FAIL ${s.fail || 0} / UNKNOWN ${s.unknown || 0}`);
+    await Promise.all([refresh(), refreshCheckCandidates()]);
+  } catch (e: any) {
+    message.error(`状态检测失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    checkingAccounts.value = false;
+  }
+}
+
+async function retrySelected(type: "registration" | "payment", fromCheck = false) {
+  const ids = fromCheck ? checkSelectedIds.value : selectedIds.value;
+  if (!ids.length) {
+    message.warning("请先选择要重新执行的账号");
+    return;
+  }
+  const label = type === "registration" ? "重新注册" : "重新支付";
+  const ok = window.confirm(`确认对 ${ids.length} 个账号执行${label}任务？当前只能同时运行一个任务。`);
+  if (!ok) return;
+  retryingAccounts.value = true;
+  try {
+    const r = await api.post("/pool/accounts/retry", {
+      ids,
+      retry_type: type,
+      paypal: true,
+      gopay: false,
+      push_server: false,
+    });
+    const prepared = r.data?.prepared?.prepared || 0;
+    message.success(`${label}任务已启动，已加入 ${prepared} 个账号`);
+    selected.value = new Set();
+    checkSelected.value = new Set();
+    await Promise.all([refresh(), refreshCheckCandidates()]);
+  } catch (e: any) {
+    message.error(`${label}启动失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    retryingAccounts.value = false;
+  }
+}
+
 function prevPage() {
   filter.value.offset = Math.max(0, filter.value.offset - filter.value.limit);
   refresh();
@@ -579,6 +742,24 @@ function statusClass(status: string) {
   if (status === "registered_pending_plus") return "info";
   if (status === "registration_failed") return "danger";
   return "muted-pill";
+}
+
+function checkResultClass(status: string) {
+  if (["ok", "quota_limited", "refreshed"].includes(status)) return "ok";
+  if (["invalid", "no_refresh_token"].includes(status)) return "danger";
+  return "warn";
+}
+
+function checkResultLabel(status: string) {
+  const map: Record<string, string> = {
+    ok: "可用",
+    refreshed: "已刷新",
+    quota_limited: "额度限制",
+    invalid: "失效",
+    no_refresh_token: "无 RT",
+    unknown: "未知",
+  };
+  return map[status] || status || "-";
 }
 
 function statusLabel(status: string) {
@@ -667,8 +848,57 @@ function formatTime(value: number | string) {
 .result-panel,
 .table-shell,
 .pager {
-  max-width: 1400px;
   margin: 0 auto 14px;
+}
+
+.pool-layout {
+  max-width: 1480px;
+  margin: 18px auto 0;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 16px;
+}
+
+.pool-main {
+  min-width: 0;
+}
+
+.side-tabs {
+  position: sticky;
+  top: 18px;
+  align-self: start;
+  display: grid;
+  gap: 8px;
+}
+
+.side-tabs button {
+  border: 1px solid #d4e3de;
+  background: #fff;
+  color: #25423a;
+  border-radius: 8px;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.side-tabs button.active {
+  border-color: #0f6b57;
+  background: #e7f5f0;
+  box-shadow: 0 0 0 3px rgba(15, 107, 87, .1);
+}
+
+.side-tabs span,
+.side-tabs small {
+  display: block;
+}
+
+.side-tabs span {
+  font-weight: 800;
+}
+
+.side-tabs small {
+  margin-top: 4px;
+  color: #668078;
 }
 
 .pool-header {
@@ -742,8 +972,7 @@ h1 {
 }
 
 .stats-grid {
-  max-width: 1400px;
-  margin: 18px auto 14px;
+  margin: 0 0 14px;
   display: grid;
   grid-template-columns: repeat(6, minmax(140px, 1fr));
   gap: 12px;
@@ -919,6 +1148,79 @@ h1 {
 
 .result-panel {
   background: #f8fbfa;
+}
+
+.check-panel {
+  border: 1px solid #d4e3de;
+  background: #fff;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.check-head,
+.check-actions,
+.check-summary,
+.check-row,
+.check-result-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.check-head {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.check-head span,
+.check-summary {
+  color: #668078;
+  font-size: 12px;
+}
+
+.check-actions input,
+.check-actions select {
+  border: 1px solid #cbded7;
+  background: #fff;
+  border-radius: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  font: inherit;
+}
+
+.check-actions input {
+  min-width: 240px;
+}
+
+.check-summary {
+  margin-bottom: 10px;
+  font-weight: 700;
+}
+
+.check-list,
+.check-results {
+  display: grid;
+  gap: 8px;
+}
+
+.check-row,
+.check-result-row {
+  border: 1px solid #e0ece8;
+  background: #f9fcfb;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.check-email {
+  min-width: 220px;
+  font-weight: 800;
+  word-break: break-all;
+}
+
+.check-result-row small {
+  color: #668078;
+  flex-basis: 100%;
 }
 
 .result-panel div {
@@ -1148,6 +1450,13 @@ dd {
   .pool-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .pool-layout {
+    grid-template-columns: 1fr;
+  }
+  .side-tabs {
+    position: static;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
