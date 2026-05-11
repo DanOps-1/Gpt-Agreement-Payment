@@ -1,5 +1,7 @@
 import json
 import sys
+import threading
+import time
 import types
 import uuid
 
@@ -566,13 +568,12 @@ def test_pay_only_worker_scopes_gopay_otp_file_per_task(monkeypatch):
     assert [c["log_label"] for c in calls] == ["w0:t1", "w0:t3"]
 
 
-def test_validate_worker_resources_rejects_duplicate_proxy_or_gopay():
-    with pytest.raises(RuntimeError, match="GoPay accounts"):
-        pipeline._validate_worker_resources(
-            {"gopay": {"accounts": [{"country_code": "+62", "phone_number": "111", "pin": "111111"}]}},
-            2,
-            use_gopay=True,
-        )
+def test_validate_worker_resources_allows_fewer_gopay_accounts_than_workers():
+    pipeline._validate_worker_resources(
+        {"gopay": {"accounts": [{"country_code": "+62", "phone_number": "111", "pin": "111111"}]}},
+        2,
+        use_gopay=True,
+    )
 
     with pytest.raises(RuntimeError, match="HTTP 代理"):
         pipeline._validate_worker_resources(
@@ -580,3 +581,23 @@ def test_validate_worker_resources_rejects_duplicate_proxy_or_gopay():
             2,
             use_gopay=False,
         )
+
+
+def test_gopay_account_lease_pool_waits_until_phone_released():
+    pool = pipeline.GoPayAccountLeasePool(
+        [{"label": "wallet-1", "country_code": "62", "phone_number": "811", "pin": "111111"}],
+        wait_interval=0.01,
+        wait_timeout=0.5,
+    )
+    first = pool.acquire(holder="w0", log=lambda _m: None)
+    acquired = []
+
+    def release_later():
+        time.sleep(0.05)
+        pool.release(first, log=lambda _m: None)
+
+    threading.Thread(target=release_later, daemon=True).start()
+    acquired.append(pool.acquire(holder="w1", log=lambda _m: None))
+
+    assert acquired[0]["phone_number"] == "811"
+    pool.release(acquired[0], log=lambda _m: None)

@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import random
 import re
 import shutil
@@ -856,6 +857,13 @@ class GoPayAccountUnavailableError(PaymentError):
         super().__init__(message, code="gopay_account_unavailable")
 
 
+class GoPayPhoneLeaseTimeoutError(PaymentError):
+    """No GoPay phone account became available before the lease wait timeout."""
+
+    def __init__(self, message: str):
+        super().__init__(message, code="gopay_phone_lease_timeout")
+
+
 class AlreadyPaidError(PaymentError):
     """ChatGPT says the current account is already on a paid plan."""
 
@@ -1103,7 +1111,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
              use_gopay=False, gopay_otp_file=None,
              timeout_reg=300, timeout_pay=600,
              pool=None, team_client=None, card_cfg=None, proxy_pool=None,
-             push_server=False, log_label=""):
+             push_server=False, log_label="", gopay_account_pool=None):
     """全链路: 注册 → 支付 → (可选) gpt-team 导入探测 → 更新域池
     proxy_pool 非空时从 pool 挑代理，同时覆盖 CTF-reg + CTF-pay 两个 config 的 proxy 字段"""
     card_config_path = str(Path(card_config_path).resolve())
@@ -1159,6 +1167,8 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
     if pay_proxy:
         temp_card = _rewrite_card_with_proxy(card_config_path, pay_proxy)
         effective_card = temp_card
+    leased_gopay_account = None
+    temp_gopay_card = None
 
     ts = datetime.now(timezone.utc).isoformat()
     record = {"ts": ts, "registration": {}, "payment": {},
@@ -1194,10 +1204,32 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
         print(f"\n{'='*60}")
         print(f"[pipeline] Step 2/2: Stripe 支付 ({reg.get('email', '?')})")
         print(f"{'='*60}")
-        _log_payment_exit_ip(effective_card)
+        pay_card_path = effective_card
+        if use_gopay and gopay_account_pool is not None:
+            holder = log_label or reg.get("email") or "pipeline"
+            try:
+                leased_gopay_account = gopay_account_pool.acquire(holder=holder)
+                temp_gopay_card = _rewrite_card_for_worker(
+                    effective_card,
+                    gopay_account=leased_gopay_account,
+                    worker_id=0,
+                )
+                pay_card_path = temp_gopay_card
+                _pre_unbind_gopay_lease(card_cfg or {}, leased_gopay_account, holder=holder)
+            except GoPayPhoneLeaseTimeoutError as e:
+                reason = str(e)[:200]
+                record["payment"] = {"status": "skipped", "email": reg.get("email", ""), "reason": reason}
+                _append_result(record)
+                return record
+            except PaymentError as e:
+                reason = str(e)[:200]
+                record["payment"] = {"status": "skipped", "email": reg.get("email", ""), "reason": reason}
+                _append_result(record)
+                return record
+        _log_payment_exit_ip(pay_card_path)
         try:
             pay_result = pay(
-                effective_card,
+                pay_card_path,
                 session_token=reg.get("session_token"),
                 access_token=reg.get("access_token"),
                 device_id=reg.get("device_id", ""),
@@ -1318,6 +1350,11 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
         if temp_card and os.path.exists(temp_card):
             try: os.unlink(temp_card)
             except Exception: pass
+        if temp_gopay_card and os.path.exists(temp_gopay_card):
+            try: os.unlink(temp_gopay_card)
+            except Exception: pass
+        if gopay_account_pool is not None and leased_gopay_account:
+            gopay_account_pool.release(leased_gopay_account)
 
 
 def _run_one(args_tuple):
@@ -1408,7 +1445,8 @@ def _run_one_pay_only(args_tuple):
 
 def _run_batch_worker(args_tuple):
     worker_id, task_indices, card_config_path, kwargs, workers, use_gopay, proxy_pool, card_cfg = args_tuple
-    task_indices = list(task_indices)
+    task_queue = task_indices if hasattr(task_indices, "get_nowait") else None
+    task_indices = None if task_queue is not None else list(task_indices)
     temp_card = None
     results = []
     try:
@@ -1425,7 +1463,16 @@ def _run_batch_worker(args_tuple):
         worker_kwargs = dict(kwargs)
         worker_kwargs["card_cfg"] = None
         worker_kwargs["proxy_pool"] = ProxyPool([p for p in (_reg_proxy, _pay_proxy) if p])
-        for idx in task_indices:
+        while True:
+            if task_queue is not None:
+                try:
+                    idx = task_queue.get_nowait()
+                except queue.Empty:
+                    break
+            else:
+                if not task_indices:
+                    break
+                idx = task_indices.pop(0)
             print(f"\n[batch-worker-{worker_id}] start task {idx + 1}")
             try:
                 scoped_kwargs = dict(worker_kwargs)
@@ -1454,9 +1501,11 @@ def _run_batch_worker(args_tuple):
                 }
                 print(f"[batch-worker-{worker_id}] task {idx + 1} exception: {e}")
             results.append(r)
+            if task_queue is not None:
+                task_queue.task_done()
     except Exception as e:
         err = str(e)[:200]
-        for idx in task_indices:
+        for idx in (task_indices or []):
             results.append({
                 "batch_index": idx,
                 "worker_id": worker_id,
@@ -1473,7 +1522,10 @@ def _run_batch_worker(args_tuple):
 
 
 def _run_pay_only_worker(args_tuple):
-    worker_id, task_indices, card_config_path, use_paypal, use_gopay, gopay_otp_file, push_server, workers, proxy_pool, card_cfg = args_tuple
+    worker_id, task_indices, card_config_path, use_paypal, use_gopay, gopay_otp_file, push_server, workers, proxy_pool, card_cfg, *rest = args_tuple
+    gopay_account_pool = rest[0] if rest else None
+    task_queue = task_indices if hasattr(task_indices, "get_nowait") else None
+    task_indices = None if task_queue is not None else list(task_indices)
     temp_card = None
     results = []
     try:
@@ -1487,7 +1539,16 @@ def _run_pay_only_worker(args_tuple):
         )
         if worker_card_path != card_config_path:
             temp_card = worker_card_path
-        for idx in task_indices:
+        while True:
+            if task_queue is not None:
+                try:
+                    idx = task_queue.get_nowait()
+                except queue.Empty:
+                    break
+            else:
+                if not task_indices:
+                    break
+                idx = task_indices.pop(0)
             print(f"\n[pay-only-worker-{worker_id}] start task {idx + 1}")
             try:
                 scoped_otp_file = _scoped_gopay_otp_file(gopay_otp_file, worker_id, idx)
@@ -1498,6 +1559,7 @@ def _run_pay_only_worker(args_tuple):
                     gopay_otp_file=scoped_otp_file,
                     push_server=push_server,
                     log_label=f"w{worker_id}:t{idx + 1}",
+                    gopay_account_pool=gopay_account_pool,
                 )
                 r["batch_index"] = idx
                 r["worker_id"] = worker_id
@@ -1509,7 +1571,9 @@ def _run_pay_only_worker(args_tuple):
                 r = {"batch_index": idx, "worker_id": worker_id, "status": "error", "error": str(e)[:200]}
                 print(f"[pay-only-worker-{worker_id}] payment exception: {e}")
             results.append(r)
-            if idx != task_indices[-1]:
+            if task_queue is not None:
+                task_queue.task_done()
+            elif task_indices:
                 time.sleep(0)
     finally:
         if temp_card and os.path.exists(temp_card):
@@ -1575,6 +1639,12 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
     # 构造共享 pool + team_client（所有 worker 复用）
     card_cfg = _read_card_cfg(card_config_path)
     cardw_path = _load_cardw_path_from_card_cfg(card_cfg, kwargs.get("cardw_config_path"))
+    gopay_account_pool = _build_gopay_account_lease_pool(card_cfg) if use_gopay else None
+    if gopay_account_pool:
+        print(
+            f"[GoPayPhonePool] accounts={len(gopay_account_pool.accounts)} "
+            f"wait={gopay_account_pool.wait_interval:g}s timeout={gopay_account_pool.wait_timeout:g}s"
+        )
 
     # ── register-only batch：每次 register，串行（避免并行同 IP 触发风控）
     if is_register_only:
@@ -1616,18 +1686,19 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
             from concurrent.futures import ThreadPoolExecutor, as_completed
             proxy_pool = _build_proxy_pool_from_card_cfg(card_cfg)
             _validate_worker_resources(card_cfg, workers, use_gopay=use_gopay, proxy_pool=proxy_pool)
-            task_chunks = [range(worker_id, count, workers) for worker_id in range(workers)]
+            task_queue: queue.Queue[int] = queue.Queue()
+            for idx in range(count):
+                task_queue.put(idx)
             print(f"\n[batch] === pay-only parallel: workers={workers} count={count} ===")
             results = [None] * count
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {
                     executor.submit(
                         _run_pay_only_worker,
-                        (worker_id, chunk, card_config_path, use_paypal, use_gopay, gopay_otp_file,
-                         push_server, workers, proxy_pool, card_cfg),
+                        (worker_id, task_queue, card_config_path, use_paypal, use_gopay, gopay_otp_file,
+                         push_server, workers, proxy_pool, card_cfg, gopay_account_pool),
                     ): worker_id
-                    for worker_id, chunk in enumerate(task_chunks)
-                    if chunk
+                    for worker_id in range(workers)
                 }
                 for future in as_completed(futures):
                     for r in future.result():
@@ -1647,6 +1718,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
                     use_paypal=use_paypal, use_gopay=use_gopay,
                     gopay_otp_file=gopay_otp_file,
                     push_server=push_server,
+                    gopay_account_pool=gopay_account_pool,
                 )
                 r["batch_index"] = i
                 if r.get("status") == "succeeded":
@@ -1680,6 +1752,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
     kwargs.setdefault("team_client", team_client)
     kwargs.setdefault("card_cfg", card_cfg)
     kwargs.setdefault("proxy_pool", proxy_pool)
+    kwargs.setdefault("gopay_account_pool", gopay_account_pool)
 
     if workers > 1 and use_paypal and not use_gopay:
         # PayPal 模式：并行注册 → 串行支付（共用 PayPal 账号不能并行 2FA）
@@ -1796,16 +1869,17 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
         # 非 PayPal: 全并行
         from concurrent.futures import ThreadPoolExecutor, as_completed
         print(f"\n[batch] 并行模式: {workers} workers × {count} 任务")
-        task_chunks = [range(worker_id, count, workers) for worker_id in range(workers)]
+        task_queue: queue.Queue[int] = queue.Queue()
+        for idx in range(count):
+            task_queue.put(idx)
         results = [None] * count
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(
                     _run_batch_worker,
-                    (worker_id, chunk, card_config_path, kwargs, workers, use_gopay, proxy_pool, card_cfg),
+                    (worker_id, task_queue, card_config_path, kwargs, workers, use_gopay, proxy_pool, card_cfg),
                 ): worker_id
-                for worker_id, chunk in enumerate(task_chunks)
-                if chunk
+                for worker_id in range(workers)
             }
             for future in as_completed(futures):
                 for r in future.result():
@@ -2196,6 +2270,40 @@ def _release_pay_only_account_claim(account: dict | None) -> None:
         _PAY_ONLY_IN_FLIGHT_EMAILS.discard(email)
 
 
+def _unclaim_pending_activation_account(account: dict | None) -> None:
+    if not account:
+        return
+    email = _norm_email(account.get("email"))
+    pool_item_id = account.get("_pool_item_id")
+    if not email and not pool_item_id:
+        return
+    try:
+        with get_db()._conn() as c:
+            now = time.time()
+            if pool_item_id:
+                c.execute(
+                    """
+                    UPDATE account_pool_items
+                    SET pool_status='registered_pending_plus',
+                        reserved_at=0, updated_at=?
+                    WHERE id=? AND pool_status='in_progress'
+                    """,
+                    (now, int(pool_item_id)),
+                )
+            elif email:
+                c.execute(
+                    """
+                    UPDATE account_pool_items
+                    SET pool_status='registered_pending_plus',
+                        reserved_at=0, updated_at=?
+                    WHERE lower(email)=? AND pool_status='in_progress'
+                    """,
+                    (now, email),
+                )
+    except Exception as e:
+        print(f"[pool] release pending activation claim failed: {email or pool_item_id}: {e}")
+
+
 def _run_pool_rotation(card_config_path, *, use_paypal=False, use_gopay=False,
                        gopay_otp_file=None, push_server=False,
                        max_items: int | None = None, label: str = "rotation") -> list:
@@ -2265,7 +2373,8 @@ def _registered_account_from_pool_item(item: dict) -> dict:
 
 def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
              gopay_otp_file=None, timeout_pay=600, prefer_recent=True,
-             push_server=False, log_label="", account_override: dict | None = None):
+             push_server=False, log_label="", account_override: dict | None = None,
+             gopay_account_pool=None):
     """Retry payment only.
 
     Default behavior is now:
@@ -2314,6 +2423,8 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
     pay_card_config_path = card_config_path
     pay_proxy = ""
     temp_pay_card = None
+    leased_gopay_account = None
+    temp_gopay_card = None
     try:
         proxy_pool = _build_proxy_pool_from_card_cfg(card_cfg or {})
         if proxy_pool and proxy_pool.proxies:
@@ -2328,6 +2439,23 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         print(f"[pay-only] payment proxy override failed, use config proxy: {e}")
     try:
         _refresh_proxy_before_payment(card_cfg or {})
+        if use_gopay and gopay_account_pool is not None:
+            holder = log_label or email or "pay-only"
+            try:
+                leased_gopay_account = gopay_account_pool.acquire(holder=holder)
+                temp_gopay_card = _rewrite_card_for_worker(
+                    pay_card_config_path,
+                    gopay_account=leased_gopay_account,
+                    worker_id=0,
+                )
+                pay_card_config_path = temp_gopay_card
+                _pre_unbind_gopay_lease(card_cfg or {}, leased_gopay_account, holder=holder)
+            except PaymentError as e:
+                reason = str(e)[:200]
+                record["payment"] = {"status": "skipped", "email": email, "reason": reason}
+                _unclaim_pending_activation_account(account)
+                _append_result(record)
+                return {"status": "skipped", "email": email, "reason": reason}
         _log_payment_exit_ip(pay_card_config_path, label="pay-only 支付")
         result = pay(
             pay_card_config_path,
@@ -2427,6 +2555,11 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         if temp_pay_card and os.path.exists(temp_pay_card):
             try: os.unlink(temp_pay_card)
             except Exception: pass
+        if temp_gopay_card and os.path.exists(temp_gopay_card):
+            try: os.unlink(temp_gopay_card)
+            except Exception: pass
+        if gopay_account_pool is not None and leased_gopay_account:
+            gopay_account_pool.release(leased_gopay_account)
         _release_pay_only_account_claim(account)
 
 
@@ -3697,12 +3830,6 @@ def _validate_worker_resources(card_cfg, workers, *, use_gopay=False, proxy_pool
     workers = max(1, int(workers or 1))
     if workers <= 1:
         return
-    if use_gopay:
-        accounts = _gopay_accounts_from_card_cfg(card_cfg or {})
-        if accounts and len(accounts) < workers:
-            raise RuntimeError(
-                f"workers={workers} 但 GoPay accounts 只有 {len(accounts)} 个，无法保证手机号不重复"
-            )
     pool = proxy_pool or _build_proxy_pool_from_card_cfg(card_cfg or {})
 
 def _rewrite_cardw_with_domain(src_path, domain, proxy_url=""):
@@ -3764,6 +3891,148 @@ def _gopay_accounts_from_card_cfg(card_cfg: dict) -> list[dict]:
     return usable
 
 
+def _gopay_account_lease_key(account: dict) -> str:
+    cc = re.sub(r"\D", "", str(account.get("country_code") or ""))
+    phone = re.sub(r"\D", "", str(account.get("phone_number") or account.get("phone") or ""))
+    if cc and phone and not phone.startswith(cc):
+        return f"{cc}{phone}"
+    return phone or str(account.get("label") or account.get("name") or id(account))
+
+
+def _build_gopay_account_lease_pool(card_cfg: dict) -> GoPayAccountLeasePool | None:
+    accounts = _gopay_accounts_from_card_cfg(card_cfg or {})
+    if not accounts:
+        return None
+    gp = (card_cfg or {}).get("gopay") or {}
+    try:
+        wait_interval = float(gp.get("phone_lock_wait_interval") or gp.get("account_lock_wait_interval") or 10.0)
+    except (TypeError, ValueError):
+        wait_interval = 10.0
+    try:
+        wait_timeout = float(gp.get("phone_lock_timeout") or gp.get("account_lock_timeout") or 60.0)
+    except (TypeError, ValueError):
+        wait_timeout = 60.0
+    return GoPayAccountLeasePool(accounts, wait_interval=wait_interval, wait_timeout=wait_timeout)
+
+
+class GoPayAccountLeasePool:
+    def __init__(self, accounts: list[dict], *, wait_interval: float = 10.0, wait_timeout: float = 60.0):
+        self.accounts = [dict(a) for a in (accounts or [])]
+        self.wait_interval = max(0.2, float(wait_interval or 10.0))
+        self.wait_timeout = max(0.2, float(wait_timeout or 60.0))
+        self._condition = threading.Condition()
+        self._locked: dict[str, str] = {}
+
+    def acquire(self, *, holder: str, log=print) -> dict | None:
+        if not self.accounts:
+            return None
+        deadline = time.time() + self.wait_timeout
+        with self._condition:
+            while True:
+                for account in self.accounts:
+                    key = _gopay_account_lease_key(account)
+                    if key not in self._locked:
+                        self._locked[key] = holder
+                        label = account.get("label") or account.get("name") or key
+                        log(f"[GoPayPhonePool] {holder} locked phone={label}")
+                        leased = dict(account)
+                        leased["_lease_key"] = key
+                        leased["_lease_holder"] = holder
+                        return leased
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+                wait_s = min(self.wait_interval, remaining)
+                log(
+                    f"[GoPayPhonePool] {holder} waiting for free phone "
+                    f"({int(max(0, remaining))}s left)"
+                )
+                self._condition.wait(wait_s)
+        raise GoPayPhoneLeaseTimeoutError(
+            f"GoPay 手机号池忙，等待 {int(self.wait_timeout)}s 后仍无可用手机号"
+        )
+
+    def release(self, lease: dict | None, *, log=print) -> None:
+        if not lease:
+            return
+        key = str(lease.get("_lease_key") or _gopay_account_lease_key(lease))
+        holder = str(lease.get("_lease_holder") or "")
+        with self._condition:
+            if key in self._locked:
+                self._locked.pop(key, None)
+                label = lease.get("label") or lease.get("name") or key
+                log(f"[GoPayPhonePool] {holder or '-'} released phone={label}")
+            self._condition.notify_all()
+
+
+def _gopay_cfg_for_leased_account(card_cfg: dict, lease: dict | None) -> dict:
+    gp = (card_cfg or {}).get("gopay") or {}
+    base_gp = {k: v for k, v in gp.items() if k != "accounts"} if isinstance(gp, dict) else {}
+    if lease:
+        selected = {
+            k: v
+            for k, v in dict(lease).items()
+            if v is not None and not str(k).startswith("_lease_")
+        }
+        base_gp.update(selected)
+    return base_gp
+
+
+def _pre_unbind_gopay_lease(card_cfg: dict, lease: dict | None, *, holder: str = "") -> None:
+    if not lease:
+        return
+    gopay_cfg = _gopay_cfg_for_leased_account(card_cfg, lease)
+    auto = gopay_cfg.get("auto_unbind") if isinstance(gopay_cfg.get("auto_unbind"), dict) else {}
+    raw_request = str(auto.get("raw_request") or gopay_cfg.get("auto_unbind_raw_request") or "").strip()
+    base_url = str(auto.get("base_url") or gopay_cfg.get("auto_unbind_base_url") or "")
+    timeout = 20.0
+    try:
+        timeout = float(auto.get("timeout") or gopay_cfg.get("auto_unbind_timeout") or 20.0)
+    except (TypeError, ValueError):
+        timeout = 20.0
+    label = lease.get("label") or lease.get("name") or _gopay_account_lease_key(lease)
+    prefix = f"[GoPayPhonePool] {holder} " if holder else "[GoPayPhonePool] "
+    if not raw_request:
+        print(f"{prefix}pre-unbind skipped phone={label}: auto_unbind raw_request not configured")
+        return
+    try:
+        from webui.backend import gopay_auto_unbind
+    except Exception as exc:
+        raise PaymentError(
+            f"GoPay 手机号 {label} link 检查失败: gopay_auto_unbind unavailable: {exc}"
+        ) from exc
+
+    print(f"{prefix}pre-unbind check phone={label}")
+    try:
+        linked = gopay_auto_unbind.fetch_linkedapps(raw_request, base_url, timeout=timeout)
+        entries = gopay_auto_unbind.extract_gopay_link_entries(linked.get("body_json"))
+    except Exception as exc:
+        raise PaymentError(
+            f"GoPay 手机号 {label} link 检查失败: {type(exc).__name__}: {str(exc)[:300]}"
+        ) from exc
+    if not linked.get("has_data"):
+        raise PaymentError(
+            f"GoPay 手机号 {label} link 检查失败: "
+            f"linkedapps status={linked.get('status_code') or '-'} body={str(linked.get('body') or '')[:240]}"
+        )
+    if not entries:
+        print(f"{prefix}pre-unbind ok phone={label}: no existing link")
+        return
+    print(f"{prefix}pre-unbind found {len(entries)} linked account(s) phone={label}, unlinking")
+    result = gopay_auto_unbind.run_from_gopay_config(gopay_cfg, log=lambda m: print(f"  {m}"))
+    if result.get("ok"):
+        print(
+            f"{prefix}pre-unbind ok phone={label}: "
+            f"unlink_status={result.get('unlink_status_code') or '-'}"
+        )
+        return
+    raise PaymentError(
+        f"GoPay 手机号 {label} unlink 失败: "
+        f"reason={result.get('reason') or '-'} linkedapps_status={result.get('linkedapps_status_code') or '-'} "
+        f"unlink_status={result.get('unlink_status_code') or '-'}"
+    )
+
+
 def _rewrite_card_for_worker(src_path, *, proxy_url="", gopay_account=None, worker_id=0):
     with open(src_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -3791,28 +4060,16 @@ def _worker_card_config(card_config_path, card_cfg, worker_id, workers, proxy_po
     if proxy_pool and proxy_pool.proxies:
         reg_proxy, pay_proxy = proxy_pool.pick_two_stage_for_worker(worker_id)
     picked_proxy = pay_proxy or reg_proxy
-    selected_gopay = None
-    if use_gopay:
-        accounts = _gopay_accounts_from_card_cfg(card_cfg or {})
-        if accounts:
-            if workers > len(accounts):
-                raise RuntimeError(
-                    f"workers={workers} 但 GoPay accounts 只有 {len(accounts)} 个，无法保证手机号不重复"
-                )
-            selected_gopay = accounts[int(worker_id) % len(accounts)]
-            label = selected_gopay.get("label") or selected_gopay.get("name") or f"account-{worker_id + 1}"
-            print(f"[batch-worker-{worker_id}] GoPay account={label}")
     if reg_proxy or pay_proxy:
         if reg_proxy == pay_proxy:
             print(f"[batch-worker-{worker_id}] proxy={reg_proxy}")
         else:
             print(f"[batch-worker-{worker_id}] register_proxy={reg_proxy}")
             print(f"[batch-worker-{worker_id}] payment_proxy={pay_proxy}")
-    if picked_proxy or selected_gopay:
+    if picked_proxy:
         return _rewrite_card_for_worker(
             card_config_path,
             proxy_url=picked_proxy,
-            gopay_account=selected_gopay,
             worker_id=worker_id,
         ), reg_proxy, pay_proxy
     return card_config_path, "", ""
