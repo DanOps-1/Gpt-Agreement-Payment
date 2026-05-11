@@ -1831,9 +1831,12 @@ class GoPayCharger:
             f"status={r.status_code} body={_log_preview(data or raw_text)}"
         )
 
-    def _poll_sms_otp(self) -> str:
+    def _poll_sms_otp(self, reference_id: str = "") -> str:
         if not self.sms_otp_poll_url:
             raise GoPayError("SMS OTP enabled but sms_otp_poll_url is empty")
+        resend_callback = None
+        if reference_id:
+            resend_callback = lambda: self._gopay_resend_sms_otp(reference_id)
         provider = sms_http_otp_provider(
             self.sms_otp_poll_url,
             timeout=self.sms_otp_timeout,
@@ -1842,6 +1845,13 @@ class GoPayCharger:
             params=self.gopay_cfg.get("sms_otp_params") if isinstance(self.gopay_cfg.get("sms_otp_params"), dict) else None,
             phone=self.phone,
             country_code=self.country_code,
+            resend_callback=resend_callback,
+            resend_after_s=_float_cfg(
+                self.gopay_cfg,
+                "sms_otp_resend_after",
+                _float_cfg(self.gopay_cfg, "sms_otp_resend_interval", 60.0),
+            ),
+            max_resends=_int_cfg(self.gopay_cfg, "sms_otp_max_resends", 3),
             log=self.log,
         )
         return provider()
@@ -3405,7 +3415,7 @@ class GoPayCharger:
             f"GOPAY_OTP_TARGET phone={self.phone} country_code={self.country_code}",
             flush=True,
         )
-        otp = self._poll_sms_otp() if self.use_sms_otp else self.otp_provider()
+        otp = self._poll_sms_otp(reference_id) if self.use_sms_otp else self.otp_provider()
         if not otp:
             raise OTPCancelled("OTP not provided")
         challenge_id, client_id = self._gopay_validate_otp(reference_id, otp)
@@ -3704,6 +3714,13 @@ def _float_cfg(cfg: dict, key: str, default: float) -> float:
         return default
 
 
+def _int_cfg(cfg: dict, key: str, default: int) -> int:
+    try:
+        return int(cfg.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
 def _headers_cfg(raw: Any) -> dict:
     return raw if isinstance(raw, dict) else {}
 
@@ -3841,6 +3858,9 @@ def sms_http_otp_provider(
     params: Optional[dict] = None,
     phone: str = "",
     country_code: str = "",
+    resend_callback: Optional[Callable[[], None]] = None,
+    resend_after_s: float = 60.0,
+    max_resends: int = 3,
     log: Callable[[str], None] = print,
 ) -> Callable[[], str]:
     def provider() -> str:
@@ -3853,6 +3873,8 @@ def sms_http_otp_provider(
             base_params["country_code"] = country_code
         last_error = ""
         poll_count = 0
+        resend_count = 0
+        next_resend_at = time.time() + max(1.0, resend_after_s)
         log(f"[gopay] waiting SMS OTP from relay: {url}")
         while time.time() < deadline:
             poll_count += 1
@@ -3890,6 +3912,24 @@ def sms_http_otp_provider(
                 last_error = ""
             except Exception as exc:
                 last_error = str(exc)
+            if (
+                resend_callback is not None
+                and max_resends > 0
+                and resend_count < max_resends
+                and time.time() >= next_resend_at
+            ):
+                resend_count += 1
+                log(
+                    f"[gopay] SMS OTP still missing after {resend_after_s:g}s; "
+                    f"requesting resend #{resend_count}/{max_resends}"
+                )
+                try:
+                    resend_callback()
+                    last_error = ""
+                except Exception as exc:
+                    last_error = f"resend#{resend_count} failed: {exc}"
+                    log(f"[gopay] SMS OTP resend #{resend_count}/{max_resends} failed: {exc}")
+                next_resend_at = time.time() + max(1.0, resend_after_s)
             time.sleep(max(0.2, interval))
         detail = f"; last_error={last_error}" if last_error else ""
         raise OTPCancelled(f"SMS OTP timeout after {timeout}s (url={url}{detail})")

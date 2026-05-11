@@ -273,6 +273,38 @@ def test_sms_otp_extractor_requires_message_context():
     assert gopay._extract_sms_otp_from_payload({"status": 200, "id": "123456"}) == ""
 
 
+@responses.activate
+def test_sms_otp_provider_resends_while_relay_returns_no_code(monkeypatch):
+    url = "https://sms.example/latest"
+    for _ in range(6):
+        responses.get(url, body="NO|暂时没有消息，如果60s后没有收到消息会进行重发，这个操作最多3次")
+    responses.get(
+        url,
+        body=(
+            "YES|(GOJEK) Ini OTP buat hubungkan OpenAI LLC ke GoPay. "
+            "OTP: 927716 merchants-gws-app.gopayapi.com #927716"
+        ),
+    )
+    now = [1000.0]
+    resends: list[float] = []
+
+    monkeypatch.setattr(gopay.time, "time", lambda: now[0])
+    monkeypatch.setattr(gopay.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + float(seconds)))
+
+    provider = gopay.sms_http_otp_provider(
+        url,
+        timeout=5.0,
+        interval=0.2,
+        resend_callback=lambda: resends.append(now[0]),
+        resend_after_s=1.0,
+        max_resends=2,
+        log=lambda _m: None,
+    )
+
+    assert provider() == "927716"
+    assert len(resends) == 1
+
+
 def test_disabled_gopay_accounts_are_not_selected():
     logs: list[str] = []
     cfg = {
