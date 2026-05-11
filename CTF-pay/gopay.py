@@ -3570,7 +3570,7 @@ def _parse_payload_timestamp(value: Any) -> Optional[float]:
 
 
 def _dict_timestamp(obj: dict) -> Optional[float]:
-    for key in ("ts", "timestamp", "time", "created_at", "received_at", "date"):
+    for key in ("received_at", "ts", "timestamp", "time", "created_at", "date"):
         if key in obj:
             ts = _parse_payload_timestamp(obj.get(key))
             if ts is not None:

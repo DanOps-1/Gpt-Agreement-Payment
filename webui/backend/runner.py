@@ -515,8 +515,14 @@ def submit_otp(value: str) -> dict:
 
 
 def notify_external_otp(item: dict | None = None) -> dict:
-    """Mark a DB-backed OTP wait as resolved by the external webhook."""
-    global _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code, _seq_counter, _log_lines
+    """Record that an external webhook arrived while a DB-backed wait is active.
+
+    Do not clear `_otp_pending` here.  The GoPay process still needs to poll
+    `/latest-otp`, or the Run page needs to auto-submit the OTP via `/run/otp`.
+    Clearing pending as soon as the webhook arrives races the frontend and can
+    close the OTP dialog before it has a chance to read and submit the code.
+    """
+    global _seq_counter, _log_lines
     with _lock:
         if _otp_pending and _otp_to_db:
             if _otp_pending_phone and item and not wa_relay._phone_matches(
@@ -525,10 +531,6 @@ def notify_external_otp(item: dict | None = None) -> dict:
                 _otp_pending_country_code,
             ):
                 return status()
-            _otp_pending = False
-            _otp_pending_since = None
-            _otp_pending_phone = ""
-            _otp_pending_country_code = ""
             if item:
                 _seq_counter += 1
                 _log_lines.append({

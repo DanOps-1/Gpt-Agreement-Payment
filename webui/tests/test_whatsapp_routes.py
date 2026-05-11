@@ -148,7 +148,10 @@ def test_external_otp_writes_latest_and_resolves_runner(client, monkeypatch):
     assert body["latest"]["source"] == "android-notification-forwarder"
     assert wa_relay.latest_otp()["otp"] == "123456"
     assert wa_relay.latest_otp(phone="81234567890", country_code="62")["otp"] == "123456"
-    assert runner.status()["otp_pending"] is False
+    assert runner.status()["otp_pending"] is True
+    runner._otp_pending = False
+    runner._otp_pending_phone = ""
+    runner._otp_pending_country_code = ""
 
 
 def test_external_otp_wrong_phone_does_not_resolve_pending_runner(client):

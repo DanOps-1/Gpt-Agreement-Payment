@@ -33,6 +33,7 @@ CTF-pay/pipeline_pay_*.json
 CTF-reg/pipeline_cardw_*.json
 
 # Python
+.venv/
 __pycache__/
 *.pyc
 *.pyo

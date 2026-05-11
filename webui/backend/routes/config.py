@@ -1,13 +1,9 @@
 import json
-import importlib.util
 import re
-import sys
-import time
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import requests
 from ..auth import CurrentUser
 from ..config_health import build_config_health
@@ -40,24 +36,6 @@ class GoPayAutoUnbindRequest(BaseModel):
     base_url: str = ""
     raw_request: str = ""
     unlink_raw_request: str = ""
-
-
-class GoPayAutoLoginTokenRequest(BaseModel):
-    country_code: str = "62"
-    phone_number: str = ""
-    otp_poll_url: str = ""
-    gopay: dict = Field(default_factory=dict)
-    timeout: float = 300.0
-
-
-class GoPayAutoLoginPinRequest(BaseModel):
-    country_code: str = "62"
-    phone_number: str = ""
-    pin: str = ""
-    token_path: str = ""
-    otp_poll_url: str = ""
-    gopay: dict = Field(default_factory=dict)
-    timeout: float = 300.0
 
 
 class AccountImportServerRequest(BaseModel):
@@ -114,103 +92,6 @@ def _save_pay_config(data: dict) -> None:
     path = s.PAY_CONFIG_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _digits(value: Any) -> str:
-    return "".join(ch for ch in str(value or "") if ch.isdigit())
-
-
-def _load_gopay_module() -> Any:
-    path = s.CTF_PAY_DIR / "gopay.py"
-    if not path.exists():
-        raise HTTPException(status_code=500, detail=f"gopay.py not found: {path}")
-    module_name = "ctf_pay_gopay_webui"
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise HTTPException(status_code=500, detail=f"cannot load gopay module: {path}")
-    module = importlib.util.module_from_spec(spec)
-    previous = sys.modules.get(module_name)
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception as e:
-        if previous is not None:
-            sys.modules[module_name] = previous
-        else:
-            sys.modules.pop(module_name, None)
-        raise HTTPException(status_code=500, detail=f"load gopay module failed: {e}") from e
-    return module
-
-
-def _first_gopay_account(gopay_cfg: dict) -> dict:
-    accounts = gopay_cfg.get("accounts") if isinstance(gopay_cfg, dict) else None
-    if not isinstance(accounts, list):
-        return {}
-    for item in accounts:
-        if isinstance(item, dict):
-            return dict(item)
-    return {}
-
-
-def _build_auto_login_gopay_cfg(
-    gopay_cfg: dict,
-    *,
-    country_code: str,
-    phone_number: str,
-    otp_poll_url: str = "",
-    pin: str = "",
-) -> dict:
-    base = dict(gopay_cfg or {})
-    first = _first_gopay_account(base)
-    cfg = {**base, **first}
-    cfg.pop("accounts", None)
-    cfg["country_code"] = country_code
-    cfg["phone_number"] = phone_number
-    cfg["pin"] = pin or str(cfg.get("pin") or "000000")
-    cfg["auto_login_country_code"] = country_code
-    cfg["auto_login_phone"] = phone_number
-    cfg["auto_login_pin"] = pin
-    cfg["auto_login_otp_poll_url"] = otp_poll_url
-    cfg["sms_otp_poll_url"] = otp_poll_url
-    cfg["auto_login_otp_filter_phone"] = True
-    cfg["auto_login_otp_timeout"] = float(base.get("auto_login_otp_timeout") or base.get("otp_timeout") or 300)
-    cfg["auto_login_otp_interval"] = float(base.get("auto_login_otp_interval") or 1)
-    cfg.setdefault("auto_login_token_dir", str(s.ROOT / "output" / "gopay_tokens"))
-    return cfg
-
-
-def _safe_token_result(result: dict) -> dict:
-    token_result = result.get("token_result") if isinstance(result.get("token_result"), dict) else {}
-    safe_token = {
-        key: value
-        for key, value in token_result.items()
-        if key not in {"access_token", "refresh_token", "token"}
-    }
-    safe = {
-        key: value
-        for key, value in result.items()
-        if key not in {"access_token", "refresh_token", "token_result", "token"}
-    }
-    safe["token_result"] = safe_token
-    if token_result.get("token_path"):
-        safe["token_path"] = token_result.get("token_path")
-    return safe
-
-
-def _resolve_gopay_token_path(raw: str) -> Path:
-    text = str(raw or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="token_path is empty")
-    path = Path(text)
-    if not path.is_absolute():
-        path = s.ROOT / path
-    try:
-        resolved = path.resolve()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"invalid token_path: {e}") from e
-    if not resolved.exists() or not resolved.is_file():
-        raise HTTPException(status_code=400, detail=f"token file not found: {resolved}")
-    return resolved
 
 
 @router.get("/account-import-server")
@@ -460,123 +341,6 @@ def manual_gopay_unbind(req: GoPayManualUnbindRequest, user: str = CurrentUser):
     if result.get("skipped"):
         raise HTTPException(status_code=400, detail=result.get("reason", "auto_unbind_not_configured"))
     return result
-
-
-@router.post("/gopay/auto-login/token")
-def run_gopay_auto_login_token(req: GoPayAutoLoginTokenRequest, user: str = CurrentUser):
-    country_code = _digits(req.country_code) or "62"
-    phone_number = _digits(req.phone_number)
-    otp_poll_url = str(req.otp_poll_url or "").strip()
-    if not phone_number:
-        raise HTTPException(status_code=400, detail="GoPay phone_number is empty")
-    if not otp_poll_url:
-        raise HTTPException(status_code=400, detail="GoPay OTP poll URL is empty")
-    timeout = max(float(req.timeout or 300), 1.0)
-    gopay_mod = _load_gopay_module()
-    cfg = _build_auto_login_gopay_cfg(
-        req.gopay,
-        country_code=country_code,
-        phone_number=phone_number,
-        otp_poll_url=otp_poll_url,
-    )
-    cfg["auto_login_setup_pin"] = False
-    cfg["auto_login_otp_timeout"] = timeout
-    logs: list[str] = []
-    try:
-        charger = gopay_mod.GoPayCharger(
-            requests.Session(),
-            cfg,
-            otp_provider=lambda: "",
-            log=lambda line: logs.append(str(line)),
-        )
-        result = charger._gopay_auto_login_if_configured()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"GoPay auto-login token failed: {e}") from e
-    safe = _safe_token_result(result if isinstance(result, dict) else {})
-    token_path = str(safe.get("token_path") or "")
-    if not token_path:
-        token_result = safe.get("token_result") if isinstance(safe.get("token_result"), dict) else {}
-        token_path = str(token_result.get("token_path") or "")
-    if not token_path:
-        raise HTTPException(status_code=502, detail="GoPay auto-login finished without token_path")
-    return {
-        "ok": True,
-        "country_code": country_code,
-        "phone_number": phone_number,
-        "token_path": token_path,
-        "result": safe,
-        "logs": logs[-12:],
-    }
-
-
-@router.post("/gopay/auto-login/pin")
-def run_gopay_auto_login_pin(req: GoPayAutoLoginPinRequest, user: str = CurrentUser):
-    country_code = _digits(req.country_code) or "62"
-    phone_number = _digits(req.phone_number)
-    pin = _digits(req.pin)
-    otp_poll_url = str(req.otp_poll_url or "").strip()
-    if not phone_number:
-        raise HTTPException(status_code=400, detail="GoPay phone_number is empty")
-    if len(pin) != 6:
-        raise HTTPException(status_code=400, detail="GoPay PIN must be 6 digits")
-    if not otp_poll_url:
-        raise HTTPException(status_code=400, detail="GoPay OTP poll URL is empty")
-    timeout = max(float(req.timeout or 300), 1.0)
-    token_path = _resolve_gopay_token_path(req.token_path)
-    try:
-        saved = json.loads(token_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"read token file failed: {e}") from e
-    if not isinstance(saved, dict):
-        raise HTTPException(status_code=400, detail="token file payload is invalid")
-    token_data = saved.get("token") if isinstance(saved.get("token"), dict) else {}
-    access_token = str(token_data.get("access_token") or "")
-    if not access_token:
-        raise HTTPException(status_code=400, detail="token file missing access_token")
-    gopay_mod = _load_gopay_module()
-    cfg = _build_auto_login_gopay_cfg(
-        req.gopay,
-        country_code=country_code,
-        phone_number=phone_number,
-        otp_poll_url=otp_poll_url,
-        pin=pin,
-    )
-    cfg["auto_login_setup_pin"] = True
-    cfg["auto_login_otp_timeout"] = timeout
-    client_id = str(saved.get("client_id") or cfg.get("auto_login_client_id") or gopay_mod.GOPAY_LOGIN_CLIENT_ID)
-    client_secret = str(cfg.get("auto_login_client_secret") or gopay_mod.GOPAY_LOGIN_CLIENT_SECRET)
-    logs: list[str] = []
-    try:
-        charger = gopay_mod.GoPayCharger(
-            requests.Session(),
-            cfg,
-            otp_provider=lambda: "",
-            log=lambda line: logs.append(str(line)),
-        )
-        result = charger._gopay_setup_pin_after_login(
-            phone=phone_number,
-            country_code=country_code,
-            access_token=access_token,
-            client_id=client_id,
-            client_secret=client_secret,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"GoPay auto-login PIN failed: {e}") from e
-    saved["pin_setup"] = result
-    saved["pin_set_at"] = time.time()
-    token_path.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {
-        "ok": True,
-        "country_code": country_code,
-        "phone_number": phone_number,
-        "token_path": str(token_path),
-        "pin_setup": result,
-        "logs": logs[-12:],
-    }
 
 
 @router.post("/health")
