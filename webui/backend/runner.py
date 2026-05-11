@@ -518,9 +518,8 @@ def notify_external_otp(item: dict | None = None) -> dict:
     """Record that an external webhook arrived while a DB-backed wait is active.
 
     Do not clear `_otp_pending` here.  The GoPay process still needs to poll
-    `/latest-otp`, or the Run page needs to auto-submit the OTP via `/run/otp`.
-    Clearing pending as soon as the webhook arrives races the frontend and can
-    close the OTP dialog before it has a chance to read and submit the code.
+    `/latest-otp`.  Clearing pending as soon as the webhook arrives races both
+    the frontend status poll and the GoPay relay poll.
     """
     global _seq_counter, _log_lines
     with _lock:
@@ -540,6 +539,34 @@ def notify_external_otp(item: dict | None = None) -> dict:
                 })
                 if len(_log_lines) > _MAX_LOG_LINES:
                     _log_lines = _log_lines[-_MAX_LOG_LINES:]
+    return status()
+
+
+def notify_otp_consumed(item: dict | None = None) -> dict:
+    """Mark DB-backed OTP wait as resolved after GoPay reads `/latest-otp`."""
+    global _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code
+    global _seq_counter, _log_lines
+    with _lock:
+        if not (_otp_pending and _otp_to_db):
+            return status()
+        if _otp_pending_phone and item and not wa_relay._phone_matches(
+            item,
+            _otp_pending_phone,
+            _otp_pending_country_code,
+        ):
+            return status()
+        _otp_pending = False
+        _otp_pending_since = None
+        _otp_pending_phone = ""
+        _otp_pending_country_code = ""
+        _seq_counter += 1
+        _log_lines.append({
+            "seq": _seq_counter,
+            "ts": time.time(),
+            "line": "[webui] external OTP consumed by GoPay relay",
+        })
+        if len(_log_lines) > _MAX_LOG_LINES:
+            _log_lines = _log_lines[-_MAX_LOG_LINES:]
     return status()
 
 

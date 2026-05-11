@@ -154,4 +154,5 @@ def latest_otp(
     if not item:
         response.status_code = 204
         return None
+    runner.notify_otp_consumed(item)
     return item

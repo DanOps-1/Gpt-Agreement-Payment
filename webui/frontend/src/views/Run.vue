@@ -294,21 +294,21 @@
             <div class="otp-head">
               <span class="otp-prompt">$</span> GoPay WhatsApp OTP
             </div>
-            <p class="otp-desc">正在轮询外部 OTP；也可以手动输入刚收到的 6 位验证码。提交后 gopay.py 自动继续。</p>
+            <p class="otp-desc">正在按 GoPay 测试验证码的方式轮询 webhook OTP；收到后 gopay.py 会从 relay 自动读取。手动提交仅作为兜底。</p>
             <input
               class="otp-input"
               v-model="otpDialog.value"
               maxlength="8"
               autofocus
-              :disabled="otpDialog.submitting"
+              :disabled="otpDialog.submitting || otpDialog.autoFilled"
               @keyup.enter="submitOtp"
               placeholder="000000"
             />
             <div class="otp-poll-hint" :class="{ ok: otpDialog.autoFilled }">
-              {{ otpDialog.autoFilled ? "已自动填入外部 OTP，正在继续..." : "等待 webhook OTP，或直接手动输入。" }}
+              {{ otpDialog.autoFilled ? "已收到 webhook OTP，等待 gopay.py 读取继续..." : "等待 webhook OTP；如果 WhatsApp 隐藏内容，可手动输入。" }}
             </div>
             <div class="otp-actions">
-              <TermBtn :loading="otpDialog.submitting" @click="submitOtp">提交</TermBtn>
+              <TermBtn :loading="otpDialog.submitting" :disabled="otpDialog.autoFilled" @click="submitOtp">手动提交</TermBtn>
             </div>
           </div>
         </div>
@@ -524,6 +524,7 @@ const status = ref<RunStatus>({
 const cmdPreview = ref("xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal");
 const lines = ref<{ seq: number; ts: number; line: string }[]>([]);
 const MAX_LOG_LINES = 1500;
+const OTP_STATUS_LOOKBACK_SECONDS = 15;
 const starting = ref(false);
 const stopping = ref(false);
 const configHealth = ref<ConfigHealthResponse | null>(null);
@@ -1210,8 +1211,10 @@ function openOtpDialog(since?: number | null, phone?: string, countryCode?: stri
   );
   otpDialog.value.phone = phone || status.value.otp_pending_phone || otpDialog.value.phone || "";
   otpDialog.value.country_code = countryCode || status.value.otp_pending_country_code || otpDialog.value.country_code || "";
-  startOtpPolling();
-  pollExternalOtp();
+  if (!otpDialog.value.autoFilled) {
+    startOtpPolling();
+    pollExternalOtp();
+  }
 }
 
 function closeOtpDialog() {
@@ -1219,6 +1222,8 @@ function closeOtpDialog() {
   otpDialog.value.value = "";
   otpDialog.value.autoFilled = false;
   otpDialog.value.polling = false;
+  otpDialog.value.submitting = false;
+  otpDialog.value.submitted = false;
   otpDialog.value.phone = "";
   otpDialog.value.country_code = "";
   stopOtpPolling();
@@ -1244,10 +1249,11 @@ function stopOtpPolling() {
 }
 
 async function pollExternalOtp() {
-  if (!otpDialog.value.open || otpDialog.value.submitting || otpDialog.value.submitted) return;
+  if (!otpDialog.value.open || otpDialog.value.submitting || otpDialog.value.submitted || otpDialog.value.autoFilled) return;
   try {
+    const since = Math.max(0, otpDialog.value.since - OTP_STATUS_LOOKBACK_SECONDS);
     const params: Record<string, string | number> = {
-      since: otpDialog.value.since,
+      since,
     };
     if (otpDialog.value.phone) params.phone = otpDialog.value.phone;
     if (otpDialog.value.country_code) params.country_code = otpDialog.value.country_code;
@@ -1255,22 +1261,22 @@ async function pollExternalOtp() {
     const latest = r.data?.latest;
     const otp = latest?.otp || "";
     const arrivedAt = Number(r.data?.updated_at || latest?.received_at || 0);
-    if (!otp || arrivedAt < otpDialog.value.since) return;
+    if (!otp || arrivedAt < since) return;
     if (otpDialog.value.value !== otp) {
       otpDialog.value.value = otp;
       otpDialog.value.autoFilled = true;
-      if (!otpDialog.value.successNotified) message.success("已从外部 OTP 自动填入");
+      notifyOtpSuccess("验证码回调测试通过");
     }
-    await submitOtp({ auto: true });
+    stopOtpPolling();
   } catch {}
 }
 
-async function submitOtp(options?: { auto?: boolean } | Event) {
-  const auto = Boolean((options as { auto?: boolean } | undefined)?.auto);
+async function submitOtp(_options?: Event) {
   if (otpDialog.value.submitting || otpDialog.value.submitted) return;
+  if (otpDialog.value.autoFilled) return;
   const v = otpDialog.value.value.trim();
   if (!v) {
-    if (!auto) message.warning("请输入 OTP");
+    message.warning("请输入 OTP");
     return;
   }
   otpDialog.value.submitted = true;
@@ -1278,16 +1284,12 @@ async function submitOtp(options?: { auto?: boolean } | Event) {
   otpDialog.value.submitting = true;
   try {
     await api.post("/run/otp", { otp: v });
-    notifyOtpSuccess(auto ? "外部 OTP 已提交" : "OTP 已提交");
+    notifyOtpSuccess("OTP 已手动提交");
     closeOtpDialog();
   } catch (e: any) {
     otpDialog.value.submitted = false;
     const detail = e.response?.data?.detail || "";
-    if (auto && String(detail).includes("no OTP currently requested")) {
-      closeOtpDialog();
-      return;
-    }
-    if (!auto) message.error(detail || "提交失败");
+    message.error(detail || "提交失败");
   } finally {
     otpDialog.value.submitting = false;
   }

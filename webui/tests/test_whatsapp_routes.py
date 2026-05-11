@@ -121,7 +121,7 @@ def test_external_otp_requires_bearer_token(client):
     assert r.status_code == 403
 
 
-def test_external_otp_writes_latest_and_resolves_runner(client, monkeypatch):
+def test_external_otp_writes_latest_and_waits_for_relay_consumption(client, monkeypatch):
     from webui.backend import runner, wa_relay
 
     token = wa_relay.relay_token()
@@ -149,7 +149,15 @@ def test_external_otp_writes_latest_and_resolves_runner(client, monkeypatch):
     assert wa_relay.latest_otp()["otp"] == "123456"
     assert wa_relay.latest_otp(phone="81234567890", country_code="62")["otp"] == "123456"
     assert runner.status()["otp_pending"] is True
-    runner._otp_pending = False
+
+    relay = client.get(
+        "/api/whatsapp/latest-otp",
+        params={"token": token, "phone": "81234567890", "country_code": "62"},
+    )
+    assert relay.status_code == 200
+    assert relay.json()["otp"] == "123456"
+    assert runner.status()["otp_pending"] is False
+
     runner._otp_pending_phone = ""
     runner._otp_pending_country_code = ""
 
