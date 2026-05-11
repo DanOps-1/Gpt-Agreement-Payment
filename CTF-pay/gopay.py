@@ -1155,10 +1155,21 @@ class GoPayCharger:
                      "x-user-locale": "en-US"},
             timeout=DEFAULT_TIMEOUT,
         )
-        r.raise_for_status()
-        if not r.json().get("success"):
-            raise GoPayError(f"user-consent failed: {r.text[:300]}")
-        self.log("[gopay] consent ok, OTP sent via WhatsApp")
+        raw_text = getattr(r, "text", "") or ""
+        content_type = str((getattr(r, "headers", {}) or {}).get("content-type") or "")
+        if r.status_code >= 400:
+            raise GoPayError(
+                "user-consent failed "
+                f"status={r.status_code} content_type={content_type or '-'} "
+                f"reference_id={reference_id} body={raw_text[:600]!r}"
+            )
+        data = r.json() if content_type.startswith("application/json") and raw_text else {}
+        if isinstance(data, dict) and not data.get("success"):
+            raise GoPayError(f"user-consent failed status={r.status_code} body={raw_text[:600]!r}")
+        self.log(
+            "[gopay] consent ok, OTP sent via WhatsApp "
+            f"status={r.status_code} body={_log_preview(data or raw_text)}"
+        )
 
     def _gopay_resend_sms_otp(self, reference_id: str, *, allow_user_consent_fallback: bool = True):
         r = self.ext.post(
@@ -1203,7 +1214,10 @@ class GoPayCharger:
         data = r.json() if content_type.startswith("application/json") and raw_text else {}
         if isinstance(data, dict) and data.get("success") is False:
             raise GoPayError(f"resend-otp failed status={r.status_code} body={raw_text[:600]!r}")
-        self.log("[gopay] SMS OTP resend requested")
+        self.log(
+            "[gopay] SMS OTP resend requested "
+            f"status={r.status_code} body={_log_preview(data or raw_text)}"
+        )
 
     def _poll_sms_otp(self) -> str:
         if not self.sms_otp_poll_url:
@@ -3027,6 +3041,11 @@ def _payload_to_text(value: Any) -> str:
         return str(value or "")
 
 
+def _log_preview(value: Any, limit: int = 260) -> str:
+    text = re.sub(r"\s+", " ", _payload_to_text(value)).strip()
+    return text[:limit]
+
+
 def _extract_sms_otp_from_payload(payload: Any) -> str:
     text = _payload_to_text(payload).strip()
     if not text:
@@ -3209,8 +3228,10 @@ def sms_http_otp_provider(
         if country_code and "country_code" not in base_params:
             base_params["country_code"] = country_code
         last_error = ""
+        poll_count = 0
         log(f"[gopay] waiting SMS OTP from relay: {url}")
         while time.time() < deadline:
+            poll_count += 1
             try:
                 resp = sess.get(
                     url,
@@ -3219,14 +3240,27 @@ def sms_http_otp_provider(
                     timeout=min(10.0, max(2.0, interval + 1.0)),
                 )
                 if resp.status_code in (204, 404):
+                    if poll_count <= 5 or poll_count % 10 == 0:
+                        log(f"[gopay] SMS relay poll#{poll_count} status={resp.status_code} no content")
                     time.sleep(max(0.2, interval))
                     continue
-                resp.raise_for_status()
+                raw_text = getattr(resp, "text", "") or ""
+                if resp.status_code >= 400:
+                    last_error = f"status={resp.status_code} body={raw_text[:240]!r}"
+                    if poll_count <= 5 or poll_count % 10 == 0:
+                        log(f"[gopay] SMS relay poll#{poll_count} {last_error}")
+                    time.sleep(max(0.2, interval))
+                    continue
                 try:
                     payload: Any = resp.json()
                 except ValueError:
                     payload = resp.text
                 code = _extract_sms_otp_from_payload(payload)
+                if poll_count <= 5 or poll_count % 10 == 0 or code:
+                    log(
+                        f"[gopay] SMS relay poll#{poll_count} status={resp.status_code} "
+                        f"code={'yes' if code else 'no'} body={_log_preview(payload)}"
+                    )
                 if code:
                     return code
                 last_error = ""
