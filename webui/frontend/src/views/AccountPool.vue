@@ -114,7 +114,7 @@
       <button class="btn danger" type="button" :disabled="!deleteStatuses.length || deletingPools" @click="deleteSelectedPools">
         删除所选池子账号
       </button>
-      <span class="muted">未激活池受保护，不会出现在这里</span>
+      <span class="muted">删除后会同步清理该池子的流转记录</span>
     </section>
 
     <section class="table-shell">
@@ -296,7 +296,7 @@ const moveStatuses = computed(() => [
 ]);
 const deletableStatuses = computed(() =>
   [
-    ...statuses.value.filter(status => status.key !== "email_unused"),
+    ...statuses.value,
     { key: "in_progress", label: "任务中" },
     { key: "quarantined", label: "已隔离" },
   ]
@@ -536,7 +536,7 @@ async function deleteSelectedPools() {
   if (!deleteStatuses.value.length) return;
   const labels = deleteStatuses.value.map(statusLabel).join("、");
   const total = deleteStatuses.value.reduce((sum, key) => sum + Number(counts.value[key] || 0), 0);
-  const ok = window.confirm(`确认删除 ${labels} 中的账号？预计 ${total} 个。未激活池不会被删除。`);
+  const ok = window.confirm(`确认删除 ${labels} 中的账号？预计 ${total} 个。此操作会同步删除流转记录。`);
   if (!ok) return;
   deletingPools.value = true;
   try {

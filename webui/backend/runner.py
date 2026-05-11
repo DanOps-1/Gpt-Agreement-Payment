@@ -202,6 +202,9 @@ def _start_cmd(cmd: list[str], mode: str, *, gopay: bool = False) -> dict:
         _otp_pending_country_code = ""
 
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        env["WEBUI_DATA_DIR"] = str(s.get_data_dir())
+        env["WEBUI_DB_PATH"] = str(s.get_data_dir() / "webui.db")
+        env["WEBUI_DATABASE_PATH"] = str(s.get_data_dir() / "webui.db")
         if gopay:
             env["WEBUI_GOPAY_OTP_URL"] = wa_relay.otp_url()
         try:

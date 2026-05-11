@@ -180,6 +180,7 @@ class MailProvider:
         self._outlook_state_path = self._resolve_outlook_state_path(cfg)
         self._outlook_source = str(getattr(cfg, "outlook_source", "") or "").strip().lower()
         self._outlook_db_path = _default_webui_db_path()
+        self._current_pool_item_id = 0
         # 算法化 persona 生成器（音节合成法，详见 persona.py）
         from persona import PersonaGenerator, Persona
         self._persona_gen = PersonaGenerator(catch_all_domain)
@@ -283,42 +284,71 @@ class MailProvider:
         if not self._outlook_db_path.exists():
             raise RuntimeError(f"Outlook 数据库不存在: {self._outlook_db_path}")
         now = time.time()
-        retry_after_s = float(
-            getattr(self.cfg, "outlook_reserved_retry_after_s", 0)
-            or os.environ.get("OUTLOOK_RESERVED_RETRY_AFTER_S", "1800")
-            or 1800
-        )
-        stale_reserved_before = now - max(0.0, retry_after_s)
         with sqlite3.connect(self._outlook_db_path, isolation_level=None, timeout=15) as c:
             c.row_factory = sqlite3.Row
             c.execute("PRAGMA busy_timeout = 15000")
             c.execute("BEGIN IMMEDIATE")
             row = c.execute(
                 """
-                SELECT id, email, password, client_id, refresh_token
-                FROM outlook_mail_accounts
-                WHERE status='available'
-                   OR (status='reserved' AND reserved_at <= ?)
-                ORDER BY CASE status WHEN 'available' THEN 0 ELSE 1 END, id ASC
+                SELECT id, email, email_password, mail_client_id, mail_refresh_token,
+                       source_outlook_mail_id
+                FROM account_pool_items
+                WHERE pool_status='email_unused'
+                  AND mail_client_id != ''
+                  AND mail_refresh_token != ''
+                ORDER BY id ASC
                 LIMIT 1
                 """,
-                (stale_reserved_before,),
             ).fetchone()
             if not row:
                 c.execute("COMMIT")
-                raise RuntimeError("Outlook 邮箱池已耗尽：没有可复用账号（available 或已过期 reserved）")
+                raise RuntimeError("规划池未激活池已耗尽：没有可用 Outlook 邮箱账号")
             c.execute(
                 """
-                UPDATE outlook_mail_accounts
-                SET status='reserved', reserved_at=?, updated_at=?, last_error=''
-                WHERE id=?
+                UPDATE account_pool_items
+                SET pool_status='in_progress',
+                    reserved_at=?,
+                    attempt_count=attempt_count+1,
+                    last_stage='mail_reserved',
+                    last_error='',
+                    updated_at=?
+                WHERE id=? AND pool_status='email_unused'
                 """,
                 (now, now, int(row["id"])),
             )
+            c.execute(
+                """
+                INSERT INTO account_pool_events(item_id, ts, from_status, to_status, stage, reason)
+                VALUES (?, ?, 'email_unused', 'in_progress', 'mail_reserved', 'Registration task claimed mailbox from planning pool')
+                """,
+                (int(row["id"]), now),
+            )
+            try:
+                source_id = int(row["source_outlook_mail_id"] or 0)
+                if source_id:
+                    c.execute(
+                        """
+                        UPDATE outlook_mail_accounts
+                        SET status='reserved', reserved_at=?, updated_at=?, last_error=''
+                        WHERE id=? AND status!='used'
+                        """,
+                        (now, now, source_id),
+                    )
+                else:
+                    c.execute(
+                        """
+                        UPDATE outlook_mail_accounts
+                        SET status='reserved', reserved_at=?, updated_at=?, last_error=''
+                        WHERE lower(email)=lower(?) AND status!='used'
+                        """,
+                        (now, now, row["email"]),
+                    )
+            except sqlite3.Error:
+                pass
             c.execute("COMMIT")
-            self._mark_account_pool_claimed(c, row, now)
-        self._current_outlook_db_id = int(row["id"])
-        return OutlookAccount(row["email"], row["password"], row["client_id"], row["refresh_token"])
+        self._current_pool_item_id = int(row["id"])
+        self._current_outlook_db_id = int(row["source_outlook_mail_id"] or 0)
+        return OutlookAccount(row["email"], row["email_password"], row["mail_client_id"], row["mail_refresh_token"])
 
     def _mark_account_pool_claimed(self, c: sqlite3.Connection, row: sqlite3.Row, now: float) -> None:
         """Best-effort mirror of Outlook reservation into the planning pool."""
@@ -400,11 +430,11 @@ class MailProvider:
             pass
 
     def _mark_outlook_db_account(self, status: str, error: str = "") -> None:
-        if not self._current_outlook_db_id:
+        if not self._current_outlook_db_id and not self._current_pool_item_id:
             return
         now = time.time()
         with sqlite3.connect(self._outlook_db_path, isolation_level=None, timeout=15) as c:
-            if status == "used":
+            if self._current_outlook_db_id and status == "used":
                 c.execute(
                     """
                     UPDATE outlook_mail_accounts
@@ -413,7 +443,7 @@ class MailProvider:
                     """,
                     (now, now, self._current_outlook_db_id),
                 )
-            elif status == "failed":
+            elif self._current_outlook_db_id and status == "failed":
                 c.execute(
                     """
                     UPDATE outlook_mail_accounts
@@ -421,6 +451,26 @@ class MailProvider:
                     WHERE id=?
                     """,
                     (now, str(error or "")[:500], self._current_outlook_db_id),
+                )
+            if self._current_pool_item_id and status == "failed":
+                c.execute(
+                    """
+                    UPDATE account_pool_items
+                    SET pool_status='registration_failed',
+                        failed_at=?,
+                        last_stage='mail_failed',
+                        last_error=?,
+                        updated_at=?
+                    WHERE id=?
+                    """,
+                    (now, str(error or "")[:500], now, self._current_pool_item_id),
+                )
+                c.execute(
+                    """
+                    INSERT INTO account_pool_events(item_id, ts, from_status, to_status, stage, reason)
+                    VALUES (?, ?, 'in_progress', 'registration_failed', 'mail_failed', ?)
+                    """,
+                    (self._current_pool_item_id, now, str(error or "")[:500]),
                 )
 
     def mark_current_mailbox_used(self) -> None:
@@ -501,6 +551,27 @@ class MailProvider:
                 raise RuntimeError(f"Outlook 数据库不存在: {self._outlook_db_path}")
             with sqlite3.connect(self._outlook_db_path, isolation_level=None, timeout=15) as c:
                 c.row_factory = sqlite3.Row
+                row = c.execute(
+                    """
+                    SELECT id, email, email_password, mail_client_id, mail_refresh_token,
+                           source_outlook_mail_id
+                    FROM account_pool_items
+                    WHERE lower(email) = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (target,),
+                ).fetchone()
+                if row:
+                    self._current_pool_item_id = int(row["id"])
+                    self._current_outlook_db_id = int(row["source_outlook_mail_id"] or 0)
+                    self._current_outlook = OutlookAccount(
+                        row["email"],
+                        row["email_password"],
+                        row["mail_client_id"],
+                        row["mail_refresh_token"],
+                    )
+                    return self._current_outlook
                 row = c.execute(
                     """
                     SELECT id, email, password, client_id, refresh_token

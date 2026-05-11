@@ -947,9 +947,12 @@ class GoPayCharger:
             "get",
             f"https://app.midtrans.com/snap/v1/transactions/{snap_token}",
             headers={
+                "Accept": "application/json",
+                "Accept-Language": "zh-CN,zh;q=0.9,zh-TW;q=0.8,zh-HK;q=0.7,en-US;q=0.6,en;q=0.5",
                 "x-source": "snap",
                 "x-source-app-type": "redirection",
                 "x-source-version": "2.3.0",
+                "Referer": f"https://app.midtrans.com/snap/v4/redirection/{snap_token}",
             },
             timeout=DEFAULT_TIMEOUT,
             retry_label="midtrans load transaction",
@@ -1928,18 +1931,18 @@ class GoPayCharger:
             )
             final_url = str(getattr(r, "url", finish_url))
             return_result = self._visit_qris_embedded_return_url(final_url)
+            redirect_failed = "redirect_status=failed" in final_url.lower()
             self.log(
                 "[gopay-qris] finish redirect visited "
                 f"status={getattr(r, 'status_code', '?')} "
-                f"requested_url={finish_url[:260]} "
-                f"final_url={final_url[:260]}"
+                f"requested_success={self._qris_finish_url_is_success(finish_url)} "
+                f"redirect_failed={redirect_failed}"
                 + (
                     f" return_status={return_result.get('status_code')}"
                     if return_result.get("attempted")
                     else ""
                 )
             )
-            redirect_failed = "redirect_status=failed" in final_url.lower()
             return {
                 "ok": (
                     200 <= int(getattr(r, "status_code", 0) or 0) < 400
@@ -1982,18 +1985,12 @@ class GoPayCharger:
             if callback_url:
                 add(self._qris_success_callback_url(callback_url, response))
                 add(callback_url)
-        def short_url(value: str, limit: int = 500) -> str:
-            value = str(value or "").strip()
-            if not value:
-                return "-"
-            return value if len(value) <= limit else value[:limit] + "...<truncated>"
-
         self.log(
             "[gopay-qris] finish candidates "
-            f"deeplink_url={short_url(deeplink_url)!r} "
-            f"callback_url={short_url(callback_url)!r} "
-            f"finish_200_redirect_url={short_url(finish_200_redirect_url)!r} "
-            f"finish_redirect_url={short_url(finish_redirect_url)!r} "
+            f"deeplink_url={'yes' if deeplink_url else 'no'} "
+            f"callback_url={'yes' if callback_url else 'no'} "
+            f"finish_200_redirect_url={'yes' if finish_200_redirect_url else 'no'} "
+            f"finish_redirect_url={'yes' if finish_redirect_url else 'no'} "
             f"count={len(candidates)}"
         )
         return candidates
@@ -2095,6 +2092,7 @@ class GoPayCharger:
             url = f"https://app.midtrans.com/snap/v1/transactions/{snap_token}/status"
             headers = {
                 "Accept": "application/json",
+                "Accept-Language": "zh-CN,zh;q=0.9,zh-TW;q=0.8,zh-HK;q=0.7,en-US;q=0.6,en;q=0.5",
                 "x-source": "snap",
                 "x-source-app-type": "redirection",
                 "x-source-version": "2.3.0",
@@ -2450,7 +2448,7 @@ class GoPayCharger:
             self.log(
                 "[gopay] payments/success response "
                 f"status={r.status_code} content_type={content_type or '-'} "
-                f"url={final_url[:240]} body={body_preview!r}"
+                f"url={final_url[:180]}"
             )
             return {
                 "ok": 200 <= int(r.status_code or 0) < 400,

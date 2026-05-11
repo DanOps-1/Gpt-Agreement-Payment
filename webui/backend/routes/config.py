@@ -160,7 +160,7 @@ def _save_reg_config(data: dict, path: Path) -> None:
 
 @router.get("/outlook-mail-pool")
 def outlook_mail_pool_stats(user: str = CurrentUser):
-    return {"ok": True, **get_db().outlook_mail_pool_stats(), "path": str(s.DB_PATH)}
+    return {"ok": True, **get_db().outlook_mail_pool_stats(), "path": str(get_db().path)}
 
 
 @router.post("/outlook-mail-pool/import")
@@ -179,7 +179,7 @@ def import_outlook_mail_pool(req: OutlookMailPoolImportRequest, user: str = Curr
         "ok": True,
         "result": result,
         "pool_result": pool_result,
-        "path": str(s.DB_PATH),
+        "path": str(get_db().path),
         "reg_config_path": str(reg_path),
     }
 

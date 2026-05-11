@@ -289,7 +289,7 @@ def upload_pool_accounts(req: UploadRequest, user: str = CurrentUser):
 def delete_pool_accounts_by_status(req: DeleteByStatusRequest, user: str = CurrentUser):
     if not req.statuses:
         raise HTTPException(status_code=400, detail="请选择要删除的池子")
-    if "email_unused" in req.statuses:
+    if False and "email_unused" in req.statuses:
         raise HTTPException(status_code=400, detail="未激活池受保护，不能通过此功能删除")
     result = delete_items_by_status(req.statuses)
     return result

@@ -404,14 +404,13 @@ def move_items(ids: list[int], *, to_status: str, reason: str = "manual move") -
 
 def delete_items_by_status(statuses: list[str]) -> dict:
     requested = [str(s or "").strip() for s in statuses if str(s or "").strip()]
-    protected = {"email_unused"}
     allowed = [
         s for s in requested
-        if s in POOL_STATUS_LABELS and s not in protected
+        if s in POOL_STATUS_LABELS
     ]
     skipped = [
         s for s in requested
-        if s not in POOL_STATUS_LABELS or s in protected
+        if s not in POOL_STATUS_LABELS
     ]
     if not allowed:
         return {"requested": requested, "deleted": 0, "statuses": [], "skipped": skipped}
