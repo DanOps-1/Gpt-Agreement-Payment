@@ -3,10 +3,9 @@
 灏佽 `xvfb-run -a python pipeline.py [args]` 瀛愯繘绋嬶細spawn / 娴佸紡鏀?stdout
 鍒扮幆褰㈡棩蹇楃紦鍐?/ SIGTERM-浼樺厛 stop / 鏆撮湶 status + log 缁欒矾鐢卞眰銆?
 
-GoPay 妯″紡涓嬮澶栨敮鎸?OTP 涓浆锛氶粯璁ら€氳繃 WebUI 鍐呴儴 HTTP endpoint
-鎶?WhatsApp / 鎵嬪姩琛ュ綍 OTP 鍐欏叆 SQLite锛実opay.py 杞璇?endpoint銆?
-淇濈暀 `GOPAY_OTP_REQUEST path=<file>` 鏃ф牸寮忚瘑鍒紝鍙綔涓烘樉寮?legacy
-file provider 鐨勫吋瀹?fallback銆?
+GoPay 妯″紡涓嬮澶栨敮鎸?OTP 涓浆锛歐ebUI Run 界面使用本地
+file provider 等待 OTP；手机 webhook POST 到 `/api/whatsapp/external-otp`
+后，runner 将验证码写入 gopay.py 正在等待的文件。
 """
 from __future__ import annotations
 
@@ -37,8 +36,8 @@ _run_id = 0
 _log_lines: list[dict] = []  # {seq, ts, line}
 _seq_counter = 0
 _MAX_LOG_LINES = 1500
-_otp_file: Optional[Path] = None       # legacy file provider path, if used
-_otp_to_db: bool = False               # True when gopay.py waits on WebUI SQLite OTP endpoint
+_otp_file: Optional[Path] = None       # file provider path, if used
+_otp_to_db: bool = False               # legacy DB relay mode; Run uses file mode
 _otp_pending: bool = False             # set when gopay.py asks/waits for OTP
 _otp_pending_since: Optional[float] = None
 _otp_pending_phone: str = ""
@@ -62,8 +61,8 @@ def _append_log(line: str) -> None:
 def _gopay_auto_otp_enabled() -> bool:
     """Return True when config has a non-manual gopay.otp provider.
 
-    Legacy helper kept for old tests/tools. Current WebUI injects
-    WEBUI_GOPAY_OTP_URL and uses the SQLite-backed HTTP provider by default.
+    Legacy helper kept for old tests/tools. Current WebUI Run uses the
+    file-backed provider and feeds it from the external OTP webhook.
     """
     try:
         cfg = json.loads(s.PAY_CONFIG_PATH.read_text(encoding="utf-8"))
@@ -164,23 +163,27 @@ def status() -> dict:
 def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
           self_dealer: int = 0, register_only: bool = False, pay_only: bool = False,
           gopay: bool = False, count: int = 0, push_server: bool = False) -> dict:
+    gopay_otp_file = ""
+    if gopay:
+        otp_dir = s.get_data_dir() / "gopay_otp"
+        otp_dir.mkdir(parents=True, exist_ok=True)
+        gopay_otp_file = str(otp_dir / f"run_{int(time.time() * 1000)}.txt")
     cmd = build_cmd(mode, paypal, batch, workers, self_dealer,
                     register_only, pay_only, gopay=gopay,
-                    gopay_otp_file="", count=count,
+                    gopay_otp_file=gopay_otp_file, count=count,
                     push_server=push_server)
-    return _start_cmd(cmd, mode, gopay=gopay)
+    return _start_cmd(cmd, mode, gopay=gopay, gopay_otp_file=gopay_otp_file)
 
 
 
-def _start_cmd(cmd: list[str], mode: str, *, gopay: bool = False) -> dict:
+def _start_cmd(cmd: list[str], mode: str, *, gopay: bool = False, gopay_otp_file: str = "") -> dict:
     global _proc, _started_at, _ended_at, _exit_code, _cmd, _mode, _run_id
     global _log_lines, _seq_counter, _otp_file, _otp_to_db, _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code, _otp_file_is_temp
     with _lock:
         if _proc is not None and _proc.poll() is None:
             raise RuntimeError("a pipeline is already running")
 
-        # OTP 姒涙顓荤挧?WebUI SQLite endpoint閿涙稐绗夐崘宥呭灡瀵よ桨澶嶉弮?FIFO 閺傚洣娆㈤妴?
-        otp_p: Optional[Path] = None
+        otp_p = Path(gopay_otp_file) if gopay_otp_file else None
 
         # Reset.  Bump run_id before spawning so any late drain thread from a
         # previous process cannot write into this run's fresh log buffer.
@@ -205,8 +208,6 @@ def _start_cmd(cmd: list[str], mode: str, *, gopay: bool = False) -> dict:
         env["WEBUI_DATA_DIR"] = str(s.get_data_dir())
         env["WEBUI_DB_PATH"] = str(s.get_data_dir() / "webui.db")
         env["WEBUI_DATABASE_PATH"] = str(s.get_data_dir() / "webui.db")
-        if gopay:
-            env["WEBUI_GOPAY_OTP_URL"] = wa_relay.otp_url()
         try:
             popen_kwargs = {
                 "cwd": str(s.ROOT),
@@ -258,8 +259,7 @@ def _detect_otp_wait_target(line: str) -> tuple[str, Optional[Path]]:
     if m:
         return "file", Path(m.group(1).strip().strip("'\""))
 
-    # DB-backed WebUI provider, e.g.
-    # [gopay] waiting WhatsApp OTP from relay: http://127.0.0.1:8765/api/whatsapp/status?...
+    # Legacy DB-backed provider, kept for old command-line runs.
     if re.search(r"\[gopay\]\s+waiting WhatsApp OTP from relay:", line):
         return "db", None
     return "", None
@@ -515,35 +515,61 @@ def submit_otp(value: str) -> dict:
 
 
 def notify_external_otp(item: dict | None = None) -> dict:
-    """Record that an external webhook arrived while a DB-backed wait is active.
-
-    Do not clear `_otp_pending` here.  The GoPay process still needs to poll
-    `/latest-otp`.  Clearing pending as soon as the webhook arrives races both
-    the frontend status poll and the GoPay relay poll.
-    """
+    """Feed a webhook OTP to the active GoPay wait, if one is pending."""
     global _seq_counter, _log_lines
+    global _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code
     with _lock:
-        if _otp_pending and _otp_to_db:
+        if _otp_pending:
             if _otp_pending_phone and item and not wa_relay._phone_matches(
                 item,
                 _otp_pending_phone,
                 _otp_pending_country_code,
             ):
                 return status()
-            if item:
-                _seq_counter += 1
-                _log_lines.append({
-                    "seq": _seq_counter,
-                    "ts": time.time(),
-                    "line": f"[webui] external OTP received from {item.get('source', 'external')}",
-                })
-                if len(_log_lines) > _MAX_LOG_LINES:
-                    _log_lines = _log_lines[-_MAX_LOG_LINES:]
+            path = _otp_file
+            use_db = _otp_to_db
+            phone = _otp_pending_phone
+            country_code = _otp_pending_country_code
+        else:
+            path = None
+            use_db = False
+            phone = ""
+            country_code = ""
+
+    wrote = False
+    otp = "".join(ch for ch in str((item or {}).get("otp") or "") if ch.isdigit())
+    if otp and path is not None and not use_db:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(otp, encoding="utf-8")
+        wrote = True
+    elif otp and use_db:
+        wa_relay.submit_manual_otp(otp, phone=phone, country_code=country_code)
+        wrote = True
+
+    with _lock:
+        if item and _otp_pending:
+            _seq_counter += 1
+            _log_lines.append({
+                "seq": _seq_counter,
+                "ts": time.time(),
+                "line": (
+                    "[webui] external OTP received from "
+                    f"{item.get('source', 'external')}"
+                    + (" and forwarded to GoPay" if wrote else "")
+                ),
+            })
+            if wrote:
+                _otp_pending = False
+                _otp_pending_since = None
+                _otp_pending_phone = ""
+                _otp_pending_country_code = ""
+            if len(_log_lines) > _MAX_LOG_LINES:
+                _log_lines = _log_lines[-_MAX_LOG_LINES:]
     return status()
 
 
 def notify_otp_consumed(item: dict | None = None) -> dict:
-    """Mark DB-backed OTP wait as resolved after GoPay reads `/latest-otp`."""
+    """Mark a legacy DB-backed OTP wait as resolved after GoPay reads it."""
     global _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code
     global _seq_counter, _log_lines
     with _lock:

@@ -294,21 +294,21 @@
             <div class="otp-head">
               <span class="otp-prompt">$</span> GoPay WhatsApp OTP
             </div>
-            <p class="otp-desc">正在按 GoPay 测试验证码的方式轮询 webhook OTP；收到后 gopay.py 会从 relay 自动读取。手动提交仅作为兜底。</p>
+            <p class="otp-desc">正在等待手机 webhook 验证码。收到后后端会直接交给 gopay.py；手动提交仅作为兜底。</p>
             <input
               class="otp-input"
               v-model="otpDialog.value"
               maxlength="8"
               autofocus
-              :disabled="otpDialog.submitting || otpDialog.autoFilled"
+              :disabled="otpDialog.submitting"
               @keyup.enter="submitOtp"
               placeholder="000000"
             />
-            <div class="otp-poll-hint" :class="{ ok: otpDialog.autoFilled }">
-              {{ otpDialog.autoFilled ? "已收到 webhook OTP，等待 gopay.py 读取继续..." : "等待 webhook OTP；如果 WhatsApp 隐藏内容，可手动输入。" }}
+            <div class="otp-poll-hint">
+              等待 webhook OTP；如果 WhatsApp 隐藏内容，可手动输入。
             </div>
             <div class="otp-actions">
-              <TermBtn :loading="otpDialog.submitting" :disabled="otpDialog.autoFilled" @click="submitOtp">手动提交</TermBtn>
+              <TermBtn :loading="otpDialog.submitting" @click="submitOtp">手动提交</TermBtn>
             </div>
           </div>
         </div>
@@ -376,18 +376,6 @@ interface RunStatus {
   otp_pending_since?: number | null;
   otp_pending_phone?: string;
   otp_pending_country_code?: string;
-}
-
-interface WaOtpStatus {
-  updated_at?: number;
-  latest?: {
-    otp?: string;
-    phone?: string;
-    country_code?: string;
-    ts?: number;
-    received_at?: number;
-    source?: string;
-  };
 }
 
 interface InventoryAccount {
@@ -487,8 +475,6 @@ const otpDialog = ref({
   submitted: false,
   successNotified: false,
   since: 0,
-  autoFilled: false,
-  polling: false,
   phone: "",
   country_code: "",
 });
@@ -524,7 +510,6 @@ const status = ref<RunStatus>({
 const cmdPreview = ref("xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal");
 const lines = ref<{ seq: number; ts: number; line: string }[]>([]);
 const MAX_LOG_LINES = 1500;
-const OTP_STATUS_LOOKBACK_SECONDS = 15;
 const starting = ref(false);
 const stopping = ref(false);
 const configHealth = ref<ConfigHealthResponse | null>(null);
@@ -561,7 +546,6 @@ let clockTimer: ReturnType<typeof setInterval> | undefined;
 let statusTimer: ReturnType<typeof setInterval> | undefined;
 let inventoryTimer: ReturnType<typeof setInterval> | undefined;
 let eventSource: EventSource | null = null;
-let otpPollTimer: ReturnType<typeof setInterval> | undefined;
 
 function runPayload() {
   const payload: any = { ...form.value };
@@ -1201,7 +1185,6 @@ async function logout() {
 function openOtpDialog(since?: number | null, phone?: string, countryCode?: string) {
   if (!otpDialog.value.open) {
     otpDialog.value.value = "";
-    otpDialog.value.autoFilled = false;
     otpDialog.value.submitted = false;
     otpDialog.value.successNotified = false;
   }
@@ -1211,22 +1194,15 @@ function openOtpDialog(since?: number | null, phone?: string, countryCode?: stri
   );
   otpDialog.value.phone = phone || status.value.otp_pending_phone || otpDialog.value.phone || "";
   otpDialog.value.country_code = countryCode || status.value.otp_pending_country_code || otpDialog.value.country_code || "";
-  if (!otpDialog.value.autoFilled) {
-    startOtpPolling();
-    pollExternalOtp();
-  }
 }
 
 function closeOtpDialog() {
   otpDialog.value.open = false;
   otpDialog.value.value = "";
-  otpDialog.value.autoFilled = false;
-  otpDialog.value.polling = false;
   otpDialog.value.submitting = false;
   otpDialog.value.submitted = false;
   otpDialog.value.phone = "";
   otpDialog.value.country_code = "";
-  stopOtpPolling();
 }
 
 function notifyOtpSuccess(text: string) {
@@ -1235,52 +1211,14 @@ function notifyOtpSuccess(text: string) {
   message.success(text);
 }
 
-function startOtpPolling() {
-  otpDialog.value.polling = true;
-  if (otpPollTimer) return;
-  otpPollTimer = setInterval(pollExternalOtp, 1000);
-}
-
-function stopOtpPolling() {
-  if (otpPollTimer) {
-    clearInterval(otpPollTimer);
-    otpPollTimer = undefined;
-  }
-}
-
-async function pollExternalOtp() {
-  if (!otpDialog.value.open || otpDialog.value.submitting || otpDialog.value.submitted || otpDialog.value.autoFilled) return;
-  try {
-    const since = Math.max(0, otpDialog.value.since - OTP_STATUS_LOOKBACK_SECONDS);
-    const params: Record<string, string | number> = {
-      since,
-    };
-    if (otpDialog.value.phone) params.phone = otpDialog.value.phone;
-    if (otpDialog.value.country_code) params.country_code = otpDialog.value.country_code;
-    const r = await api.get<WaOtpStatus>("/whatsapp/status", { params });
-    const latest = r.data?.latest;
-    const otp = latest?.otp || "";
-    const arrivedAt = Number(r.data?.updated_at || latest?.received_at || 0);
-    if (!otp || arrivedAt < since) return;
-    if (otpDialog.value.value !== otp) {
-      otpDialog.value.value = otp;
-      otpDialog.value.autoFilled = true;
-      notifyOtpSuccess("验证码回调测试通过");
-    }
-    stopOtpPolling();
-  } catch {}
-}
-
 async function submitOtp(_options?: Event) {
   if (otpDialog.value.submitting || otpDialog.value.submitted) return;
-  if (otpDialog.value.autoFilled) return;
   const v = otpDialog.value.value.trim();
   if (!v) {
     message.warning("请输入 OTP");
     return;
   }
   otpDialog.value.submitted = true;
-  stopOtpPolling();
   otpDialog.value.submitting = true;
   try {
     await api.post("/run/otp", { otp: v });
@@ -1339,7 +1277,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (clockTimer) clearInterval(clockTimer);
   if (statusTimer) clearInterval(statusTimer);
-  if (otpPollTimer) clearInterval(otpPollTimer);
   if (eventSource) eventSource.close();
 });
 </script>

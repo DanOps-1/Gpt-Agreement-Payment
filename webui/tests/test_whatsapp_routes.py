@@ -8,14 +8,6 @@ def test_whatsapp_status_requires_auth(client):
     assert r.status_code == 401
 
 
-def test_whatsapp_status_accepts_relay_token(client):
-    from webui.backend import wa_relay
-
-    r = client.get("/api/whatsapp/status", params={"token": wa_relay.relay_token()})
-    assert r.status_code == 200
-    assert r.json()["external_otp_path"] == "/api/whatsapp/external-otp"
-
-
 def test_whatsapp_status_authed(client, monkeypatch):
     _login(client)
 
@@ -129,12 +121,14 @@ def test_external_otp_requires_bearer_token(client):
     assert r.status_code == 403
 
 
-def test_external_otp_writes_latest_and_waits_for_relay_consumption(client, monkeypatch):
+def test_external_otp_writes_latest_and_feeds_pending_file_wait(client, tmp_path):
     from webui.backend import runner, wa_relay
 
     token = wa_relay.relay_token()
+    otp_file = tmp_path / "gopay_otp.txt"
     runner._otp_pending = True
-    runner._otp_to_db = True
+    runner._otp_to_db = False
+    runner._otp_file = otp_file
 
     r = client.post(
         "/api/whatsapp/external-otp",
@@ -156,16 +150,11 @@ def test_external_otp_writes_latest_and_waits_for_relay_consumption(client, monk
     assert body["latest"]["source"] == "android-notification-forwarder"
     assert wa_relay.latest_otp()["otp"] == "123456"
     assert wa_relay.latest_otp(phone="81234567890", country_code="62")["otp"] == "123456"
-    assert runner.status()["otp_pending"] is True
-
-    relay = client.get(
-        "/api/whatsapp/latest-otp",
-        params={"token": token, "phone": "81234567890", "country_code": "62"},
-    )
-    assert relay.status_code == 200
-    assert relay.json()["otp"] == "123456"
+    assert otp_file.read_text(encoding="utf-8") == "123456"
     assert runner.status()["otp_pending"] is False
 
+    runner._otp_file = None
+    runner._otp_to_db = False
     runner._otp_pending_phone = ""
     runner._otp_pending_country_code = ""
 
@@ -196,6 +185,7 @@ def test_external_otp_wrong_phone_does_not_resolve_pending_runner(client):
     assert wa_relay.latest_otp(phone="81234567891", country_code="62")["otp"] == "999999"
 
     runner._otp_pending = False
+    runner._otp_to_db = False
     runner._otp_pending_phone = ""
     runner._otp_pending_country_code = ""
 
@@ -222,34 +212,3 @@ def test_external_otp_status_uses_received_time_for_old_payload_ts(client):
     assert st["latest"]["received_at"] >= since
     assert st["updated_at"] >= since
     assert wa_relay.latest_otp(since=since)["otp"] == "654321"
-
-
-def test_whatsapp_status_token_poll_matches_test_otp_flow(client):
-    from webui.backend import runner, wa_relay
-
-    token = wa_relay.relay_token()
-    runner._otp_pending = True
-    runner._otp_to_db = True
-
-    r = client.post(
-        "/api/whatsapp/external-otp",
-        headers={"Authorization": f"Bearer {token}"},
-        json={
-            "otp": "135790",
-            "phone": "81234567890",
-            "country_code": "62",
-            "source": "android-notification-forwarder",
-        },
-    )
-    assert r.status_code == 200
-
-    st = client.get(
-        "/api/whatsapp/status",
-        params={"token": token, "phone": "81234567890", "country_code": "62"},
-    )
-    assert st.status_code == 200
-    assert st.json()["latest"]["otp"] == "135790"
-    assert runner.status()["otp_pending"] is False
-
-    runner._otp_pending_phone = ""
-    runner._otp_pending_country_code = ""

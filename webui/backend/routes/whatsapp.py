@@ -4,12 +4,11 @@ from __future__ import annotations
 import secrets
 import time
 
-from fastapi import APIRouter, Cookie, Header, HTTPException, Response
+from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from ..auth import CurrentUser
 from .. import runner, wa_relay
-from ..db import get_db
 
 
 router = APIRouter(prefix="/api/whatsapp", tags=["whatsapp"])
@@ -51,43 +50,13 @@ def _check_relay_token(
         raise HTTPException(status_code=403, detail="invalid relay token")
 
 
-def _check_user_or_relay_token(
-    *,
-    session_id: str | None = None,
-    token: str = "",
-    x_wa_relay_token: str = "",
-    authorization: str = "",
-) -> None:
-    if token or x_wa_relay_token or authorization:
-        _check_relay_token(
-            token=token,
-            x_wa_relay_token=x_wa_relay_token,
-            authorization=authorization,
-        )
-        return
-    if not session_id:
-        raise HTTPException(status_code=401, detail="not authenticated")
-    if not get_db().lookup_session(session_id):
-        raise HTTPException(status_code=401, detail="session expired")
-
-
 @router.get("/status")
 def get_status(
     phone: str = "",
     country_code: str = "",
     since: float = 0.0,
-    token: str = "",
-    x_wa_relay_token: str = Header(default=""),
-    authorization: str = Header(default=""),
-    session_id: str | None = Cookie(default=None),
+    user: str = CurrentUser,
 ):
-    relay_poll = bool(token or x_wa_relay_token or authorization)
-    _check_user_or_relay_token(
-        session_id=session_id,
-        token=token,
-        x_wa_relay_token=x_wa_relay_token,
-        authorization=authorization,
-    )
     st = wa_relay.status()
     if phone or country_code or since:
         filtered = wa_relay.latest_otp(
@@ -98,8 +67,6 @@ def get_status(
         if filtered:
             st["latest"] = filtered
             st["updated_at"] = filtered.get("received_at") or filtered.get("ts") or st.get("updated_at")
-            if relay_poll:
-                runner.notify_otp_consumed(filtered)
         else:
             st.pop("latest", None)
     st["external_otp_token"] = wa_relay.relay_token()
