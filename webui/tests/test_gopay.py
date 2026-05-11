@@ -878,7 +878,7 @@ def test_gopay_auto_login_posts_login_and_saves_token(monkeypatch, tmp_path):
     assert first_body["country_code"] == "+62"
     assert first_body["client_id"] == gopay.GOPAY_LOGIN_CLIENT_ID
     assert "authorization" not in responses.calls[0].request.headers
-    assert second_body["flow"] == "signup"
+    assert second_body["flow"] == "login_1fa"
     assert second_body["verification_method"] == "otp_sms"
     assert second_body["phone_number"] == "89530397723"
     assert verify_body["data"] == {"otp": "9302", "otp_token": "otp-token"}

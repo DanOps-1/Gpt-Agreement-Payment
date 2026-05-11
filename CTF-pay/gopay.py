@@ -1187,7 +1187,11 @@ class GoPayCharger:
             {
                 "client_id": client_id,
                 "client_secret": client_secret,
-                "flow": str(self.gopay_cfg.get("auto_login_verify_flow") or "login_1fa"),
+                "flow": str(
+                    self.gopay_cfg.get("auto_login_verify_flow")
+                    or self.gopay_cfg.get("auto_login_flow")
+                    or "login_1fa"
+                ),
                 "verification_method": str(self.gopay_cfg.get("auto_login_method") or "otp_sms"),
                 "verification_id": verification_id,
                 "data": {"otp": otp, "otp_token": otp_token},
@@ -1304,9 +1308,18 @@ class GoPayCharger:
             "[gopay-login] login/methods "
             f"status={login_resp.get('status_code')} body={_log_preview(login_resp.get('body') or login_resp.get('raw_text'))}"
         )
+        login_header_summary = _safe_qris_header_summary(
+            self._gopay_signed_headers_for_url(
+                "POST",
+                "https://accounts.goto-products.com/cvs/v1/initiate",
+                "",
+            )
+        )
+        self.log(f"[gopay-login] app header summary {login_header_summary}")
+        login_flow = str(self.gopay_cfg.get("auto_login_flow") or "login_1fa")
         initiate_body = {
             "verification_id": verification_id,
-            "flow": str(self.gopay_cfg.get("auto_login_flow") or "signup"),
+            "flow": login_flow,
             "verification_method": str(self.gopay_cfg.get("auto_login_method") or "otp_sms"),
             "country_code": f"+{country_code}",
             "email_address": None,
