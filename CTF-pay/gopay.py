@@ -1295,7 +1295,10 @@ class GoPayCharger:
         login_resp = self._gopay_app_post(
             "/goto-auth/login/methods",
             login_body,
-            allow_statuses=(401,),
+            # This probe is informational for our flow. Some GoPay accounts
+            # currently return GoPay-1000 here while /cvs/v1/initiate still
+            # sends the otp_sms challenge successfully.
+            allow_statuses=(400, 401),
         )
         self.log(
             "[gopay-login] login/methods "
