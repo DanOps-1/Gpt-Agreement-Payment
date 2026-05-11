@@ -10,6 +10,7 @@
       <div class="run-nav">
         <RouterLink to="/wizard" class="nav-link">配置向导</RouterLink>
         <RouterLink to="/run" class="nav-link active">运行</RouterLink>
+        <RouterLink to="/pool" class="nav-link">账号规划池</RouterLink>
         <button class="header-btn" @click="logout">退出</button>
       </div>
     </header>
@@ -112,7 +113,7 @@
         </div>
       </section>
 
-      <section class="run-inventory">
+      <section v-if="false" class="run-inventory">
         <div class="term-divider inventory-divider" data-tail="──────────">账号库存</div>
         <div class="inventory-head">
           <div class="inventory-meta">
@@ -214,7 +215,7 @@
         </div>
       </section>
 
-      <Teleport to="body">
+      <Teleport v-if="false" to="body">
         <div v-if="accountManager.open" class="account-manager-overlay" @click.self="closeAccountManager">
           <div class="account-manager-modal">
             <div class="account-manager-head">
@@ -1123,7 +1124,6 @@ async function start() {
     message.success("已启动");
     lines.value = [];
     await refreshStatus();
-    await refreshInventory();
     openStream();
   } catch (e: any) {
     message.error(healthErrorText(e) || "启动失败");
@@ -1184,7 +1184,6 @@ function openStream() {
     eventSource = null;
     closeOtpDialog();
     await refreshStatus();
-    await refreshInventory();
   });
   eventSource.onerror = () => {
     // 连接断开，不自动 retry
@@ -1329,18 +1328,15 @@ onMounted(async () => {
   await refreshPreview();
   await checkConfigHealth();
   await loadAccountImportServerConfig();
-  await refreshInventory();
   if (status.value.running) {
     openStream();
   }
   statusTimer = setInterval(refreshStatus, 5000);
-  inventoryTimer = setInterval(refreshInventory, 15000);
 });
 
 onBeforeUnmount(() => {
   if (clockTimer) clearInterval(clockTimer);
   if (statusTimer) clearInterval(statusTimer);
-  if (inventoryTimer) clearInterval(inventoryTimer);
   if (otpPollTimer) clearInterval(otpPollTimer);
   if (eventSource) eventSource.close();
 });
@@ -1369,13 +1365,12 @@ onBeforeUnmount(() => {
 .header-btn { background: transparent; border: 1px solid var(--border-strong); color: var(--fg-secondary); padding: 4px 12px; font: inherit; font-size: 11px; letter-spacing: 0.08em; cursor: pointer; transition: all 60ms; margin-left: 12px; }
 .header-btn:hover { background: var(--bg-raised); color: var(--fg-primary); border-color: var(--accent); }
 
-.run-body { flex: 1; display: grid; grid-template-columns: 420px minmax(420px, 1fr) minmax(360px, 1fr); gap: 0; min-height: 0; overflow: hidden; }
+.run-body { flex: 1; display: grid; grid-template-columns: 420px minmax(520px, 1fr); gap: 0; min-height: 0; overflow: hidden; }
 .run-controls { padding: 24px; overflow-y: auto; border-right: 1px solid var(--border); }
 .run-inventory { padding: 20px 22px; overflow-y: auto; border-right: 1px solid var(--border); background: var(--bg-base); min-height: 0; }
 .run-logs { display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--bg-panel); }
 @media (max-width: 1280px) {
-  .run-body { grid-template-columns: 380px 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
-  .run-controls { grid-row: 1 / span 2; }
+  .run-body { grid-template-columns: 380px 1fr; }
   .run-inventory { border-right: 0; border-bottom: 1px solid var(--border); }
 }
 
@@ -1870,7 +1865,7 @@ onBeforeUnmount(() => {
   .inventory-stats { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {
-  .run-body { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
+  .run-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .run-controls, .run-inventory { grid-row: auto; border-right: 0; border-bottom: 1px solid var(--border); }
   .inventory-head { align-items: flex-start; flex-direction: column; }
 }

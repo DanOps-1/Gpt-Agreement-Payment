@@ -262,6 +262,7 @@ const total = ref(0);
 const counts = ref<Record<string, number>>({});
 const statuses = ref<PoolStatus[]>([
   { key: "email_unused", label: "未激活池" },
+  { key: "in_progress", label: "任务中" },
   { key: "plus_with_rt", label: "已激活池" },
   { key: "plus_missing_rt", label: "待检测池" },
   { key: "registered_pending_plus", label: "待激活池" },
@@ -297,7 +298,6 @@ const moveStatuses = computed(() => [
 const deletableStatuses = computed(() =>
   [
     ...statuses.value,
-    { key: "in_progress", label: "任务中" },
     { key: "quarantined", label: "已隔离" },
   ]
 );
@@ -582,7 +582,7 @@ function statusClass(status: string) {
 }
 
 function statusLabel(status: string) {
-  const found = [...statuses.value, { key: "in_progress", label: "任务中" }, { key: "quarantined", label: "已隔离" }]
+  const found = [...statuses.value, { key: "quarantined", label: "已隔离" }]
     .find(item => item.key === status);
   return found?.label || status || "";
 }
@@ -745,7 +745,7 @@ h1 {
   max-width: 1400px;
   margin: 18px auto 14px;
   display: grid;
-  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  grid-template-columns: repeat(6, minmax(140px, 1fr));
   gap: 12px;
 }
 

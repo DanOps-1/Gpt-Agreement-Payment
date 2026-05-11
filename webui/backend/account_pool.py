@@ -28,6 +28,7 @@ POOL_STATUS_LABELS = {
 
 VISIBLE_POOL_STATUSES = [
     "email_unused",
+    "in_progress",
     "plus_with_rt",
     "plus_missing_rt",
     "registered_pending_plus",
@@ -311,7 +312,7 @@ def list_pool_items(*, status: str = "all", query: str = "", limit: int = 200,
         counts_rows = c.execute(
             "SELECT pool_status, COUNT(*) n FROM account_pool_items GROUP BY pool_status"
         ).fetchall()
-    counts = {key: 0 for key in [*VISIBLE_POOL_STATUSES, "in_progress", "quarantined"]}
+    counts = {key: 0 for key in [*VISIBLE_POOL_STATUSES, "quarantined"]}
     for row in counts_rows:
         counts[str(row["pool_status"])] = int(row["n"])
     return {
