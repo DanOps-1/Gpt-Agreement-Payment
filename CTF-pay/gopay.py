@@ -1160,7 +1160,7 @@ class GoPayCharger:
             raise GoPayError(f"user-consent failed: {r.text[:300]}")
         self.log("[gopay] consent ok, OTP sent via WhatsApp")
 
-    def _gopay_resend_sms_otp(self, reference_id: str):
+    def _gopay_resend_sms_otp(self, reference_id: str, *, allow_user_consent_fallback: bool = True):
         r = self.ext.post(
             "https://gwa.gopayapi.com/v1/linking/resend-otp",
             json={"reference_id": reference_id},
@@ -1184,6 +1184,14 @@ class GoPayCharger:
         raw_text = getattr(r, "text", "") or ""
         content_type = str((getattr(r, "headers", {}) or {}).get("content-type") or "")
         if r.status_code >= 400:
+            if (
+                allow_user_consent_fallback
+                and r.status_code == 400
+                and ("GoPay-5002" in raw_text or "Actionnotallowed" in raw_text)
+            ):
+                self.log("[gopay] SMS resend not allowed yet, triggering consent state then retrying resend")
+                self._gopay_user_consent(reference_id)
+                return self._gopay_resend_sms_otp(reference_id, allow_user_consent_fallback=False)
             raise GoPayError(
                 "resend-otp failed "
                 f"status={r.status_code} "
