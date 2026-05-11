@@ -10,9 +10,12 @@ upstream WhatsApp libraries and the plain process log.
 from __future__ import annotations
 
 import base64
+import datetime as _dt
 import io
 import glob
+import json
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -21,7 +24,7 @@ import threading
 import time
 import tarfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from . import settings as s
 from .db import get_db
@@ -37,6 +40,11 @@ _STATE_KEY = "wa_state"
 _SETTINGS_KEY = "wa_settings"
 _TOKEN_KEY = "wa_relay_token"
 _SESSION_SNAPSHOT_KEY = "wa_session_snapshot"
+_NOTIFY_JSONL_CURSOR_KEY = "wa_notify_jsonl_cursor"
+_DEFAULT_NOTIFY_JSONL = "/root/notify-relay-bridge/data/notifications.jsonl"
+_NOTIFY_INITIAL_SCAN_BYTES = 4 * 1024 * 1024
+_OTP_REGEX = r"(?<!\d)(\d{6})(?!\d)"
+_notify_poll_lock = threading.Lock()
 
 
 def _normalize_engine(engine: str = "", *, _from_env: bool = False) -> str:
@@ -176,6 +184,302 @@ def _write_preferred_engine(engine: str) -> None:
     get_db().set_runtime_json(_SETTINGS_KEY, {"engine": _normalize_engine(engine)})
 
 
+def _notify_jsonl_path() -> Path:
+    raw = os.environ.get("WEBUI_WA_NOTIFY_JSONL_PATH", _DEFAULT_NOTIFY_JSONL).strip()
+    return Path(raw or _DEFAULT_NOTIFY_JSONL).expanduser()
+
+
+def _parse_ts_value(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        ts = float(value)
+        if ts > 1_000_000_000_000:
+            ts /= 1000.0
+        if 946684800 <= ts <= 4102444800:
+            return ts
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{10,13}(?:\.\d+)?", text):
+        return _parse_ts_value(float(text))
+    try:
+        return _dt.datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def _clean_otp_candidate(value: Any) -> str:
+    code = re.sub(r"\D", "", str(value or ""))
+    if 4 <= len(code) <= 8:
+        return code
+    return ""
+
+
+def _extract_otp_from_text(text: str) -> str:
+    if not text:
+        return ""
+    patterns = [
+        r"(?:otp|one[-\s]*time|verification|verify|code|kode|verifikasi|gopay|whatsapp|验证码|驗證碼)[^\d]{0,80}(\d{4,8})(?!\d)",
+        r"(?<!\d)(\d{4,8})(?!\d)[^\n\r]{0,80}(?:otp|one[-\s]*time|verification|verify|code|kode|verifikasi|gopay|验证码|驗證碼)",
+        _OTP_REGEX,
+    ]
+    for pattern in patterns:
+        for match in reversed(list(re.finditer(pattern, text, flags=re.IGNORECASE | re.DOTALL))):
+            groups = match.groups() or (match.group(0),)
+            for group in reversed(groups):
+                code = _clean_otp_candidate(group)
+                if code:
+                    return code
+    return ""
+
+
+def _payload_text(payload: dict) -> str:
+    pieces: list[str] = []
+
+    def add(value: Any) -> None:
+        if value in (None, ""):
+            return
+        if isinstance(value, list):
+            for item in value:
+                add(item)
+            return
+        pieces.append(str(value))
+
+    for key in ("text", "body", "message", "content", "caption", "raw"):
+        value = payload.get(key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, dict):
+            nested = value.get("body") or value.get("text") or value.get("message")
+            add(nested)
+        else:
+            add(value)
+    notification = payload.get("notification")
+    if isinstance(notification, dict):
+        for key in ("title", "text", "big_text", "sub_text", "summary_text", "text_lines"):
+            add(notification.get(key))
+    return "\n".join(dict.fromkeys(piece for piece in pieces if piece))
+
+
+def _payload_ts(payload: dict) -> float:
+    for key in ("ts", "timestamp", "time", "received_ts", "received_at", "post_time", "date"):
+        ts = _parse_ts_value(payload.get(key))
+        if ts is not None:
+            return ts
+    return time.time()
+
+
+def _append_otp_item(item: dict) -> dict:
+    with _lock:
+        state = _read_state()
+        history = state.get("history") if isinstance(state.get("history"), list) else []
+        history.append(item)
+        state.update({
+            "latest": item,
+            "history": history[-50:],
+            "updated_at": time.time(),
+        })
+        _write_state(state)
+    return item
+
+
+def ingest_otp(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be an object")
+    text = _payload_text(payload)
+    code = (
+        _clean_otp_candidate(payload.get("otp"))
+        or _clean_otp_candidate(payload.get("code"))
+        or _extract_otp_from_text(text)
+    )
+    if not code:
+        raise ValueError("no OTP found")
+    item = {
+        "otp": code,
+        "ts": _payload_ts(payload),
+        "from": payload.get("from") or payload.get("sender") or payload.get("package") or "",
+        "source": payload.get("source") or "external",
+        "engine": payload.get("engine") or "external",
+        "message_id": payload.get("message_id") or "",
+        "text": text[:500],
+    }
+    return _append_otp_item(item)
+
+
+def _notification_jsonl_text(row: dict) -> str:
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    notification = payload.get("notification") if isinstance(payload.get("notification"), dict) else {}
+    pieces: list[str] = []
+
+    def add(value: Any) -> None:
+        if value in (None, ""):
+            return
+        if isinstance(value, list):
+            for item in value:
+                add(item)
+            return
+        pieces.append(str(value))
+
+    for value in (row.get("content"), payload.get("text"), payload.get("body"), payload.get("message")):
+        add(value)
+    for key in ("title", "text", "big_text", "sub_text", "summary_text", "text_lines"):
+        add(notification.get(key))
+    return "\n".join(dict.fromkeys(piece for piece in pieces if piece))
+
+
+def _notification_jsonl_is_relevant(row: dict, text: str) -> bool:
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    notification = payload.get("notification") if isinstance(payload.get("notification"), dict) else {}
+    meta = "\n".join(
+        str(value or "")
+        for value in (
+            row.get("source"),
+            row.get("remark"),
+            payload.get("source"),
+            payload.get("app"),
+            payload.get("from"),
+            payload.get("package"),
+            notification.get("title"),
+            notification.get("channel_id"),
+            notification.get("category"),
+        )
+    ).lower()
+    if "whatsapp" in meta or "com.whatsapp" in meta:
+        return True
+    return bool(re.search(r"\b(go-?pay|gojek|kode|verifikasi|verification|verify|otp)\b|验证码|驗證碼", text, re.I))
+
+
+def _notification_jsonl_to_otp_payload(row: dict, *, since: float = 0.0) -> Optional[dict]:
+    if not isinstance(row, dict):
+        return None
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    notification = payload.get("notification") if isinstance(payload.get("notification"), dict) else {}
+    ts = (
+        _parse_ts_value(row.get("received_ts"))
+        or _parse_ts_value(row.get("received_at"))
+        or _parse_ts_value(payload.get("ts"))
+        or _parse_ts_value(payload.get("post_time"))
+        or time.time()
+    )
+    if since and ts < since:
+        return None
+
+    text = _notification_jsonl_text(row)
+    if not text or not _notification_jsonl_is_relevant(row, text):
+        return None
+    if not _extract_otp_from_text(text):
+        return None
+
+    source = str(row.get("source") or payload.get("source") or "android_notification")
+    sender = (
+        payload.get("from")
+        or notification.get("title")
+        or payload.get("app")
+        or payload.get("package")
+        or "android_notification"
+    )
+    message_id = (
+        payload.get("message_id")
+        or payload.get("notification_key")
+        or row.get("received_ts")
+        or row.get("received_at")
+        or ""
+    )
+    return {
+        "text": text,
+        "ts": ts,
+        "from": sender,
+        "package": payload.get("package") or "",
+        "source": f"{source}:jsonl",
+        "engine": "android_notification_jsonl",
+        "message_id": str(message_id),
+    }
+
+
+def poll_notification_jsonl(*, since: float = 0.0, path: Optional[Path] = None) -> dict:
+    """Tail Android notification JSONL and persist fresh WhatsApp OTPs to SQLite."""
+    notify_path = path or _notify_jsonl_path()
+    result = {"path": str(notify_path), "exists": False, "read": 0, "ingested": 0}
+    if not notify_path.exists():
+        return result
+    result["exists"] = True
+    if not _notify_poll_lock.acquire(blocking=False):
+        result["skipped"] = "busy"
+        return result
+    try:
+        try:
+            stat = notify_path.stat()
+        except OSError as exc:
+            result["error"] = str(exc)
+            return result
+
+        cursor = get_db().get_runtime_json(_NOTIFY_JSONL_CURSOR_KEY, {})
+        if not isinstance(cursor, dict):
+            cursor = {}
+        inode = getattr(stat, "st_ino", 0)
+        pos = 0
+        partial = False
+        if cursor.get("path") == str(notify_path) and int(cursor.get("inode") or 0) == inode:
+            try:
+                pos = int(cursor.get("pos") or 0)
+            except Exception:
+                pos = 0
+            if pos < 0 or pos > stat.st_size:
+                pos = max(0, stat.st_size - _NOTIFY_INITIAL_SCAN_BYTES)
+                partial = pos > 0
+        else:
+            pos = max(0, stat.st_size - _NOTIFY_INITIAL_SCAN_BYTES)
+            partial = pos > 0
+
+        try:
+            with notify_path.open("rb") as f:
+                f.seek(pos)
+                if partial:
+                    f.readline()
+                while True:
+                    line_start = f.tell()
+                    line = f.readline()
+                    if not line:
+                        break
+                    if not line.endswith(b"\n"):
+                        f.seek(line_start)
+                        break
+                    raw = line.decode("utf-8", errors="replace").strip()
+                    if not raw:
+                        continue
+                    result["read"] += 1
+                    try:
+                        row = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    otp_payload = _notification_jsonl_to_otp_payload(row, since=since)
+                    if not otp_payload:
+                        continue
+                    try:
+                        ingest_otp(otp_payload)
+                    except ValueError:
+                        continue
+                    result["ingested"] += 1
+                new_pos = f.tell()
+        except OSError as exc:
+            result["error"] = str(exc)
+            return result
+
+        get_db().set_runtime_json(_NOTIFY_JSONL_CURSOR_KEY, {
+            "path": str(notify_path),
+            "inode": inode,
+            "pos": new_pos,
+            "size": stat.st_size,
+            "updated_at": time.time(),
+        })
+        result["pos"] = new_pos
+        return result
+    finally:
+        _notify_poll_lock.release()
+
+
 def set_preferred_engine(engine: str) -> dict:
     """Persist the preferred WhatsApp engine in SQLite.
 
@@ -280,6 +584,7 @@ def submit_manual_otp(value: str) -> dict:
 
 
 def latest_otp(since: float = 0.0) -> dict | None:
+    poll_notification_jsonl(since=since)
     latest = (_read_state().get("latest") or {})
     if not isinstance(latest, dict) or not latest.get("otp"):
         return None

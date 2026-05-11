@@ -77,6 +77,59 @@ def test_whatsapp_settings_route_persists_engine(client):
     assert body["engine"] == "wwebjs"
 
 
+def test_whatsapp_ingest_otp_route_stores_latest(client):
+    from webui.backend import wa_relay
+
+    token = wa_relay.relay_token()
+    r = client.post(
+        f"/api/whatsapp/ingest-otp?token={token}",
+        json={"text": "Kode verifikasi GoPay Anda adalah 246810.", "source": "adb_notification"},
+    )
+    assert r.status_code == 200
+    assert r.json()["latest"]["otp"] == "246810"
+
+    latest = client.get(f"/api/whatsapp/latest-otp?token={token}")
+    assert latest.status_code == 200
+    assert latest.json()["otp"] == "246810"
+
+
+def test_whatsapp_ingest_otp_rejects_bad_token(client):
+    r = client.post(
+        "/api/whatsapp/ingest-otp?token=bad",
+        json={"text": "Kode verifikasi GoPay Anda adalah 246810."},
+    )
+    assert r.status_code == 403
+
+
+def test_whatsapp_latest_otp_polls_android_notification_jsonl(client, tmp_path, monkeypatch):
+    from webui.backend import wa_relay
+
+    notify_path = tmp_path / "notifications.jsonl"
+    monkeypatch.setenv("WEBUI_WA_NOTIFY_JSONL_PATH", str(notify_path))
+    token = wa_relay.relay_token()
+
+    notify_path.write_text(
+        '{"received_at":"2026-05-07T16:57:12.924327Z",'
+        '"received_ts":1778173032.924327,'
+        '"source":"android_notification",'
+        '"content":"WhatsApp\\nGoPay\\nKode verifikasi GoPay Anda 135790.",'
+        '"payload":{"source":"android_notification","app":"WhatsApp",'
+        '"from":"GoPay","package":"com.whatsapp",'
+        '"notification":{"title":"GoPay","text":"Kode verifikasi GoPay Anda 135790."},'
+        '"ts":1778173032,"notification_key":"n-1",'
+        '"text":"WhatsApp\\nGoPay\\nKode verifikasi GoPay Anda 135790."}}\n',
+        encoding="utf-8",
+    )
+
+    latest = client.get(f"/api/whatsapp/latest-otp?token={token}&since=1778173030")
+
+    assert latest.status_code == 200
+    body = latest.json()
+    assert body["otp"] == "135790"
+    assert body["source"] == "android_notification:jsonl"
+    assert body["engine"] == "android_notification_jsonl"
+
+
 def test_whatsapp_session_snapshot_roundtrip(tmp_path, monkeypatch):
     from webui.backend import wa_relay
     from webui.backend.db import get_db

@@ -213,7 +213,9 @@ def test_full_flow_succeeds():
 
 
 @responses.activate
-def test_linking_406_exhaustion_raises():
+def test_linking_406_exhaustion_raises(monkeypatch):
+    monkeypatch.setattr(gopay.time, "sleep", lambda _seconds: None)
+
     # Pre-flow: stub the early steps minimally so we get to linking
     responses.post("https://chatgpt.com/backend-api/payments/checkout", json={"id": CS_ID, "session_id": CS_ID})
     responses.post("https://api.stripe.com/v1/payment_methods", json={"id": PM_ID})

@@ -75,6 +75,19 @@ def sidecar_state(
     return {"ok": True, "state": wa_relay.apply_sidecar_state(payload)}
 
 
+@router.post("/ingest-otp")
+def ingest_otp(
+    payload: dict,
+    token: str = "",
+    x_wa_relay_token: str = Header(default=""),
+):
+    _check_relay_token(token=token, x_wa_relay_token=x_wa_relay_token)
+    try:
+        return {"ok": True, "latest": wa_relay.ingest_otp(payload)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/latest-otp")
 def latest_otp(
     response: Response,

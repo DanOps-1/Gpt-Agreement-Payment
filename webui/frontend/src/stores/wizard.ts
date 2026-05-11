@@ -42,10 +42,18 @@ export const useWizardStore = defineStore("wizard", {
       this.currentStep = n;
     },
     isStepUnlocked(n: number): boolean {
-      const required = REQUIRED_PREFLIGHT_BY_STEP[n] ?? [];
+      const provider = (this.answers.mail_provider as any)?.provider ?? "cloudflare_kv";
+      let required = REQUIRED_PREFLIGHT_BY_STEP[n] ?? [];
+      if (provider === "luckmail_ms_graph") {
+        if (n === 4) required = ["system", "luckmail"];
+        if (n === 5) required = ["system", "luckmail"];
+        if (n === 6) required = ["system", "luckmail", "proxy"];
+      }
       return required.every((name) => this.preflight[name]?.status === "ok");
     },
     isStepHidden(n: number): boolean {
+      const provider = (this.answers.mail_provider as any)?.provider ?? "cloudflare_kv";
+      if (n === 4 && provider === "luckmail_ms_graph") return true;
       const mm = (this.answers.mode as any)?.mode ?? "single";
       // free_register / free_backfill_rt 不走支付，6(PayPal/GoPay)/7(Card)/13(Stripe runtime) 都隐藏
       if (mm === "free_register" || mm === "free_backfill_rt") {

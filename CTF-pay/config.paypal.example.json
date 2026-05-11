@@ -25,6 +25,22 @@
     "rotation": "random",
     "list": []
   },
+  "mail": {
+    "_comment": "ChatGPT 注册/OAuth 邮箱 OTP provider。默认 cloudflare_kv；可改 luckmail_ms_graph（api_key 存 SQLite runtime_meta[secrets].luckmail）。",
+    "provider": "cloudflare_kv",
+    "catch_all_domain": "subdomain.example.com",
+    "catch_all_domains": [
+      "subdomain.example.com"
+    ],
+    "luckmail": {
+      "base_url": "https://mails.luckyous.com",
+      "project_code": "",
+      "email_type": "ms_graph",
+      "domain": "",
+      "poll_interval_s": 3,
+      "timeout_seconds": 180
+    }
+  },
   "randomize_identity": true,
   "pre_solve_passive_captcha": false,
   "browser_challenge": {

@@ -123,6 +123,29 @@ def _effective_cloudflare_secret_presence() -> dict[str, bool]:
     }
 
 
+def _effective_luckmail_secret_presence() -> dict[str, bool]:
+    secrets = get_db().get_runtime_json("secrets", {})
+    lm = (secrets.get("luckmail") or {}) if isinstance(secrets, dict) else {}
+    return {
+        "luckmail.api_key": bool(
+            _text(os.getenv("LUCKMAIL_API_KEY"))
+            or _text(lm.get("api_key"))
+        ),
+    }
+
+
+def _mail_provider(reg_cfg: dict, pay_cfg: dict | None = None) -> str:
+    mail = {}
+    if isinstance(reg_cfg.get("mail"), dict):
+        mail = reg_cfg.get("mail") or {}
+    elif pay_cfg and isinstance(pay_cfg.get("mail"), dict):
+        mail = pay_cfg.get("mail") or {}
+    provider = _text(mail.get("provider")).lower()
+    if provider in {"luckmail", "luckyous", "luckyous_ms_graph", "luckmail_ms_graph", "ms_graph"}:
+        return "luckmail_ms_graph"
+    return "cloudflare_kv"
+
+
 def _missing_paths(obj: dict, paths: list[str]) -> list[str]:
     return [p for p in paths if _is_missing(_get(obj, p))]
 
@@ -212,7 +235,39 @@ def _check_config_files(checks: list[dict], req: dict) -> tuple[dict, dict, Path
     return pay_cfg, reg_cfg, reg_path
 
 
-def _check_cloudflare_kv(checks: list[dict], req: dict) -> None:
+def _check_mail_otp_provider(checks: list[dict], req: dict, reg_cfg: dict, pay_cfg: dict) -> None:
+    provider = _mail_provider(reg_cfg, pay_cfg)
+    if provider == "luckmail_ms_graph":
+        mail = reg_cfg.get("mail") if isinstance(reg_cfg.get("mail"), dict) else {}
+        if not mail and isinstance(pay_cfg.get("mail"), dict):
+            mail = pay_cfg.get("mail") or {}
+        luckmail = mail.get("luckmail") if isinstance(mail.get("luckmail"), dict) else {}
+        missing_cfg = []
+        if _is_missing(luckmail.get("project_code"), allow_example=True):
+            missing_cfg.append("mail.luckmail.project_code")
+        presence = _effective_luckmail_secret_presence()
+        missing_secret = [name for name, ok in presence.items() if not ok]
+        missing = missing_cfg + missing_secret
+        if missing:
+            _check(
+                checks,
+                "luckmail",
+                "fail" if _requires_email_otp(req) else "warn",
+                "LuckMail ms_graph 邮箱接码配置不完整",
+                missing=missing,
+                blocking=_requires_email_otp(req),
+                action="在配置向导邮箱接码步骤填写 LuckMail api_key/project_code 后重新导出",
+            )
+        else:
+            _check(
+                checks,
+                "luckmail",
+                "ok",
+                "LuckMail ms_graph 邮箱接码已配置",
+                blocking=False,
+            )
+        return
+
     presence = _effective_cloudflare_secret_presence()
     missing = [name for name, ok in presence.items() if not ok]
     if not missing:
@@ -251,28 +306,51 @@ def _check_registration_config(checks: list[dict], req: dict, reg_cfg: dict) -> 
     if not _requires_registration(req):
         return
     mail = reg_cfg.get("mail") if isinstance(reg_cfg.get("mail"), dict) else {}
-    domains = mail.get("catch_all_domains")
-    has_domain = False
-    if isinstance(domains, list):
-        has_domain = any(not _is_missing(x) for x in domains)
-    has_domain = has_domain or not _is_missing(mail.get("catch_all_domain"))
-    if not has_domain:
-        _check(
-            checks,
-            "mail_domains",
-            "fail",
-            "注册需要 catch-all 邮箱域名",
-            missing=["mail.catch_all_domain 或 mail.catch_all_domains"],
-            action="在配置向导 Cloudflare 步骤填写 zone_names 后重新导出配置",
-        )
+    if _mail_provider(reg_cfg) == "luckmail_ms_graph":
+        luckmail = mail.get("luckmail") if isinstance(mail.get("luckmail"), dict) else {}
+        missing = []
+        if _is_missing(luckmail.get("project_code"), allow_example=True):
+            missing.append("mail.luckmail.project_code")
+        if missing:
+            _check(
+                checks,
+                "mail_provider",
+                "fail",
+                "LuckMail 注册邮箱接码缺项目代码",
+                missing=missing,
+                action="在配置向导邮箱接码步骤填写 LuckMail project_code 后重新导出配置",
+            )
+        else:
+            _check(
+                checks,
+                "mail_provider",
+                "ok",
+                "注册邮箱接码使用 LuckMail ms_graph",
+                blocking=False,
+            )
     else:
-        _check(
-            checks,
-            "mail_domains",
-            "ok",
-            "注册邮箱域名已配置",
-            blocking=False,
-        )
+        domains = mail.get("catch_all_domains")
+        has_domain = False
+        if isinstance(domains, list):
+            has_domain = any(not _is_missing(x) for x in domains)
+        has_domain = has_domain or not _is_missing(mail.get("catch_all_domain"))
+        if not has_domain:
+            _check(
+                checks,
+                "mail_domains",
+                "fail",
+                "注册需要 catch-all 邮箱域名",
+                missing=["mail.catch_all_domain 或 mail.catch_all_domains"],
+                action="在配置向导 Cloudflare 步骤填写 zone_names 后重新导出配置",
+            )
+        else:
+            _check(
+                checks,
+                "mail_domains",
+                "ok",
+                "注册邮箱域名已配置",
+                blocking=False,
+            )
 
     captcha_key = _text(_get(reg_cfg, "captcha.client_key"))
     if not captcha_key:
@@ -322,14 +400,15 @@ def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
                 blocking=False,
             )
         else:
+            notify_path = wa_relay._notify_jsonl_path()
             _check(
                 checks,
                 "whatsapp_relay",
                 "warn",
-                "WhatsApp relay 当前未连接；GoPay OTP 将等待自动 relay 或前端手动补录",
-                details=f"status={wa.get('status')}",
+                "WhatsApp relay 当前未连接；GoPay OTP 将等待安卓通知 JSONL 或前端手动补录",
+                details=f"status={wa.get('status')} notify_jsonl={notify_path} exists={notify_path.exists()}",
                 blocking=False,
-                action="如需自动接收 GoPay OTP，先打开 WhatsApp 登录入口扫码连接",
+                action="如需自动接收 GoPay OTP，保持安卓通知转发写入 JSONL，或打开 WhatsApp 登录入口扫码连接",
             )
         return
 
@@ -505,7 +584,7 @@ def build_config_health(req: dict | None = None) -> dict:
 
     pay_cfg, reg_cfg, reg_path = _check_config_files(checks, req)
     if pay_cfg:
-        _check_cloudflare_kv(checks, req)
+        _check_mail_otp_provider(checks, req, reg_cfg, pay_cfg)
         _check_registration_config(checks, req, reg_cfg)
         _check_payment_config(checks, req, pay_cfg)
         _check_pay_only_inventory(checks, req, pay_cfg)

@@ -753,6 +753,8 @@ class AuthFlow:
             self.result.device_id = device_id
 
         sentinel = self.get_sentinel_token(device_id)
+        if mail_provider is not None:
+            mail_provider.prepare_for_otp(email, reason="codex_authorize_continue")
         step = self.authorize_continue(
             email=email,
             sentinel_token=sentinel,
@@ -778,6 +780,7 @@ class AuthFlow:
             except Exception:
                 otp_timeout = 180
             otp_sent_at = time.time()
+            mail_provider.prepare_for_otp(email, reason="codex_login_need_otp")
             if not self.kickoff_otp_delivery("codex_login_need_otp"):
                 self.send_otp()
             otp_code = mail_provider.wait_for_otp(
@@ -2122,11 +2125,15 @@ class AuthFlow:
             otp_sent_at = time.time()
             if password_registered:
                 try:
+                    mail_provider.prepare_for_otp(email, reason="register_password_send_otp")
+                    otp_sent_at = time.time()
                     self.send_otp()
                 except RuntimeError as e:
                     # 部分账号会在 register 后直接转入 email-verification，send 接口会报 invalid_auth_step
                     if "invalid_auth_step" in str(e).lower():
                         logger.warning("send_otp 返回 invalid_auth_step，回退到统一发码策略")
+                        mail_provider.prepare_for_otp(email, reason="register_password_invalid_auth_step")
+                        otp_sent_at = time.time()
                         if not self.kickoff_otp_delivery("register_password_invalid_auth_step"):
                             raise
                     else:
@@ -2135,6 +2142,8 @@ class AuthFlow:
                 # 注册密码失败时优先按“已有账号 OTP”回退，避免卡死在 invalid_auth_step
                 logger.warning("注册密码失败，回退到已有账号 OTP 路径")
                 self.fetch_client_auth_session_dump("post_register_password_failed_new")
+                mail_provider.prepare_for_otp(email, reason="register_password_failed_fallback")
+                otp_sent_at = time.time()
                 if not self.kickoff_otp_delivery("register_password_failed_fallback"):
                     self.send_otp()
 
@@ -2154,6 +2163,7 @@ class AuthFlow:
                 # 偶发 401 错码，补发一次 OTP 并重试
                 if "401" in str(e):
                     logger.warning(f"OTP 首次验证失败，补发重试: {e}")
+                    mail_provider.prepare_for_otp(email, reason="verify_otp_retry_new")
                     otp_sent_at = time.time()
                     if not self.kickoff_otp_delivery("verify_otp_retry_new"):
                         self.send_otp()
@@ -2203,6 +2213,7 @@ class AuthFlow:
                 # 部分账号密码校验后仍需 email otp（二次校验）
                 if not continue_url or "/email-verification" in continue_url:
                     # password/verify 后推荐使用 resend，而不是 /email-otp/send
+                    mail_provider.prepare_for_otp(email, reason="existing_login_password")
                     otp_sent_at = time.time()
                     self.kickoff_otp_delivery("existing_login_password")
                     otp_code = mail_provider.wait_for_otp(
@@ -2217,12 +2228,14 @@ class AuthFlow:
             else:
                 need_send_otp = mode not in ("passwordless_signup", "passwordless_login")
                 if need_send_otp:
+                    mail_provider.prepare_for_otp(email, reason="existing_send_otp")
                     otp_sent_at = time.time()
                     self.send_otp()
                 else:
                     # 某些模式在 /authorize/continue 已触发发码，不要重复 /email-otp/send 以免破坏 state
                     # 默认先尝试 /email-otp/resend 获取新码，失败再回看短窗口
                     forced_resend = self._env_flag("OTP_FORCE_RESEND", "1")
+                    mail_provider.prepare_for_otp(email, reason="existing_forced_resend")
                     if forced_resend and self.kickoff_otp_delivery("existing_forced_resend"):
                         otp_sent_at = time.time()
                         logger.info(f"已有账号验证码模式={mode}，已主动 resend OTP")
@@ -2240,6 +2253,7 @@ class AuthFlow:
                 except TimeoutError:
                     # 若本轮没等到，优先 resend，再兜底 send_otp
                     logger.warning("未等到已有账号 OTP，先重发后重试等待")
+                    mail_provider.prepare_for_otp(email, reason="existing_timeout_retry")
                     otp_sent_at = time.time()
                     if not self.kickoff_otp_delivery("existing_timeout_retry"):
                         self.send_otp()
@@ -2254,6 +2268,7 @@ class AuthFlow:
                 except RuntimeError as e:
                     if any(code in str(e) for code in ("401", "409")):
                         logger.warning(f"OTP 首次验证失败，重发重试: {e}")
+                        mail_provider.prepare_for_otp(email, reason="existing_verify_retry")
                         otp_sent_at = time.time()
                         if not self.kickoff_otp_delivery("existing_verify_retry"):
                             self.send_otp()
@@ -2380,6 +2395,7 @@ class AuthFlow:
         if prefer_login_screen_first:
             try:
                 logger.info("已有账号协议登录：优先走 login screen_hint 探测 password/otp 分支")
+                mail_provider.prepare_for_otp(email, reason="protocol_login_authorize_continue")
                 login_step = self.authorize_continue(
                     email=email,
                     sentinel_token=sentinel,
@@ -2419,10 +2435,12 @@ class AuthFlow:
                 mode = ""
 
         if not continue_url and page_type not in ("login_password", "email_otp_verification"):
+            mail_provider.prepare_for_otp(email, reason="protocol_signup_probe")
             is_new = self.signup(email, sentinel)
             if is_new:
                 logger.warning("目标邮箱未命中已有账号分支，回退到注册链路")
                 self.register_password(email)
+                mail_provider.prepare_for_otp(email, reason="protocol_register_fallback")
                 otp_sent_at = time.time()
                 self.send_otp()
                 otp_code = mail_provider.wait_for_otp(
@@ -2441,6 +2459,7 @@ class AuthFlow:
 
         if not continue_url or "/email-verification" in continue_url:
             # 仍需 OTP：优先 resend 获取新码
+            mail_provider.prepare_for_otp(email, reason="protocol_need_otp")
             otp_sent_at = time.time()
             resend_ok = self.kickoff_otp_delivery("protocol_need_otp")
             if not resend_ok and mode not in ("passwordless_signup", "passwordless_login"):
@@ -2458,6 +2477,7 @@ class AuthFlow:
             except RuntimeError as e:
                 if any(code in str(e) for code in ("401", "409")):
                     logger.warning(f"OTP 首次验证失败，重发重试: {e}")
+                    mail_provider.prepare_for_otp(email, reason="protocol_verify_retry")
                     otp_sent_at = time.time()
                     if not self.kickoff_otp_delivery("protocol_verify_retry"):
                         self.send_otp()

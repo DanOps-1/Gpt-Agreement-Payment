@@ -66,6 +66,42 @@ def test_export_writes_two_files(client, tmp_path, monkeypatch):
     assert cf["otp_worker_name"] == "otp-relay"
 
 
+def test_export_writes_luckmail_ms_graph_mail_provider(client, tmp_path, monkeypatch):
+    _login(client)
+    _seed(tmp_path, monkeypatch)
+
+    answers = {
+        "mail_provider": {"provider": "luckmail_ms_graph"},
+        "luckmail": {
+            "api_key": "lk-key",
+            "base_url": "https://mails.luckyous.com",
+            "project_code": "openai",
+            "email_type": "ms_graph",
+            "domain": "outlook.com",
+            "poll_interval_s": 2,
+            "timeout_seconds": 240,
+        },
+        "captcha": {"api_url": "https://x", "api_key": "k", "client_key": "k"},
+    }
+    r = client.post("/api/config/export", json={"answers": answers})
+    assert r.status_code == 200
+
+    pay = json.loads((tmp_path / "CTF-pay" / "config.paypal.json").read_text())
+    reg = json.loads((tmp_path / "CTF-reg" / "config.paypal-proxy.json").read_text())
+    for cfg in (pay, reg):
+        assert cfg["mail"]["provider"] == "luckmail_ms_graph"
+        assert cfg["mail"]["luckmail"]["project_code"] == "openai"
+        assert cfg["mail"]["luckmail"]["email_type"] == "ms_graph"
+        assert cfg["mail"]["luckmail"]["domain"] == "outlook.com"
+        assert "api_key" not in cfg["mail"]["luckmail"]
+        assert "api_secret" not in cfg["mail"]["luckmail"]
+        assert "catch_all_domain" not in cfg["mail"]
+
+    secrets = get_db().get_runtime_json("secrets", {})
+    assert secrets["luckmail"]["api_key"] == "lk-key"
+    assert "api_secret" not in secrets["luckmail"]
+
+
 def test_export_backs_up_existing(client, tmp_path, monkeypatch):
     _login(client)
     _seed(tmp_path, monkeypatch)

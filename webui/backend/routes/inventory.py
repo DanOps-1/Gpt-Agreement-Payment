@@ -12,6 +12,7 @@ from ..auth import CurrentUser
 from ..account_inventory import build_accounts_inventory
 from ..account_validator import validate_accounts
 from ..db import get_db
+from ..cpa_utils import normalize_cpa_base_url
 from .. import settings as s
 
 
@@ -38,6 +39,8 @@ def _load_cpa_cfg() -> dict:
                             detail="CPA 未启用：请先在 wizard Step11 填 base_url + admin_key 并启用")
     if not (cpa.get("base_url") and cpa.get("admin_key")):
         raise HTTPException(status_code=400, detail="CPA 配置缺 base_url 或 admin_key")
+    cpa = dict(cpa)
+    cpa["base_url"] = normalize_cpa_base_url(cpa.get("base_url") or "")
     return cpa
 
 
