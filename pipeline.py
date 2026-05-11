@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from webui.backend.db import get_db
+from webui.backend.cpa_utils import normalize_cpa_base_url
 
 ROOT = Path(__file__).resolve().parent
 CARDW_DIR = ROOT / "CTF-reg"
@@ -386,6 +387,33 @@ class DomainPool:
         return rows
 
 
+class NullDomainPool:
+    """DomainPool-compatible no-op for non catch-all mail providers."""
+
+    domains: list[str] = []
+    provisioner = None
+    min_available = 1
+
+    def pick(self):
+        return ""
+
+    def mark_used(self, domain):
+        return None
+
+    def mark_result(self, domain, invite_status):
+        return None
+
+    def summary(self):
+        return []
+
+
+def _mail_provider_name(mail_cfg: dict) -> str:
+    provider = str((mail_cfg or {}).get("provider") or "").strip().lower()
+    if provider in ("luckmail", "luckyous", "luckyous_ms_graph", "luckmail_ms_graph", "ms_graph"):
+        return "luckmail_ms_graph"
+    return "cloudflare_kv"
+
+
 class TeamSystemClient:
     """gpt-team 系统客户端：login → batch-import 单条 RT，SSE 解析 probe 结果。
     使用独立的 no-proxy opener，避免被环境变量里的 http_proxy 劫持到本地代理/监控。"""
@@ -583,7 +611,7 @@ from mail_provider import MailProvider
 from browser_register import browser_register
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")
 cfg = Config.from_file(config_path)
-mail = MailProvider(cfg.mail.catch_all_domain)
+mail = MailProvider.from_config(cfg.mail)
 result = browser_register(cfg, mail)
 print("LOCALAUTH_RESULT_JSON=" + json.dumps(result, ensure_ascii=False), flush=True)
 """
@@ -598,7 +626,7 @@ from auth_flow import AuthFlow
 from mail_provider import MailProvider
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")
 cfg = Config.from_file(config_path)
-mail = MailProvider(cfg.mail.catch_all_domain)
+mail = MailProvider.from_config(cfg.mail)
 flow = AuthFlow(cfg)
 result = flow.run_register(mail)
 print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False), flush=True)
@@ -2146,6 +2174,9 @@ def _build_domain_pool_from_cardw(cardw_path, cooldown_hours=24):
         with open(cardw_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         mail_cfg = data.get("mail", {})
+        if _mail_provider_name(mail_cfg) != "cloudflare_kv":
+            print(f"[DomainPool] mail.provider={mail_cfg.get('provider')}，跳过 catch-all 域池")
+            return NullDomainPool()
         lst = mail_cfg.get("catch_all_domains", []) or []
         ap_cfg = mail_cfg.get("auto_provision") or {}
     except Exception as e:
@@ -2499,7 +2530,8 @@ def _rewrite_cardw_with_domain(src_path, domain, proxy_url=""):
     with open(src_path, "r", encoding="utf-8") as f:
         data = json.load(f)
     mail = data.setdefault("mail", {})
-    mail["catch_all_domain"] = domain
+    if _mail_provider_name(mail) == "cloudflare_kv":
+        mail["catch_all_domain"] = domain
     if proxy_url:
         data["proxy"] = proxy_url
     tmp = tempfile.NamedTemporaryFile(
@@ -2685,7 +2717,7 @@ def _cpa_import_after_team(
     import urllib.request, urllib.parse, urllib.error, base64, hashlib
     if not cpa_cfg or not cpa_cfg.get("enabled"):
         return "skipped"
-    base_url = (cpa_cfg.get("base_url") or "").rstrip("/")
+    base_url = normalize_cpa_base_url(cpa_cfg.get("base_url") or "")
     admin_key = (cpa_cfg.get("admin_key") or "").strip()
     if not base_url or not admin_key or not email:
         return "skipped"

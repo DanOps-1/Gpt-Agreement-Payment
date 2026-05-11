@@ -82,6 +82,8 @@ GOPAY_PIN_CLIENT_ID_CHARGE = "47180a8e-f56e-11ed-a05b-0242ac120003-GWC"
 DEFAULT_TIMEOUT = 30
 LINK_RETRY_LIMIT = 2  # 406 "account already linked" retry
 LINK_RETRY_SLEEP_S = 12.0  # Midtrans 需要冷却 ~10s 才会让 406 → 201（实测）
+LINK_429_RETRY_LIMIT = 100
+LINK_429_RETRY_SLEEP_S = 0.5
 DEFAULT_OTP_REGEX = r"(?<!\d)(\d{6})(?!\d)"
 
 
@@ -405,7 +407,7 @@ class GoPayCharger:
     # ───── Step 7: Midtrans linking initiation ─────
 
     def _midtrans_init_linking(self, snap_token: str) -> str:
-        """POST snap/v3/accounts/{snap}/linking. Retries on 406."""
+        """POST snap/v3/accounts/{snap}/linking. Retries on 406 and 429."""
         url = f"https://app.midtrans.com/snap/v3/accounts/{snap_token}/linking"
         body = {
             "type": "gopay",
@@ -419,7 +421,9 @@ class GoPayCharger:
             "Referer": f"https://app.midtrans.com/snap/v4/redirection/{snap_token}",
         }
         last_err: Optional[str] = None
-        for attempt in range(1, LINK_RETRY_LIMIT + 2):
+        retry_406_count = 0
+        retry_429_count = 0
+        while True:
             r = self.ext.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
             if r.status_code == 201:
                 data = r.json()
@@ -429,6 +433,17 @@ class GoPayCharger:
                 ref = m.group(1)
                 self.log(f"[gopay] midtrans linking ok reference={ref}")
                 return ref
+            if r.status_code == 429:
+                retry_429_count += 1
+                last_err = r.text[:120]
+                if retry_429_count > LINK_429_RETRY_LIMIT:
+                    raise GoPayError(f"midtrans linking 429 exhausted retries: {last_err}")
+                self.log(
+                    "[gopay] midtrans linking 429 rate limited, "
+                    f"{LINK_429_RETRY_SLEEP_S}s 后重试 {retry_429_count}/{LINK_429_RETRY_LIMIT}"
+                )
+                time.sleep(LINK_429_RETRY_SLEEP_S)
+                continue
             if r.status_code == 406:
                 try:
                     j = r.json()
@@ -440,7 +455,10 @@ class GoPayCharger:
                     last_err = str(j[0])
                 else:
                     last_err = r.text[:120]
-                self.log(f"[gopay] midtrans linking 406 ({last_err}), 冷却 {LINK_RETRY_SLEEP_S}s 再重试 {attempt}/{LINK_RETRY_LIMIT}")
+                retry_406_count += 1
+                if retry_406_count > LINK_RETRY_LIMIT:
+                    break
+                self.log(f"[gopay] midtrans linking 406 ({last_err}), 冷却 {LINK_RETRY_SLEEP_S}s 再重试 {retry_406_count}/{LINK_RETRY_LIMIT}")
                 time.sleep(LINK_RETRY_SLEEP_S)
                 continue
             raise GoPayError(

@@ -213,7 +213,9 @@ def test_full_flow_succeeds():
 
 
 @responses.activate
-def test_linking_406_exhaustion_raises():
+def test_linking_406_exhaustion_raises(monkeypatch):
+    monkeypatch.setattr(gopay.time, "sleep", lambda _seconds: None)
+
     # Pre-flow: stub the early steps minimally so we get to linking
     responses.post("https://chatgpt.com/backend-api/payments/checkout", json={"id": CS_ID, "session_id": CS_ID})
     responses.post("https://api.stripe.com/v1/payment_methods", json={"id": PM_ID})
@@ -246,6 +248,49 @@ def test_linking_406_exhaustion_raises():
     charger = build_charger()
     with pytest.raises(gopay.GoPayError, match="exhausted"):
         charger.run(stripe_pk=STRIPE_PK)
+
+
+# ────────────────── 429 retry then success ──────────────────
+
+
+@responses.activate
+def test_linking_429_retries_then_succeeds(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(gopay.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    url = f"https://app.midtrans.com/snap/v3/accounts/{SNAP_TOKEN}/linking"
+    responses.post(url, status=429)
+    responses.post(url, status=429)
+    responses.post(
+        url,
+        json={
+            "status_code": "201",
+            "activation_link_url": (
+                f"https://merchants-gws-app.gopayapi.com/app/authorize?reference={LINK_REF}&target=gwc"
+            ),
+        },
+        status=201,
+    )
+
+    charger = build_charger()
+    assert charger._midtrans_init_linking(SNAP_TOKEN) == LINK_REF
+    assert sleeps == [gopay.LINK_429_RETRY_SLEEP_S, gopay.LINK_429_RETRY_SLEEP_S]
+
+
+@responses.activate
+def test_linking_429_exhaustion_raises(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(gopay, "LINK_429_RETRY_LIMIT", 2)
+    monkeypatch.setattr(gopay.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    url = f"https://app.midtrans.com/snap/v3/accounts/{SNAP_TOKEN}/linking"
+    for _ in range(3):
+        responses.post(url, body="too many requests", status=429)
+
+    charger = build_charger()
+    with pytest.raises(gopay.GoPayError, match="429 exhausted"):
+        charger._midtrans_init_linking(SNAP_TOKEN)
+    assert sleeps == [gopay.LINK_429_RETRY_SLEEP_S, gopay.LINK_429_RETRY_SLEEP_S]
 
 
 # ────────────────── OTP cancel ──────────────────

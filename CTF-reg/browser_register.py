@@ -234,6 +234,11 @@ def browser_register(cfg, mail_provider) -> dict:
                     raise
             time.sleep(random.uniform(0.5, 1.2))
             # Continue
+            try:
+                mail_provider.prepare_for_otp(email, reason="browser_email_continue")
+            except Exception as e:
+                logger.warning(f"[browser-reg] 邮箱接码准备失败: {e}")
+                raise
             for sel in ['button[type="submit"]', 'button:has-text("Continue")',
                         'button:has-text("Next")']:
                 b = page.query_selector(sel)
