@@ -127,16 +127,40 @@ def _missing_paths(obj: dict, paths: list[str]) -> list[str]:
     return [p for p in paths if _is_missing(_get(obj, p))]
 
 
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def _gopay_account_disabled(value: dict) -> bool:
+    return _truthy(
+        value.get("disabled")
+        or value.get("disable")
+        or value.get("enabled") is False
+        or value.get("gopay_disabled")
+        or value.get("account_disabled")
+    )
+
+
 def _usable_gopay_accounts(gp: dict) -> list[dict]:
     accounts = []
     raw = gp.get("accounts") if isinstance(gp.get("accounts"), list) else []
     for item in raw:
-        if isinstance(item, dict) and not any(
+        if not isinstance(item, dict):
+            continue
+        if _gopay_account_disabled(item):
+            continue
+        if not any(
             _is_missing(item.get(key)) for key in ("country_code", "phone_number", "pin")
         ):
             accounts.append(item)
     if accounts:
         return accounts
+    if raw:
+        return []
+    if _gopay_account_disabled(gp):
+        return []
     if not any(_is_missing(gp.get(key)) for key in ("country_code", "phone_number", "pin")):
         return [gp]
     return []

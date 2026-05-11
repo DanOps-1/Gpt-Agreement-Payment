@@ -502,6 +502,16 @@ def _has_gopay_account_fields(cfg: dict) -> bool:
     return all(str(cfg.get(k) or "").strip() for k in ("country_code", "phone_number", "pin"))
 
 
+def _gopay_account_disabled(cfg: dict) -> bool:
+    return _truthy_cfg(
+        cfg.get("disabled")
+        or cfg.get("disable")
+        or cfg.get("enabled") is False
+        or cfg.get("gopay_disabled")
+        or cfg.get("account_disabled")
+    )
+
+
 def normalize_gopay_accounts(gopay_cfg: dict) -> list[dict]:
     """Return usable GoPay accounts from either new accounts[] or legacy fields."""
     if not isinstance(gopay_cfg, dict):
@@ -509,9 +519,12 @@ def normalize_gopay_accounts(gopay_cfg: dict) -> list[dict]:
 
     raw_accounts = gopay_cfg.get("accounts")
     accounts: list[dict] = []
-    if isinstance(raw_accounts, list):
+    has_accounts_list = isinstance(raw_accounts, list)
+    if has_accounts_list:
         for idx, item in enumerate(raw_accounts):
             if not isinstance(item, dict):
+                continue
+            if _gopay_account_disabled(item):
                 continue
             account = dict(item)
             if not account.get("country_code") and gopay_cfg.get("country_code"):
@@ -524,8 +537,10 @@ def normalize_gopay_accounts(gopay_cfg: dict) -> list[dict]:
 
     if accounts:
         return accounts
+    if has_accounts_list:
+        return []
 
-    if _has_gopay_account_fields(gopay_cfg):
+    if _has_gopay_account_fields(gopay_cfg) and not _gopay_account_disabled(gopay_cfg):
         account = {
             "label": gopay_cfg.get("label") or gopay_cfg.get("name") or "default",
             "country_code": gopay_cfg.get("country_code"),

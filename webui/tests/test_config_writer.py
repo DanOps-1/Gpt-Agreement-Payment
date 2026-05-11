@@ -94,6 +94,7 @@ def test_export_writes_gopay_auto_otp(client, tmp_path, monkeypatch):
             "country_code": "62",
             "phone_number": "81234567890",
             "pin": "123456",
+            "disabled": True,
             "use_sms_otp": True,
             "sms_otp_poll_url": "https://sms.example/latest",
             "otp_timeout": 240,
@@ -113,6 +114,7 @@ def test_export_writes_gopay_auto_otp(client, tmp_path, monkeypatch):
         "country_code": "62",
         "phone_number": "81234567890",
         "pin": "123456",
+        "disabled": True,
         "use_sms_otp": True,
         "sms_otp_poll_url": "https://sms.example/latest",
     }]

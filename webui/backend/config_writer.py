@@ -28,6 +28,22 @@ def _payment_method(answers: dict) -> str:
     return (answers.get("payment") or {}).get("method", "both")
 
 
+def _truthy(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def _gopay_account_disabled(value: dict) -> bool:
+    return _truthy(
+        value.get("disabled")
+        or value.get("disable")
+        or value.get("enabled") is False
+        or value.get("gopay_disabled")
+        or value.get("account_disabled")
+    )
+
+
 def _normalize_gopay_accounts(gp: dict) -> list[dict]:
     raw_accounts = gp.get("accounts") if isinstance(gp.get("accounts"), list) else []
     accounts: list[dict] = []
@@ -40,6 +56,8 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
             "phone_number": str(item.get("phone_number") or ""),
             "pin": str(item.get("pin") or ""),
         }
+        if _gopay_account_disabled(item):
+            account["disabled"] = True
         if item.get("use_sms_otp") or item.get("sms_otp"):
             account["use_sms_otp"] = True
         sms_otp_poll_url = str(item.get("sms_otp_poll_url") or item.get("sms_otp_url") or "").strip()
@@ -59,6 +77,8 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
 
     if accounts:
         return accounts
+    if raw_accounts:
+        return []
 
     if all(gp.get(k) for k in ("country_code", "phone_number", "pin")):
         account = {
@@ -67,6 +87,8 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
             "phone_number": str(gp["phone_number"]),
             "pin": str(gp["pin"]),
         }
+        if _gopay_account_disabled(gp):
+            account["disabled"] = True
         if gp.get("use_sms_otp") or gp.get("sms_otp"):
             account["use_sms_otp"] = True
         sms_otp_poll_url = str(gp.get("sms_otp_poll_url") or gp.get("sms_otp_url") or "").strip()

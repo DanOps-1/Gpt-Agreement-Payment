@@ -261,6 +261,37 @@ def test_sms_otp_mode_resends_and_polls_six_digit_code():
     assert b'"reference_id": "33333333-dddd-eeee-ffff-444444444444"' in resend.body
 
 
+def test_disabled_gopay_accounts_are_not_selected():
+    logs: list[str] = []
+    cfg = {
+        "accounts": [
+            {"label": "off", "country_code": "62", "phone_number": "811111111", "pin": "111111", "disabled": True},
+            {"label": "on", "country_code": "62", "phone_number": "822222222", "pin": "222222"},
+        ]
+    }
+
+    selected = gopay.pick_gopay_account_config(cfg, log=logs.append)
+
+    assert selected["label"] == "on"
+    assert selected["phone_number"] == "822222222"
+    assert selected["_selected_accounts_count"] == 1
+
+
+def test_all_disabled_gopay_accounts_are_unusable():
+    cfg = {
+        "country_code": "62",
+        "phone_number": "899999999",
+        "pin": "999999",
+        "accounts": [
+            {"label": "off", "country_code": "62", "phone_number": "811111111", "pin": "111111", "disabled": True},
+        ],
+    }
+
+    assert gopay.normalize_gopay_accounts(cfg) == []
+    with pytest.raises(gopay.GoPayError):
+        gopay.pick_gopay_account_config(cfg)
+
+
 # ────────────────── 406 retry exhausted ──────────────────
 
 
