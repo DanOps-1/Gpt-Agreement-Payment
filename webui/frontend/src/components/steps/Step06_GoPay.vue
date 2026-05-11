@@ -9,7 +9,10 @@
     <div class="accounts-panel">
       <div class="accounts-head">
         <span class="label">GoPay 账号</span>
-        <TermBtn variant="ghost" @click="addAccount">添加账号</TermBtn>
+        <div class="accounts-tools">
+          <TermBtn variant="ghost" @click="openAutoLoginDialog">自动登录</TermBtn>
+          <TermBtn variant="ghost" @click="addAccount">添加账号</TermBtn>
+        </div>
       </div>
 
       <div v-for="(account, idx) in form.accounts" :key="account.id" class="account-box">
@@ -27,7 +30,6 @@
           <TermField v-model="account.label" label="标签" placeholder="钱包标签" />
           <TermField v-model="account.country_code" label="国家区号" placeholder="62" />
           <TermField v-model="account.phone_number" label="手机号" placeholder="81234567890" />
-          <TermField v-model="account.auto_login_phone" label="自动登录账号" placeholder="89530397723" />
           <TermField v-model="account.pin" label="支付 PIN" type="password" placeholder="GoPay PIN" />
           <label class="qr-toggle">
             <input v-model="account.disabled" type="checkbox" />
@@ -150,6 +152,68 @@
           </div>
           <div class="otp-actions">
             <TermBtn variant="ghost" @click="closeOtpTest">关闭</TermBtn>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="autoLoginDialog.open" class="otp-overlay" @click.self="closeAutoLoginDialog">
+        <div class="otp-modal">
+          <div class="otp-head">
+            <span class="otp-prompt">$</span> GoPay 自动登录
+          </div>
+          <p class="otp-desc">
+            输入区号、手机号和验证码轮询地址后先获取 token。PIN 可选；填写 PIN 时保存前会先完成 PIN 设置，最后添加到 GoPay 账号列表。
+          </p>
+          <div class="form-stack">
+            <TermField
+              v-model="autoLoginDialog.country_code"
+              label="国家区号"
+              placeholder="62"
+            />
+            <TermField
+              v-model="autoLoginDialog.phone_number"
+              label="手机号"
+              placeholder="81234567890"
+            />
+            <TermField
+              v-model="autoLoginDialog.otp_poll_url"
+              label="验证码轮询地址"
+              placeholder="https://example.com/latest-sms"
+            />
+            <div v-if="autoLoginDialog.tokenPath" class="unlink-url-box ok">
+              <span class="label">Token</span>
+              <code>{{ autoLoginDialog.tokenPath }}</code>
+            </div>
+            <TermField
+              v-if="autoLoginDialog.tokenPath"
+              v-model="autoLoginDialog.pin"
+              label="PIN（可选）"
+              type="password"
+              placeholder="不填则跳过 PIN 设置"
+            />
+            <div v-if="autoLoginDialog.error" class="unlink-url-box">
+              <span class="label">错误</span>
+              <code>{{ autoLoginDialog.error }}</code>
+            </div>
+          </div>
+          <div class="otp-actions">
+            <TermBtn variant="ghost" @click="closeAutoLoginDialog">取消</TermBtn>
+            <TermBtn
+              v-if="!autoLoginDialog.tokenPath"
+              :loading="autoLoginDialog.fetchingToken"
+              @click="fetchAutoLoginToken"
+            >
+              获取 token
+            </TermBtn>
+            <TermBtn
+              v-else
+              :loading="autoLoginDialog.saving"
+              @click="saveAutoLoginAccount"
+            >
+              保存账号
+            </TermBtn>
           </div>
         </div>
       </div>
@@ -333,6 +397,18 @@ const otpDialog = ref({
   since: 0,
   preparing: false,
 });
+const autoLoginDialog = ref({
+  open: false,
+  country_code: "62",
+  phone_number: "",
+  otp_poll_url: "",
+  pin: "",
+  tokenPath: "",
+  fetchingToken: false,
+  saving: false,
+  error: "",
+  pinSetupDone: false,
+});
 const unbindDialog = ref({
   open: false,
   accountIndex: "0",
@@ -402,6 +478,10 @@ const bodyTemplate = computed(
   () => `{"otp":"123456","phone":"${samplePhone.value}","country_code":"${sampleCountryCode.value}","source":"android-notification-forwarder","ts":{{timestamp}}}`,
 );
 
+function onlyDigits(value: unknown) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
 function addAccount() {
   form.value.accounts.push(newAccount({}, form.value.accounts.length));
 }
@@ -460,6 +540,130 @@ async function openOtpTest() {
   }
   await refreshStatus();
   otpTestTimer = window.setInterval(refreshStatus, 1000);
+}
+
+function openAutoLoginDialog() {
+  autoLoginDialog.value = {
+    open: true,
+    country_code: "62",
+    phone_number: "",
+    otp_poll_url: "",
+    pin: "",
+    tokenPath: "",
+    fetchingToken: false,
+    saving: false,
+    error: "",
+    pinSetupDone: false,
+  };
+}
+
+function closeAutoLoginDialog() {
+  autoLoginDialog.value.open = false;
+}
+
+async function fetchAutoLoginToken() {
+  const countryCode = onlyDigits(autoLoginDialog.value.country_code) || "62";
+  const phoneNumber = onlyDigits(autoLoginDialog.value.phone_number);
+  const otpPollUrl = String(autoLoginDialog.value.otp_poll_url || "").trim();
+  if (!phoneNumber) {
+    message.warning("请先填写 GoPay 手机号");
+    return;
+  }
+  if (!otpPollUrl) {
+    message.warning("请先填写验证码轮询地址");
+    return;
+  }
+  autoLoginDialog.value.country_code = countryCode;
+  autoLoginDialog.value.phone_number = phoneNumber;
+  autoLoginDialog.value.otp_poll_url = otpPollUrl;
+  autoLoginDialog.value.fetchingToken = true;
+  autoLoginDialog.value.error = "";
+  try {
+    const r = await api.post("/config/gopay/auto-login/token", {
+      country_code: countryCode,
+      phone_number: phoneNumber,
+      otp_poll_url: otpPollUrl,
+      gopay: buildGopayAnswer(),
+      timeout: Number(form.value.otp_timeout || 300),
+    });
+    const tokenPath = String(
+      r.data?.token_path
+      || r.data?.result?.token_path
+      || r.data?.result?.token_result?.token_path
+      || "",
+    );
+    if (!tokenPath) throw new Error("未返回 token_path");
+    autoLoginDialog.value.tokenPath = tokenPath;
+    message.success("token 已获取并保存");
+  } catch (e: any) {
+    const detail = e.response?.data?.detail || e.message || "获取 token 失败";
+    autoLoginDialog.value.error = detail;
+    message.error(detail);
+  } finally {
+    autoLoginDialog.value.fetchingToken = false;
+  }
+}
+
+async function setupAutoLoginPinIfNeeded() {
+  const pin = onlyDigits(autoLoginDialog.value.pin);
+  if (!pin) return;
+  if (pin.length !== 6) {
+    throw new Error("GoPay PIN 需要 6 位数字");
+  }
+  if (autoLoginDialog.value.pinSetupDone) return;
+  const r = await api.post("/config/gopay/auto-login/pin", {
+    country_code: onlyDigits(autoLoginDialog.value.country_code) || "62",
+    phone_number: onlyDigits(autoLoginDialog.value.phone_number),
+    pin,
+    token_path: autoLoginDialog.value.tokenPath,
+    otp_poll_url: String(autoLoginDialog.value.otp_poll_url || "").trim(),
+    gopay: buildGopayAnswer(),
+    timeout: Number(form.value.otp_timeout || 300),
+  });
+  if (!r.data?.ok) throw new Error("PIN 设置未完成");
+  autoLoginDialog.value.pinSetupDone = true;
+}
+
+async function saveAutoLoginAccount() {
+  const countryCode = onlyDigits(autoLoginDialog.value.country_code) || "62";
+  const phoneNumber = onlyDigits(autoLoginDialog.value.phone_number);
+  const otpPollUrl = String(autoLoginDialog.value.otp_poll_url || "").trim();
+  const pin = onlyDigits(autoLoginDialog.value.pin);
+  if (!autoLoginDialog.value.tokenPath) {
+    message.warning("请先获取 token");
+    return;
+  }
+  if (!phoneNumber) {
+    message.warning("请先填写 GoPay 手机号");
+    return;
+  }
+  if (!otpPollUrl) {
+    message.warning("请先填写验证码轮询地址");
+    return;
+  }
+  autoLoginDialog.value.saving = true;
+  autoLoginDialog.value.error = "";
+  try {
+    await setupAutoLoginPinIfNeeded();
+    form.value.accounts.push(newAccount({
+      label: `account-${form.value.accounts.length + 1}`,
+      country_code: countryCode,
+      phone_number: phoneNumber,
+      pin,
+      use_sms_otp: true,
+      sms_otp_poll_url: otpPollUrl,
+    }, form.value.accounts.length));
+    store.setAnswer("gopay", buildGopayAnswer());
+    await store.saveToServer();
+    closeAutoLoginDialog();
+    message.success("GoPay 账号已添加");
+  } catch (e: any) {
+    const detail = e.response?.data?.detail || e.message || "保存 GoPay 账号失败";
+    autoLoginDialog.value.error = detail;
+    message.error(detail);
+  } finally {
+    autoLoginDialog.value.saving = false;
+  }
 }
 
 function closeOtpTest() {
@@ -660,6 +864,12 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+}
+.accounts-tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
 }
 .account-box {
   display: grid;
