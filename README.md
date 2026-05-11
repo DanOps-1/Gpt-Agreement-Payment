@@ -12,6 +12,34 @@ ChatGPT Team 订阅协议的端到端重放工具，附带从零实现的 hCaptc
 [![CI](https://img.shields.io/github/actions/workflow/status/DanOps-1/Gpt-Agreement-Payment/ci.yml?label=CI)](https://github.com/DanOps-1/Gpt-Agreement-Payment/actions)
 [![Use](https://img.shields.io/badge/use-CTF%20%2F%20bug%20bounty-red)](#法律边界)
 
+---
+
+## 赞助商目录
+
+感谢以下朋友与伙伴对 Gpt-Agreement-Payment 的支持。
+
+| Logo | 名称 | 介绍 | 官网 |
+| --- | --- | --- | --- |
+| <a href="https://www.right.codes/register?aff=c408930b" target="_blank"><img src="docs/images/sponsors/right-code.png" alt="Right Code" width="140" /></a> | Right Code | 企业级 AI Agent 分发平台，OpenAI / Anthropic / Gemini 全协议兼容，统一接入 Claude Code、Codex、Gemini CLI、Grok Code 等。**稳定优先**（独家网关、号池稳定、可用率 99.5%）· **高性价比**（按量计费，仅官网十分之一）· **透明计费**（实时监控用量，无隐藏扣费）。<br><br>**邀请码：`c408930b`**<br>**返利：邀请者 5% · 好友加赠 5%**（好友支付完成后，双方同时获得实付金额对应额度的 5%） | [https://www.right.codes/register?aff=c408930b](https://www.right.codes/register?aff=c408930b) |
+
+<p align="center">
+  <a href="https://www.right.codes/register?aff=c408930b" target="_blank">
+    <img src="docs/images/sponsors/right-code-screenshot.png" width="600" alt="Right Code 主界面" />
+  </a>
+  <br>
+  <sub>👆 点击图片访问 Right Code · 邀请码 <code>c408930b</code></sub>
+</p>
+
+---
+
+## 作者自营 · API 中转
+
+| Logo | 名称 | 介绍 | 官网 |
+| --- | --- | --- | --- |
+| <a href="https://api.lukyface.com/register?aff=9ipF" target="_blank"><img src="docs/images/sponsors/lukyface.png" alt="lukyface API" width="140" /></a> | lukyface API（作者自营） | 统一的 AI 模型聚合 / 分发网关（基于 new-api），OpenAI / Claude / Gemini 三协议互转，自用余量分享。**倍率：0.1 元 ≈ 1 美元额度**（按充值实付计价），不定期降价优惠，量大可私聊议价。<br><br>**邀请码：`9ipF`** · 通过 [邀请链接](https://api.lukyface.com/register?aff=9ipF) 注册即自动绑定 | [https://api.lukyface.com/register?aff=9ipF](https://api.lukyface.com/register?aff=9ipF) |
+
+---
+
 > [!CAUTION]
 > **使用本项目即视为同意 [`NOTICE`](NOTICE) 的全部条款。** 项目按 AS IS 提供、无任何担保、维护者不负任何责任。仅限你拥有的系统 / 合法 CTF / 授权 bug bounty 项目 in-scope 资产 / 安全研究。**严禁**用于欺诈、规避支付、批量造号转售、违反第三方 ToS、未授权目标。一切法律责任由使用者自负。不接受条款就**不要使用**。
 
@@ -54,7 +82,7 @@ flowchart LR
 - 一个出口在 EU / US 的代理（PayPal 锁地区，Stripe 锁国家）
 - 一个 Cloudflare zone（用于开 catch-all 子域注册邮箱）
 - 一台能跑 Camoufox + Playwright 的 Linux（约 5 GB 磁盘 + 2 GB 内存）
-- （可选）一个 OpenAI 兼容的 VLM API key，hCaptcha 求解用；家宽 / 伪家宽出口通常不会触发 hCaptcha，无 VLM 时也会降级到 CLIP
+- （可选）一个 OpenAI 兼容的 VLM API key，hCaptcha 求解用；家宽 / 伪家宽出口通常不会触发 hCaptcha，无 VLM 时也会降级到 CLIP（推荐用本项目赞助商 [Right Code](https://www.right.codes/register?aff=c408930b)，详见页首）
 - （可选）一个兼容 createTask/getTaskResult 协议的打码平台 API key，作为浏览器 passive captcha 的兜底
 
 第一次完整跑通通常要花 1–3 小时调通配置。daemon 模式跑稳后，单次 pipeline 约 5 分钟。
@@ -184,6 +212,14 @@ xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal --da
 - [OpenAI CLIP](https://github.com/openai/CLIP) — 启发式 solver 的视觉骨架
 - [gost](https://github.com/go-gost/gost) — SOCKS5 中继
 
+### 代码贡献者
+
+感谢以下朋友贡献代码（按 PR 时间）：
+
+- [@Lium-7768](https://github.com/Lium-7768) — [#12](https://github.com/DanOps-1/Gpt-Agreement-Payment/pull/12) Align GoPay step visibility to hide 06 and 13
+- [@DragonBaiMo](https://github.com/DragonBaiMo) — [#15](https://github.com/DanOps-1/Gpt-Agreement-Payment/pull/15) 算法化 persona 生成器 + 邮箱姓名同源
+- [@laochendeai](https://github.com/laochendeai) — [#21](https://github.com/DanOps-1/Gpt-Agreement-Payment/pull/21) detect blocking challenge pages
+
 ## 社区
 
 | 渠道 | 用途 |
@@ -203,6 +239,26 @@ xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal --da
 <p align="center">
   <img src="goodgood.jpg" width="280" alt="赞赏码">
 </p>
+
+### 打赏致谢
+
+感谢以下朋友的支持（排名不分先后）：
+
+| 打赏者 | 金额 |
+|---|---|
+| 两岁 | 100 元 |
+| bensema | 0.66 元 |
+| Earth NPC | 0.01 元 |
+| 小水獭 | 0.01 元 |
+| 至上松一 | 6.66 元 |
+| 书忆江南 | 5 元 |
+| A. | 10 元 |
+| 辛昊 | 5 元 |
+| Galaxy-n | 101 元 |
+| 朴朴配送员 | 66 元 |
+| acedia | 9.1 元 |
+
+心意比金额更珍贵，每一份支持都是项目继续维护的动力 🙏
 
 ---
 

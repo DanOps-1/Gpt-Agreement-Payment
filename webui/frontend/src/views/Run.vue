@@ -55,6 +55,23 @@
             <code>--pay-only</code> 跳过注册，优先复用最近注册但未支付账号；
             <code>--register-only</code> 只注册不支付。
           </p>
+
+          <div v-if="!form.pay_only" class="ctl-row reg-mode">
+            <span class="reg-mode-label">注册路径 ·</span>
+            <label class="reg-mode-opt" :class="{ active: form.register_mode === 'browser' }">
+              <input type="radio" value="browser" v-model="form.register_mode" />
+              浏览器 (Camoufox)
+            </label>
+            <label class="reg-mode-opt" :class="{ active: form.register_mode === 'protocol' }">
+              <input type="radio" value="protocol" v-model="form.register_mode" />
+              纯协议 (auth_flow)
+            </label>
+          </div>
+          <p v-if="!form.pay_only" class="ctl-hint">
+            <code>browser</code> 走 Camoufox + Turnstile 真实执行（稳但慢，OpenAI 改 modal 后可能失败）；
+            <code>protocol</code> 走 <code>auth_flow.AuthFlow</code> HTTP 直连（快，但可能被风控）。
+            选择会自动持久化到 localStorage。
+          </p>
           <p v-else class="ctl-hint">
             <code>{{ form.mode }}</code> 不走支付步骤；OTP 经 CF KV 取，OAuth 拿 rt 后推 CPA 用 <code>cpa.free_plan_tag</code>。
           </p>
@@ -105,6 +122,137 @@
             <span class="status-dot idle">○</span> 空闲
           </span>
         </div>
+
+        <details class="link-details" :open="autoLoop.running">
+          <summary>
+            Auto Loop ·
+            <span class="link-summary" :class="autoLoop.running ? 'warn' : 'muted'">
+              {{ autoLoopSummary }}
+            </span>
+          </summary>
+          <p class="link-hint">
+            循环跑「注册 + GoPay 支付」一直到累计成功次数 = target，或连续失败 ≥ max。
+            自动处理：<code>cf_429</code> 触发 IP 轮换；<code>coupon_ineligible</code> 标当前账号为废号删除；
+            其它已知错误（OTP 超时/钱包余额不足/406 已绑定）记日志后跳过。
+          </p>
+          <div v-if="!autoLoop.running" class="auto-loop-form">
+            <label>
+              目标成功数
+              <input v-model.number="autoLoopForm.target_success" type="number" min="1" max="10000" class="link-manual-input" style="min-width:80px;flex:0 0 auto" />
+            </label>
+            <label>
+              连续失败上限
+              <input v-model.number="autoLoopForm.max_consec_fail" type="number" min="1" max="100" class="link-manual-input" style="min-width:80px;flex:0 0 auto" />
+            </label>
+            <TermBtn :loading="autoLoopBusy" @click="startAutoLoop">▶ 启动 Auto Loop</TermBtn>
+          </div>
+          <div v-else class="auto-loop-running">
+            <div class="auto-loop-stats">
+              <span><b>iter</b> {{ autoLoop.iteration }}</span>
+              <span class="ok"><b>success</b> {{ autoLoop.success_count }}/{{ autoLoop.target_success }}</span>
+              <span class="warn"><b>fail</b> {{ autoLoop.fail_count }} (连续 {{ autoLoop.consecutive_fail }}/{{ autoLoop.max_consec_fail }})</span>
+              <span><b>IP 轮换</b> {{ autoLoop.ip_rotations }}</span>
+              <span v-if="autoLoop.scrap_marked.length"><b>已废号</b> {{ autoLoop.scrap_marked.length }}</span>
+              <span v-if="autoLoop.zone_list.length > 1">
+                <b>zone</b> {{ autoLoop.current_zone || '?' }}
+                ({{ autoLoop.zone_list.length }} 个，已切 {{ autoLoop.total_zone_rotations }} 次)
+              </span>
+              <span v-if="autoLoop.zone_reg_fail_streak > 0" class="warn">
+                reg连挂 {{ autoLoop.zone_reg_fail_streak }}
+              </span>
+            </div>
+            <div class="auto-loop-last" v-if="autoLoop.last_kind">
+              <b>{{ autoLoop.last_kind }}</b> · {{ autoLoop.last_action }}
+              <span v-if="autoLoop.last_email"> · {{ autoLoop.last_email }}</span>
+            </div>
+            <TermBtn variant="danger" :loading="autoLoopBusy" @click="stopAutoLoop">■ 停止 Auto Loop</TermBtn>
+          </div>
+          <p v-if="autoLoop.stop_reason && !autoLoop.running" class="link-hint">
+            上次结束原因：<code>{{ autoLoop.stop_reason }}</code>
+          </p>
+        </details>
+
+        <details class="link-details">
+          <summary>
+            出口 IP ·
+            <span class="link-summary" :class="proxyIp ? 'ok' : 'muted'">
+              {{ proxyIp || '未加载' }}<span v-if="proxyCountry"> ({{ proxyCountry }})</span>
+            </span>
+            <TermBtn
+              variant="ghost"
+              class="link-refresh-btn"
+              :loading="rotatingIp"
+              @click.prevent="rotateProxyIp"
+            >切换 IP</TermBtn>
+          </summary>
+          <p class="link-hint" v-if="proxyError">{{ proxyError }}</p>
+          <p v-else class="link-hint">
+            遇到 Midtrans <code>429 body=</code>（Cloudflare 边缘节流，按 IP 限流）时点「切换 IP」。
+            会调 Webshare API 整池替换 + 切 gost 上游。<em>会消耗 Webshare 月度替换额度。</em>
+          </p>
+        </details>
+
+        <details class="link-details">
+          <summary>
+            GoPay 链接 ·
+            <span class="link-summary" :class="linkSummaryClass">{{ linkSummaryText }}</span>
+            <TermBtn variant="ghost" class="link-refresh-btn" @click.prevent="refreshLinkStates">刷新</TermBtn>
+          </summary>
+          <p class="link-hint">
+            支付成功自动 mark linked，下次启动 GoPay 流程会预检拒。
+            <em>本地 unlink ≠ Midtrans 服务端 unlink</em>——出 429 是 Midtrans 自己 rate-limit/冷却，本面板解决不了。
+          </p>
+          <div v-if="linkStateError" class="link-error">{{ linkStateError }}</div>
+          <table v-if="linkStates.length" class="link-table">
+            <thead>
+              <tr><th>手机号</th><th>状态</th><th>linked_at</th><th>改动方</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in linkStates" :key="row.phone">
+                <td><code>{{ row.phone }}</code></td>
+                <td>
+                  <span :class="row.linked ? 'badge-linked' : 'badge-unlinked'">
+                    {{ row.linked ? '● linked' : '○ unlinked' }}
+                  </span>
+                </td>
+                <td class="ts">{{ formatLinkTs(row.linked_at) }}</td>
+                <td class="muted">{{ row.last_changed_by || '—' }}</td>
+                <td>
+                  <TermBtn
+                    v-if="row.linked"
+                    variant="danger"
+                    :loading="linkBusy === row.phone"
+                    @click="setLinkState(row.phone, false)"
+                  >Unlink</TermBtn>
+                  <TermBtn
+                    v-else
+                    variant="ghost"
+                    :loading="linkBusy === row.phone"
+                    @click="setLinkState(row.phone, true)"
+                  >Mark Linked</TermBtn>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else class="link-empty-inline">暂无记录</div>
+          <div class="link-manual">
+            <input
+              v-model="linkManualPhone"
+              class="link-manual-input"
+              placeholder="手动添加手机号（含国家码，纯数字）"
+            />
+            <TermBtn
+              variant="ghost"
+              :disabled="!linkManualPhoneValid"
+              @click="setLinkState(linkManualPhone, true)"
+            >Mark Linked</TermBtn>
+            <TermBtn
+              variant="ghost"
+              :disabled="!linkManualPhoneValid"
+              @click="setLinkState(linkManualPhone, false)"
+            >Unlink</TermBtn>
+          </div>
+        </details>
       </section>
 
       <section class="run-inventory">
@@ -151,23 +299,68 @@
           </div>
         </div>
 
+        <div v-if="inventory.accounts.length" class="inventory-filters">
+          <input
+            v-model="invFilters.search"
+            class="inv-filter-input"
+            placeholder="🔍 邮箱关键字"
+          />
+          <select v-model="invFilters.plan" class="inv-filter-sel">
+            <option value="">所有 plan</option>
+            <option value="plus">plus</option>
+            <option value="team">team</option>
+            <option value="free">free</option>
+          </select>
+          <select v-model="invFilters.check" class="inv-filter-sel">
+            <option value="">所有验证</option>
+            <option value="valid">✓ 有效</option>
+            <option value="invalid">✗ 失效</option>
+            <option value="unknown">? 未知</option>
+            <option value="unchecked">未检</option>
+          </select>
+          <select v-model="invFilters.pay" class="inv-filter-sel">
+            <option value="">所有支付</option>
+            <option value="reusable">可复用</option>
+            <option value="consumed">已消耗</option>
+            <option value="no_auth">缺 auth</option>
+          </select>
+          <select v-model="invFilters.rt" class="inv-filter-sel">
+            <option value="">所有 RT</option>
+            <option value="has_rt">有 RT</option>
+            <option value="oauth_succeeded">OAuth 成功</option>
+            <option value="missing">缺 RT</option>
+            <option value="cooldown">冷却中</option>
+            <option value="retryable">可重试</option>
+            <option value="dead">永久失败</option>
+          </select>
+          <select v-model="invFilters.cpa" class="inv-filter-sel">
+            <option value="">所有 CPA</option>
+            <option value="pushed">已推送</option>
+            <option value="not_pushed">未推送</option>
+          </select>
+          <span class="inv-filter-count">{{ filteredAccounts.length }} / {{ inventory.accounts.length }}</span>
+          <TermBtn variant="ghost" :disabled="!hasActiveFilter" @click="resetInvFilters">清除筛选</TermBtn>
+        </div>
+
         <div v-if="inventory.accounts.length" class="inventory-toolbar">
           <label class="inventory-toolbar-check">
-            <input type="checkbox" :checked="allSelected" @change="toggleSelectAll" />
-            <span>全选 ({{ selectedIds.size }} / {{ inventory.accounts.length }})</span>
+            <input type="checkbox" :checked="allFilteredSelected" @change="toggleSelectAllFiltered" />
+            <span>全选筛选结果 ({{ selectedFilteredCount }} / {{ filteredAccounts.length }})</span>
           </label>
           <div class="inventory-toolbar-actions">
             <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="verifySelected">验证选中</TermBtn>
             <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="unknownOrUncheckedIds.length === 0" @click="verifyAllUnknown">验证全部未检 ({{ unknownOrUncheckedIds.length }})</TermBtn>
             <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="pushSelectedToCpa">推送选中→CPA</TermBtn>
             <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="unpushedIds.length === 0" @click="pushAllUnpushed">推送全部未推送 ({{ unpushedIds.length }})</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0 || status.running" @click="payOnlySelected">选中跑 pay-only</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0 || status.running" @click="rtOnlySelected">选中补 RT</TermBtn>
             <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="deleteSelected">删除选中</TermBtn>
             <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="invalidIds.length === 0" @click="deleteAllInvalid">删除所有失效 ({{ invalidIds.length }})</TermBtn>
           </div>
         </div>
 
-        <div v-if="inventory.accounts.length" class="inventory-list">
-          <div v-for="acc in inventory.accounts" :key="acc.id || acc.email" class="inventory-row" :class="{ 'inventory-row--selected': isSelected(acc.id) }">
+        <div v-if="filteredAccounts.length" class="inventory-list">
+          <div v-for="acc in filteredAccounts" :key="acc.id || acc.email" class="inventory-row" :class="{ 'inventory-row--selected': isSelected(acc.id) }">
             <div class="inventory-row-top">
               <input type="checkbox" class="inventory-row-check" :checked="isSelected(acc.id)" @change="toggleSelect(acc.id)" />
               <span class="inventory-email">{{ acc.email }}</span>
@@ -197,14 +390,23 @@
             </div>
           </div>
         </div>
-        <div v-else class="inventory-empty">
+        <div v-else-if="!inventory.accounts.length" class="inventory-empty">
           暂无账号库存；先跑一次注册/支付，等数据库同步完成后再点刷新。
+        </div>
+        <div v-else class="inventory-empty">
+          所有账号都被筛掉了——清除筛选或调整条件。
         </div>
       </section>
 
       <Teleport to="body">
         <div v-if="otpDialog.open" class="otp-overlay" @click.self="() => {}">
           <div class="otp-modal">
+            <button
+              class="otp-close"
+              :disabled="otpDialog.submitting"
+              title="关闭（gopay.py 已自行从 API 取到 OTP / 想手动跳过）"
+              @click="dismissOtpModal"
+            >×</button>
             <div class="otp-head">
               <span class="otp-prompt">$</span> GoPay WhatsApp OTP
             </div>
@@ -238,8 +440,8 @@
           <div v-if="!lines.length" class="logs-empty">
             等待运行<span class="term-cursor"></span>
           </div>
-          <div v-for="entry in lines" :key="entry.seq" class="log-line" :class="logClass(entry.line)">
-            <span class="log-ts">{{ formatTs(entry.ts) }}</span>
+          <div v-for="entry in lines" :key="entry.seq" class="log-line" :class="entry.cls">
+            <span class="log-ts">{{ entry.tsLabel }}</span>
             <span class="log-msg">{{ entry.line }}</span>
           </div>
         </div>
@@ -366,9 +568,219 @@ const form = ref({
   workers: 3,
   self_dealer: 4,
   count: 0, // free_register 模式：注册多少个后停（0 = 无限）
+  register_mode: (localStorage.getItem("webui.register_mode") || "browser") as "browser" | "protocol",
 });
 
-const otpDialog = ref({ open: false, value: "", submitting: false });
+watch(() => form.value.register_mode, (v) => {
+  try { localStorage.setItem("webui.register_mode", v); } catch {}
+});
+
+const otpDialog = ref({
+  open: false,
+  value: "",
+  submitting: false,
+  openedAt: 0,
+  autoFilled: false,
+  // 用户手动 × 关闭后这次 run 内不再 reopen，
+  // 直到 SSE `done` 事件触发（pipeline 结束 → 清旗）。
+  dismissed: false,
+});
+let otpPollTimer: ReturnType<typeof setInterval> | undefined;
+
+interface LinkStateRow {
+  phone: string;
+  linked: boolean;
+  linked_at: number | null;
+  unlinked_at: number | null;
+  payment_ref: string;
+  last_changed_by: string;
+}
+const linkStates = ref<LinkStateRow[]>([]);
+const linkStateError = ref("");
+const linkStateUpdatedAt = ref<number | null>(null);
+const linkBusy = ref("");
+const linkManualPhone = ref("");
+let linkPollTimer: ReturnType<typeof setInterval> | undefined;
+
+const linkStateUpdatedText = computed(() => {
+  if (!linkStateUpdatedAt.value) return "未刷新";
+  const d = new Date(linkStateUpdatedAt.value);
+  return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+});
+
+const linkSummaryText = computed(() => {
+  if (!linkStates.value.length) return "无记录";
+  const linked = linkStates.value.filter(r => r.linked).length;
+  const unlinked = linkStates.value.length - linked;
+  if (linked === 0) return `${unlinked} 个 unlinked`;
+  return `${linked} 个 linked / ${unlinked} 个 unlinked`;
+});
+
+const linkSummaryClass = computed(() => {
+  if (!linkStates.value.length) return "muted";
+  return linkStates.value.some(r => r.linked) ? "warn" : "ok";
+});
+
+const proxyIp = ref("");
+const proxyCountry = ref("");
+const proxyError = ref("");
+const rotatingIp = ref(false);
+
+async function loadCurrentProxy() {
+  try {
+    const r = await api.get<{ ip: string; country: string }>("/proxy/current");
+    proxyIp.value = r.data.ip || "";
+    proxyCountry.value = r.data.country || "";
+    proxyError.value = "";
+  } catch (e: any) {
+    proxyError.value = e?.response?.data?.detail || "未读到当前出口 IP（webshare 未启用？）";
+  }
+}
+
+interface AutoLoopState {
+  running: boolean;
+  iteration: number;
+  success_count: number;
+  fail_count: number;
+  consecutive_fail: number;
+  target_success: number;
+  max_consec_fail: number;
+  last_kind: string;
+  last_action: string;
+  last_email: string;
+  stop_reason: string;
+  ip_rotations: number;
+  scrap_marked: { email: string; kind: string; ts: number }[];
+  zone_list: string[];
+  current_zone: string;
+  zone_reg_fail_streak: number;
+  zone_ip_rotations: number;
+  total_zone_rotations: number;
+}
+const autoLoop = ref<AutoLoopState>({
+  running: false, iteration: 0, success_count: 0, fail_count: 0,
+  consecutive_fail: 0, target_success: 0, max_consec_fail: 0,
+  last_kind: "", last_action: "", last_email: "", stop_reason: "",
+  ip_rotations: 0, scrap_marked: [],
+  zone_list: [], current_zone: "",
+  zone_reg_fail_streak: 0, zone_ip_rotations: 0, total_zone_rotations: 0,
+});
+const autoLoopForm = ref({ target_success: 5, max_consec_fail: 5 });
+const autoLoopBusy = ref(false);
+let autoLoopPollTimer: ReturnType<typeof setInterval> | undefined;
+
+const autoLoopSummary = computed(() => {
+  if (!autoLoop.value.running) {
+    if (autoLoop.value.stop_reason) {
+      return `已停止 (${autoLoop.value.stop_reason})`;
+    }
+    return "未启动";
+  }
+  return `running · ${autoLoop.value.success_count}/${autoLoop.value.target_success} 成功 · ${autoLoop.value.fail_count} 失败`;
+});
+
+async function refreshAutoLoop() {
+  try {
+    const r = await api.get<AutoLoopState>("/auto-loop/status");
+    autoLoop.value = r.data;
+  } catch {}
+}
+
+async function startAutoLoop() {
+  autoLoopBusy.value = true;
+  try {
+    await api.post("/auto-loop/start", {
+      target_success: autoLoopForm.value.target_success,
+      max_consec_fail: autoLoopForm.value.max_consec_fail,
+      paypal: false,
+      gopay: true,
+      pay_only: false,
+      register_only: false,
+      register_mode: form.value.register_mode || "browser",
+    });
+    message.success("Auto Loop 已启动");
+    await refreshAutoLoop();
+    // 没活的 SSE 就开一个，让用户能看到子进程的日志和 [auto-loop] marker
+    if (!eventSource) openStream();
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || "启动失败");
+  } finally {
+    autoLoopBusy.value = false;
+  }
+}
+
+async function stopAutoLoop() {
+  autoLoopBusy.value = true;
+  try {
+    await api.post("/auto-loop/stop");
+    message.success("已发送停止信号");
+    await refreshAutoLoop();
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || "停止失败");
+  } finally {
+    autoLoopBusy.value = false;
+  }
+}
+
+async function rotateProxyIp() {
+  if (!confirm("确认切换出口 IP？会消耗 Webshare 月度替换额度。")) return;
+  rotatingIp.value = true;
+  proxyError.value = "";
+  try {
+    const r = await api.post<{ prev_ip: string; new_ip: string; country: string }>("/proxy/rotate-ip");
+    proxyIp.value = r.data.new_ip || "";
+    proxyCountry.value = r.data.country || "";
+    message.success(`IP 已切换：${r.data.prev_ip || "?"} → ${r.data.new_ip}`);
+  } catch (e: any) {
+    proxyError.value = e?.response?.data?.detail || "切换失败";
+    message.error(proxyError.value);
+  } finally {
+    rotatingIp.value = false;
+  }
+}
+
+const linkManualPhoneValid = computed(() => /^\d{6,15}$/.test(linkManualPhone.value.replace(/\D/g, "")));
+
+function formatLinkTs(ts: number | null | undefined): string {
+  if (!ts) return "—";
+  try { return new Date(Number(ts) * 1000).toLocaleString(); } catch { return String(ts); }
+}
+
+async function refreshLinkStates() {
+  linkStateError.value = "";
+  try {
+    const r = await api.get<{ items: LinkStateRow[] }>("/gopay/link-state");
+    linkStates.value = r.data.items || [];
+    linkStateUpdatedAt.value = Date.now();
+  } catch (e: any) {
+    linkStateError.value = e?.response?.data?.detail || e?.message || "拉取失败";
+  }
+}
+
+async function setLinkState(phone: string, linked: boolean) {
+  const digits = (phone || "").replace(/\D/g, "");
+  if (!digits) {
+    message.warning("手机号为空");
+    return;
+  }
+  linkBusy.value = digits;
+  try {
+    await api.post("/gopay/link-state/set", {
+      phone: digits,
+      linked,
+      source: "webui_manual",
+    });
+    message.success(linked ? `已标记 ${digits} 为 linked` : `已 unlink ${digits}`);
+    if (linkManualPhone.value.replace(/\D/g, "") === digits) {
+      linkManualPhone.value = "";
+    }
+    await refreshLinkStates();
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || "更新失败");
+  } finally {
+    linkBusy.value = "";
+  }
+}
 
 function onGoPayToggle(v: boolean) {
   if (v) form.value.paypal = false;
@@ -380,7 +792,14 @@ const status = ref<RunStatus>({
 });
 
 const cmdPreview = ref("xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal");
-const lines = ref<{ seq: number; ts: number; line: string }[]>([]);
+interface LogEntry {
+  seq: number;
+  ts: number;
+  line: string;
+  cls?: string;
+  tsLabel?: string;
+}
+const lines = ref<LogEntry[]>([]);
 const starting = ref(false);
 const stopping = ref(false);
 const configHealth = ref<ConfigHealthResponse | null>(null);
@@ -534,6 +953,19 @@ function logClass(line: string) {
   return "";
 }
 
+// 滚到底部用 RAF 去重：高频日志推送时单帧只滚一次，不再每行 nextTick
+let _scrollPending = false;
+function scheduleScrollToBottom() {
+  if (!autoScroll.value || _scrollPending) return;
+  _scrollPending = true;
+  requestAnimationFrame(() => {
+    _scrollPending = false;
+    if (autoScroll.value && streamEl.value) {
+      streamEl.value.scrollTop = streamEl.value.scrollHeight;
+    }
+  });
+}
+
 // ── 库存：选择 + 验证 + 删除 ─────────────────────────────────
 function checkLabel(s: InventoryAccount["last_check_status"]) {
   if (s === "valid") return "✓ 有效";
@@ -562,6 +994,72 @@ function toggleSelectAll() {
     selectedIds.value = new Set();
   } else {
     selectedIds.value = new Set(inventory.value.accounts.map(a => a.id).filter(Boolean));
+  }
+}
+
+// ── 账号库存筛选 ───────────────────────────────────────────────
+const invFilters = ref({
+  search: "",
+  plan: "",
+  check: "",
+  pay: "",
+  rt: "",
+  cpa: "",
+});
+
+const hasActiveFilter = computed(() =>
+  Object.values(invFilters.value).some(v => v !== "")
+);
+
+const filteredAccounts = computed<InventoryAccount[]>(() => {
+  const f = invFilters.value;
+  const s = (f.search || "").trim().toLowerCase();
+  return inventory.value.accounts.filter(acc => {
+    if (s && !(acc.email || "").toLowerCase().includes(s)) return false;
+    if (f.plan && acc.plan_tag !== f.plan) return false;
+    if (f.check) {
+      if (f.check === "unchecked") {
+        if (acc.last_check_status !== "") return false;
+      } else if (acc.last_check_status !== f.check) return false;
+    }
+    if (f.pay && acc.pay_state !== f.pay) return false;
+    if (f.rt && acc.rt_state !== f.rt) return false;
+    if (f.cpa) {
+      if (f.cpa === "pushed" && !acc.cpa_pushed) return false;
+      if (f.cpa === "not_pushed" && acc.cpa_pushed) return false;
+    }
+    return true;
+  });
+});
+
+function resetInvFilters() {
+  invFilters.value = { search: "", plan: "", check: "", pay: "", rt: "", cpa: "" };
+}
+
+const allFilteredSelected = computed(() => {
+  const ids = filteredAccounts.value.map(a => a.id).filter(Boolean);
+  return ids.length > 0 && ids.every(id => selectedIds.value.has(id));
+});
+
+const selectedFilteredCount = computed(() => {
+  let n = 0;
+  for (const acc of filteredAccounts.value) {
+    if (selectedIds.value.has(acc.id)) n++;
+  }
+  return n;
+});
+
+function toggleSelectAllFiltered() {
+  const ids = filteredAccounts.value.map(a => a.id).filter(Boolean);
+  if (allFilteredSelected.value) {
+    // 反选：把当前筛选结果中的 id 从 selection 移除
+    const next = new Set(selectedIds.value);
+    for (const id of ids) next.delete(id);
+    selectedIds.value = next;
+  } else {
+    const next = new Set(selectedIds.value);
+    for (const id of ids) next.add(id);
+    selectedIds.value = next;
   }
 }
 const invalidIds = computed(() =>
@@ -627,6 +1125,63 @@ function confirmAndDelete(ids: number[], label: string) {
     },
   });
 }
+function _selectedEmails(): string[] {
+  return emailsForIds(Array.from(selectedIds.value)).filter(e => e && !e.startsWith("id="));
+}
+
+async function payOnlySelected() {
+  const emails = _selectedEmails();
+  if (!emails.length) { message.warning("没有选中账号"); return; }
+  const preview = emails.slice(0, 3).join(", ") + (emails.length > 3 ? `... 共 ${emails.length}` : "");
+  if (!confirm(`对 ${emails.length} 个选中账号跑 pay-only？\n${preview}\n\n模式：${form.value.gopay ? "GoPay" : (form.value.paypal ? "PayPal" : "Card")}`)) return;
+  starting.value = true;
+  try {
+    await api.post("/run/start", {
+      mode: "single",
+      paypal: form.value.paypal,
+      gopay: form.value.gopay,
+      pay_only: true,
+      register_only: false,
+      register_mode: form.value.register_mode || "browser",
+      target_emails: emails,
+    });
+    message.success(`已对 ${emails.length} 个账号启动 pay-only`);
+    await refreshStatus();
+    if (status.value.running) openStream();
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || "启动失败");
+  } finally {
+    starting.value = false;
+  }
+}
+
+async function rtOnlySelected() {
+  const emails = _selectedEmails();
+  if (!emails.length) { message.warning("没有选中账号"); return; }
+  const preview = emails.slice(0, 3).join(", ") + (emails.length > 3 ? `... 共 ${emails.length}` : "");
+  if (!confirm(`对 ${emails.length} 个选中账号跑 rt-only（只补 refresh_token，不付款）？\n${preview}`)) return;
+  starting.value = true;
+  try {
+    await api.post("/run/start", {
+      mode: "single",
+      paypal: false,
+      gopay: false,
+      pay_only: false,
+      register_only: false,
+      rt_only: true,
+      register_mode: form.value.register_mode || "browser",
+      target_emails: emails,
+    });
+    message.success(`已对 ${emails.length} 个账号启动 rt-only`);
+    await refreshStatus();
+    if (status.value.running) openStream();
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || "启动失败");
+  } finally {
+    starting.value = false;
+  }
+}
+
 function deleteSelected() {
   confirmAndDelete(Array.from(selectedIds.value), "删除选中");
 }
@@ -765,27 +1320,40 @@ function openStream() {
   eventSource.addEventListener("line", (e) => {
     try {
       const entry = JSON.parse((e as MessageEvent).data);
+      // 预计算渲染只读字段，避免每次 re-render 跑 regex / Date 构造，
+      // 5000+ 行循环时省下大量主线程时间
+      entry.cls = logClass(entry.line || "");
+      entry.tsLabel = formatTs(entry.ts);
+      Object.freeze(entry); // 阻止 Vue 把每行也代理成 reactive
       lines.value.push(entry);
-      if (lines.value.length > 5000) lines.value.splice(0, 1000);
-      if (autoScroll.value) {
-        nextTick(() => {
-          if (streamEl.value) streamEl.value.scrollTop = streamEl.value.scrollHeight;
-        });
-      }
+      if (lines.value.length > 1500) lines.value.splice(0, 500);
+      scheduleScrollToBottom();
     } catch {}
   });
   eventSource.addEventListener("otp_pending", () => {
+    if (otpDialog.value.dismissed) return; // 用户已手动关闭这次 run 的弹窗
     if (!otpDialog.value.open) {
       otpDialog.value.open = true;
       otpDialog.value.value = "";
+      otpDialog.value.autoFilled = false;
+      otpDialog.value.openedAt = Math.floor(Date.now() / 1000);
+      startOtpPolling();
     }
   });
   eventSource.addEventListener("done", async () => {
     eventSource?.close();
     eventSource = null;
     otpDialog.value.open = false;
+    otpDialog.value.dismissed = false; // 新一轮 run 重新允许弹窗
+    stopOtpPolling();
     await refreshStatus();
     await refreshInventory();
+    // Auto-loop 还在跑就重连 SSE，等 runner.start 启下一 iteration 的进程
+    if (autoLoop.value.running) {
+      setTimeout(() => {
+        if (autoLoop.value.running && !eventSource) openStream();
+      }, 1500);
+    }
   });
   eventSource.onerror = () => {
     // 连接断开，不自动 retry
@@ -810,6 +1378,7 @@ async function submitOtp() {
     await api.post("/run/otp", { otp: v });
     otpDialog.value.open = false;
     otpDialog.value.value = "";
+    stopOtpPolling();
     message.success("OTP 已提交");
   } catch (e: any) {
     message.error(e.response?.data?.detail || "提交失败");
@@ -818,12 +1387,58 @@ async function submitOtp() {
   }
 }
 
+function dismissOtpModal() {
+  otpDialog.value.open = false;
+  otpDialog.value.value = "";
+  otpDialog.value.dismissed = true;
+  stopOtpPolling();
+  message.info("已关闭 OTP 弹窗（这次 run 内不再自动弹）");
+}
+
+function startOtpPolling() {
+  stopOtpPolling();
+  otpPollTimer = setInterval(async () => {
+    if (!otpDialog.value.open || otpDialog.value.autoFilled) return;
+    try {
+      const r = await api.get("/whatsapp/latest-otp-session", {
+        params: { since: otpDialog.value.openedAt },
+      });
+      if (r.status === 200 && r.data?.otp) {
+        const code = String(r.data.otp);
+        otpDialog.value.value = code;
+        otpDialog.value.autoFilled = true;
+        // gopay.py 自己也在 polling /latest-otp，OTP 一旦进 wa_state 就被它取走了，
+        // 弹窗的 /run/otp 提交只是为了清后端 _otp_pending 标记 + 日志可见性。
+        // 不论提交成功与否，弹窗立刻关掉，避免残留。
+        otpDialog.value.open = false;
+        otpDialog.value.value = "";
+        // 关键：标 dismissed=true 阻止 SSE otp_pending 心跳（每 300ms 一次）
+        // 把模态框又弹回来。`done` 事件会自动 reset 给下一轮 run 用。
+        otpDialog.value.dismissed = true;
+        stopOtpPolling();
+        message.success(`OTP 自动填入并关闭：${code}（gopay 自取中）`);
+        // 后台 fire-and-forget，不阻塞、不影响关弹
+        api.post("/run/otp", { otp: code }).catch(() => {});
+      }
+    } catch {
+      // 静默；下一轮再试
+    }
+  }, 1500);
+}
+
+function stopOtpPolling() {
+  if (otpPollTimer) {
+    clearInterval(otpPollTimer);
+    otpPollTimer = undefined;
+  }
+}
+
 const isFreeMode = computed(() =>
   form.value.mode === "free_register" || form.value.mode === "free_backfill_rt"
 );
 
 watch(
-  () => [form.value.mode, form.value.paypal, form.value.gopay, form.value.pay_only, form.value.register_only, form.value.batch, form.value.workers, form.value.self_dealer, form.value.count],
+  () => [form.value.mode, form.value.paypal, form.value.gopay, form.value.pay_only, form.value.register_only, form.value.batch, form.value.workers, form.value.self_dealer, form.value.count, form.value.register_mode],
   () => {
     configHealth.value = null;
     refreshPreview();
@@ -858,13 +1473,21 @@ onMounted(async () => {
   }
   statusTimer = setInterval(refreshStatus, 5000);
   inventoryTimer = setInterval(refreshInventory, 15000);
+  refreshLinkStates();
+  linkPollTimer = setInterval(refreshLinkStates, 5000);
+  loadCurrentProxy();
+  refreshAutoLoop();
+  autoLoopPollTimer = setInterval(refreshAutoLoop, 4000);
 });
 
 onBeforeUnmount(() => {
   if (clockTimer) clearInterval(clockTimer);
   if (statusTimer) clearInterval(statusTimer);
   if (inventoryTimer) clearInterval(inventoryTimer);
+  if (linkPollTimer) clearInterval(linkPollTimer);
+  if (autoLoopPollTimer) clearInterval(autoLoopPollTimer);
   if (eventSource) eventSource.close();
+  stopOtpPolling();
 });
 </script>
 
@@ -905,6 +1528,97 @@ onBeforeUnmount(() => {
 .ctl-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .ctl-row.sub { padding-left: 8px; border-left: 2px solid var(--border-strong); }
 .ctl-row.toggles { margin-top: 4px; gap: 16px; flex-wrap: wrap; }
+.ctl-row.reg-mode { margin-top: 6px; gap: 12px; font-size: 12px; }
+.reg-mode-label { color: var(--fg-tertiary); }
+.reg-mode-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+.reg-mode-opt input { accent-color: var(--accent); }
+.reg-mode-opt.active { border-color: var(--accent); color: var(--accent); }
+
+.link-details {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+}
+.link-details > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  color: var(--fg-tertiary);
+}
+.link-details > summary::-webkit-details-marker { display: none; }
+.link-details > summary::before { content: "▸ "; color: var(--fg-tertiary); }
+.link-details[open] > summary::before { content: "▾ "; }
+.link-summary.muted { color: var(--fg-tertiary); }
+.link-summary.ok { color: var(--ok); }
+.link-summary.warn { color: var(--warn); font-weight: 700; }
+.link-refresh-btn { margin-left: auto; }
+.link-hint {
+  margin: 8px 0;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.link-hint em { color: var(--err); font-style: normal; }
+.link-error {
+  border: 1px solid var(--err);
+  color: var(--err);
+  padding: 6px 10px;
+  margin: 6px 0;
+  font-size: 12px;
+}
+.link-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.link-table th, .link-table td {
+  padding: 5px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.link-table th { color: var(--fg-tertiary); font-weight: normal; font-size: 11px; }
+.link-table td.ts { color: var(--fg-tertiary); white-space: nowrap; font-size: 11px; }
+.link-table td.muted { color: var(--fg-tertiary); }
+.link-table code { color: var(--accent); }
+.badge-linked { color: var(--ok); font-weight: 700; }
+.badge-unlinked { color: var(--fg-tertiary); }
+.link-empty-inline {
+  color: var(--fg-tertiary);
+  font-size: 12px;
+  padding: 8px 0;
+}
+.link-manual {
+  display: flex; gap: 6px; align-items: center;
+  margin-top: 6px; flex-wrap: wrap;
+}
+.link-manual-input {
+  flex: 1; min-width: 200px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  color: var(--fg-primary);
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+.link-manual-input:focus { border-color: var(--accent); outline: none; }
+.auto-loop-form, .auto-loop-running { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.auto-loop-form label { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--fg-tertiary); }
+.auto-loop-stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; }
+.auto-loop-stats .ok { color: var(--ok); }
+.auto-loop-stats .warn { color: var(--warn); }
+.auto-loop-last { font-size: 12px; color: var(--fg-secondary); margin-top: 4px; }
 .ctl-hint { color: var(--fg-tertiary); font-size: 11px; line-height: 1.6; margin: 4px 0 0; }
 .ctl-hint code { background: var(--bg-panel); padding: 1px 5px; border: 1px solid var(--border); font-size: 11px; }
 .ctl-label { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-secondary); min-width: 60px; }
@@ -1052,6 +1766,42 @@ onBeforeUnmount(() => {
 .inventory-stat strong {
   color: var(--fg-primary);
   font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.inventory-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  background: var(--bg-base);
+  border: 1px dashed var(--border);
+  font-size: 12px;
+}
+.inv-filter-input {
+  flex: 0 1 200px;
+  min-width: 140px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--fg-primary);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+.inv-filter-input:focus { border-color: var(--accent); outline: none; }
+.inv-filter-sel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--fg-primary);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.inv-filter-count {
+  color: var(--fg-tertiary);
+  margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
 .inventory-toolbar {
@@ -1232,6 +1982,27 @@ onBeforeUnmount(() => {
 }
 .otp-input:focus { border-color: var(--accent); }
 .otp-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
+.otp-modal { position: relative; }
+.otp-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-tertiary);
+  width: 28px;
+  height: 28px;
+  line-height: 1;
+  font-size: 18px;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
+}
+.otp-close:hover {
+  border-color: var(--err);
+  color: var(--err);
+}
+.otp-close:disabled { opacity: 0.4; cursor: not-allowed; }
 
 @media (max-width: 1024px) {
   .inventory-stats { grid-template-columns: 1fr; }

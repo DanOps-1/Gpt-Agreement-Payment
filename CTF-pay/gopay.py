@@ -82,8 +82,15 @@ GOPAY_PIN_CLIENT_ID_CHARGE = "47180a8e-f56e-11ed-a05b-0242ac120003-GWC"
 DEFAULT_TIMEOUT = 30
 LINK_RETRY_LIMIT = 2  # 406 "account already linked" retry
 LINK_RETRY_SLEEP_S = 12.0  # Midtrans 需要冷却 ~10s 才会让 406 → 201（实测）
-LINK_429_RETRY_LIMIT = 100
-LINK_429_RETRY_SLEEP_S = 0.5
+# 429 "There's a technical error" 风控触发条件：带 Authorization 的 SDK 路径
+# 在某些 IP / 高频场景必现。剥掉 Authorization 头同 endpoint 重发即返回 201
+# + activation_link_url（实测 + 反向工程参考实现确认）。
+LINK_BYPASS_BODY_HINTS = (
+    "technical error",
+    "too many",
+    "rate limit",
+    "rate_limit",
+)
 DEFAULT_OTP_REGEX = r"(?<!\d)(\d{6})(?!\d)"
 
 
@@ -407,30 +414,25 @@ class GoPayCharger:
     # ───── Step 7: Midtrans linking initiation ─────
 
     def _midtrans_init_linking(self, snap_token: str) -> str:
-        """POST snap/v3/accounts/{snap}/linking. Retries on 406 and 429."""
+        """POST snap/v3/accounts/{snap}/linking. Retries on 406, bypasses on 429."""
         url = f"https://app.midtrans.com/snap/v3/accounts/{snap_token}/linking"
         body = {
             "type": "gopay",
             "country_code": self.country_code,
             "phone_number": self.phone,
         }
-        headers = {
-            **self._midtrans_basic_auth(),
+        base_headers = {
             "Content-Type": "application/json",
             "Origin": "https://app.midtrans.com",
             "Referer": f"https://app.midtrans.com/snap/v4/redirection/{snap_token}",
         }
+        auth_headers = {**base_headers, **self._midtrans_basic_auth()}
         last_err: Optional[str] = None
-        retry_406_count = 0
-        retry_429_count = 0
-        while True:
-            r = self.ext.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
-            if r.status_code == 201:
-                data = r.json()
-                m = re.search(r"reference=([a-f0-9-]{36})", data.get("activation_link_url", ""))
-                if not m:
-                    raise GoPayError(f"midtrans linking 201 but no reference: {data}")
-                ref = m.group(1)
+        bypass_tried = False
+        for attempt in range(1, LINK_RETRY_LIMIT + 2):
+            r = self.ext.post(url, json=body, headers=auth_headers, timeout=DEFAULT_TIMEOUT)
+            ref = self._parse_linking_reference(r)
+            if ref:
                 self.log(f"[gopay] midtrans linking ok reference={ref}")
                 return ref
             if r.status_code == 429:
@@ -461,10 +463,43 @@ class GoPayCharger:
                 self.log(f"[gopay] midtrans linking 406 ({last_err}), 冷却 {LINK_RETRY_SLEEP_S}s 再重试 {retry_406_count}/{LINK_RETRY_LIMIT}")
                 time.sleep(LINK_RETRY_SLEEP_S)
                 continue
+            if not bypass_tried and self._linking_is_rate_limited(r):
+                bypass_tried = True
+                self.log(
+                    f"[gopay] midtrans linking 风控命中 status={r.status_code} body={r.text[:120]!r}，剥 Authorization 头重发",
+                )
+                rb = self.ext.post(url, json=body, headers=base_headers, timeout=DEFAULT_TIMEOUT)
+                ref = self._parse_linking_reference(rb)
+                if ref:
+                    self.log(f"[gopay] midtrans linking bypass ok reference={ref}")
+                    return ref
+                raise GoPayError(
+                    f"midtrans linking bypass 失败 status={rb.status_code} body={rb.text[:300]}",
+                )
             raise GoPayError(
                 f"midtrans linking unexpected status={r.status_code} body={r.text[:300]}",
             )
         raise GoPayError(f"midtrans linking exhausted retries: {last_err}")
+
+    @staticmethod
+    def _parse_linking_reference(r) -> Optional[str]:
+        if r.status_code != 201:
+            return None
+        try:
+            data = r.json()
+        except Exception:
+            return None
+        m = re.search(r"reference=([a-f0-9-]{36})", data.get("activation_link_url", ""))
+        if not m:
+            raise GoPayError(f"midtrans linking 201 but no reference: {data}")
+        return m.group(1)
+
+    @staticmethod
+    def _linking_is_rate_limited(r) -> bool:
+        if r.status_code == 429:
+            return True
+        text = (r.text or "").lower()
+        return any(h in text for h in LINK_BYPASS_BODY_HINTS)
 
     # ───── Step 8-12: GoPay linking ─────
 

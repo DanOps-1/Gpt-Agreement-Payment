@@ -82,6 +82,47 @@ def _parse_proxy(proxy_url: str):
     }
 
 
+def _page_text(page) -> str:
+    try:
+        return page.inner_text("body", timeout=3000)
+    except Exception:
+        return ""
+
+
+def _blocking_challenge_reason(page) -> str:
+    title = ""
+    try:
+        title = page.title() or ""
+    except Exception:
+        pass
+    url = getattr(page, "url", "") or ""
+    text = _page_text(page)
+    haystack = "\n".join([title, url, text]).lower()
+
+    if "just a moment" in haystack and ("cloudflare" in haystack or "verifying" in haystack):
+        return "Cloudflare challenge"
+    if "cf-turnstile" in haystack or "turnstile" in haystack:
+        return "Turnstile challenge"
+    if "verify you are human" in haystack or "verifying you are human" in haystack:
+        return "human verification challenge"
+    return ""
+
+
+def _raise_if_blocking_challenge(page, *, stage: str, screenshot_path) -> None:
+    reason = _blocking_challenge_reason(page)
+    if not reason:
+        return
+    try:
+        page.screenshot(path=str(screenshot_path))
+    except Exception:
+        pass
+    raise RuntimeError(
+        f"{reason} detected during {stage}; saved diagnostic screenshot to {screenshot_path}. "
+        "This is a target-site verification page, not a missing form selector. "
+        "Retry later, change network conditions, or complete verification manually if supported."
+    )
+
+
 def browser_register(cfg, mail_provider) -> dict:
     """
     用真实浏览器走注册流程。
@@ -145,11 +186,21 @@ def browser_register(cfg, mail_provider) -> dict:
             # [1] 打开 ChatGPT 首页，点 "Sign up for free"
             logger.info("[browser-reg] 打开 ChatGPT 首页 ...")
             page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=60000)
+            _raise_if_blocking_challenge(
+                page,
+                stage="opening ChatGPT home",
+                screenshot_path="/tmp/browser_reg_cloudflare_challenge.png",
+            )
             # 等 React 渲染完成 + Sign up 按钮可交互
             try:
                 page.wait_for_selector('button[data-testid="signup-button"], a[data-testid="signup-button"]',
                                        state='visible', timeout=20000)
             except Exception:
+                _raise_if_blocking_challenge(
+                    page,
+                    stage="waiting for signup button",
+                    screenshot_path="/tmp/browser_reg_cloudflare_challenge.png",
+                )
                 pass
             time.sleep(3)
 
@@ -211,6 +262,84 @@ def browser_register(cfg, mail_provider) -> dict:
                             pass
             logger.info(f"[browser-reg] 当前 URL: {page.url[:120]}")
             page.screenshot(path="/tmp/browser_reg_before_email.png")
+            _raise_if_blocking_challenge(
+                page,
+                stage="before email form",
+                screenshot_path="/tmp/browser_reg_cloudflare_challenge.png",
+            )
+
+            # [2a] 新版 OpenAI（2026-05 起）: 点 Sign up 后不跳 auth.openai.com，
+            # 而是在 chatgpt.com 上弹「Log in or sign up」modal，里面是
+            # Continue with Google / Apple / Phone + OR + Continue with email。
+            # 旧脚本直接等 input[type=email] 会 30s 超时，所以先识别 modal、
+            # 关掉 Google One-Tap、再点「Continue with email」。
+            try:
+                # Google One-Tap iframe（标题含 "Sign in with Google"）会盖在 modal 上面，
+                # 先关掉以免拦截点击。
+                for ot_sel in [
+                    'iframe[src*="accounts.google.com/gsi"]',
+                    'div#credential_picker_container button[aria-label*="Close"]',
+                    '[aria-label="Close"][role="button"]',
+                ]:
+                    try:
+                        f = page.query_selector(ot_sel)
+                        if f and f.is_visible():
+                            if "iframe" in ot_sel:
+                                # iframe 自己点不到，直接 JS 删掉容器
+                                page.evaluate(
+                                    "() => document.querySelectorAll("
+                                    "'iframe[src*=\"accounts.google.com/gsi\"]')"
+                                    ".forEach(el => el.remove())"
+                                )
+                            else:
+                                try:
+                                    f.click(timeout=2000)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            if not page.query_selector('input[type="email"], input[name="email"]'):
+                # 如果当前没看到 email 输入框，找 modal 里的 email 入口按钮再点一次。
+                # 顺序：先精确匹配 "Continue with email"，再宽松到包含 email 的按钮。
+                modal_email_clicked = False
+                for sel in [
+                    'button:has-text("Continue with email")',
+                    'button:has-text("Sign up with email")',
+                    'a:has-text("Continue with email")',
+                    'a:has-text("Sign up with email")',
+                    'button:has-text("Email")',
+                    'button[data-testid*="email"]',
+                ]:
+                    try:
+                        btns = page.query_selector_all(sel)
+                    except Exception:
+                        continue
+                    for b in btns:
+                        try:
+                            if not b.is_visible():
+                                continue
+                            label = (b.inner_text() or "").lower().strip()
+                            # 排除 Google/Apple/Phone 这些社交按钮里碰巧含 "email" 的字样
+                            if any(skip in label for skip in ("google", "apple", "phone")):
+                                continue
+                            try:
+                                b.scroll_into_view_if_needed(timeout=2000)
+                            except Exception:
+                                pass
+                            try:
+                                b.click(timeout=5000)
+                            except Exception:
+                                b.evaluate("el => el.click()")
+                            modal_email_clicked = True
+                            logger.info(f"[browser-reg] 点击 modal email 入口 ({sel}): {label[:40]}")
+                            break
+                        except Exception:
+                            continue
+                    if modal_email_clicked:
+                        break
 
             # [2] 填邮箱（click + fill 分步，React 重渲染可能让 handle 失效 → 每步重新 query）
             logger.info("[browser-reg] 填邮箱 ...")
@@ -399,6 +528,32 @@ def browser_register(cfg, mail_provider) -> dict:
                 return any(kw in blob for kw in ("birth", "birthday", "dob",
                                                   "mm/dd/yyyy", "mm / dd / yyyy"))
 
+            def _is_name_input(meta: dict) -> bool:
+                blob = " ".join([meta.get("name",""), meta.get("placeholder",""),
+                                  meta.get("ariaLabel",""), meta.get("label","")]).lower()
+                # 老版 about-you 用 "age" 数字框；新版用 "Full name" + "Birthday"
+                return any(kw in blob for kw in ("name", "first", "last", "full",
+                                                  "given", "family", "age"))
+
+            def _looks_like_chat_ui() -> bool:
+                """chatgpt.com 主页的特征：右下角 chat 输入框 + sidebar 上的「New chat」。
+                这种页面不是 about-you 表单，看到 2 个 input 也不能瞎填。"""
+                try:
+                    return bool(page.evaluate('''() => {
+                        const url = location.href;
+                        if (url.includes("/about-you")) return false;
+                        // chat 输入框：textarea 或 contenteditable，placeholder 含 "Ask"
+                        const ta = document.querySelector(
+                            'textarea[placeholder*="Ask"], div[contenteditable="true"]'
+                        );
+                        // 左侧 New chat 链接
+                        const nc = Array.from(document.querySelectorAll("a, button"))
+                            .some(el => /new chat/i.test(el.textContent || ""));
+                        return !!(ta || nc);
+                    }'''))
+                except Exception:
+                    return False
+
             full_name_input = None
             birthday_input = None
             birthday_meta = None
@@ -407,10 +562,11 @@ def browser_register(cfg, mail_provider) -> dict:
                 visible_metas = [m for m in metas if m["visible"]
                                   and m["type"] not in ("hidden","submit","button",
                                                          "checkbox","radio","password")]
-                # 先挑 Birthday，剩下的看作 name
+                # 先挑 Birthday + 关键字命中的 name input — 双方关键字都要命中才认。
                 bd = next((m for m in visible_metas if _is_birthday(m)), None)
                 name_m = next((m for m in visible_metas
                                 if m is not bd
+                                and _is_name_input(m)
                                 and not _is_birthday(m)), None)
                 if bd and name_m:
                     all_inputs_el = page.query_selector_all('input')
@@ -421,15 +577,29 @@ def browser_register(cfg, mail_provider) -> dict:
                                 f"birthday.idx={bd['idx']} type={bd['type']} "
                                 f"placeholder={bd['placeholder'][:30]!r}")
                     break
-                # 兼容老版 age：2 个 input 且都不匹配 birthday
-                if not bd and len(visible_metas) >= 2:
+                # 兼容老版 age：2 个 input + 至少一个命中 name 关键字 + URL 不在
+                # chatgpt.com 主聊天页（避免把 chat textarea + search 当表单瞎填）。
+                if (
+                    not bd
+                    and len(visible_metas) >= 2
+                    and any(_is_name_input(m) for m in visible_metas)
+                    and not _looks_like_chat_ui()
+                ):
                     all_inputs_el = page.query_selector_all('input')
                     full_name_input = all_inputs_el[visible_metas[0]["idx"]]
                     birthday_input = all_inputs_el[visible_metas[1]["idx"]]
                     birthday_meta = visible_metas[1]
                     logger.info(f"[browser-reg] 表单 (legacy age): {len(visible_metas)} inputs")
                     break
-                if "chatgpt.com" in page.url and "auth" not in page.url:
+                # 已经在 chatgpt.com 主页（非 about-you 子路径），且看不到 about-you 表单
+                # —— 注册可能已直接完成，跳出循环让外层去判断 accessToken。
+                if (
+                    "chatgpt.com" in page.url
+                    and "auth" not in page.url
+                    and "/about-you" not in page.url
+                    and _looks_like_chat_ui()
+                ):
+                    logger.info("[browser-reg] URL 在 chatgpt.com 主页，无 about-you 表单 → 跳过表单填写")
                     break
                 if attempt == 5:
                     page.screenshot(path="/tmp/browser_reg_about_you_wait.png")

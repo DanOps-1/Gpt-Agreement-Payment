@@ -20,6 +20,10 @@ class StartRequest(BaseModel):
     pay_only: bool = False
     gopay: bool = False
     count: int = 0  # free_register 模式下注册次数（0 = 无限）
+    register_mode: str = Field(default="browser", pattern="^(browser|protocol)$")
+    # 选中账号定向操作：配合 pay_only 或 rt_only
+    target_emails: list[str] = []
+    rt_only: bool = False
 
 
 class OTPRequest(BaseModel):

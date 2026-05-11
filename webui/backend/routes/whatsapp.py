@@ -7,7 +7,7 @@ from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from ..auth import CurrentUser
-from .. import wa_relay
+from .. import runner, wa_relay
 
 
 router = APIRouter(prefix="/api/whatsapp", tags=["whatsapp"])
@@ -21,6 +21,10 @@ class StartRequest(BaseModel):
 
 class SettingsRequest(BaseModel):
     engine: str = ""
+
+
+class IngestRequest(BaseModel):
+    otp: str
 
 
 def _check_relay_token(token: str = "", x_wa_relay_token: str = "") -> None:
@@ -92,6 +96,50 @@ def latest_otp(
     x_wa_relay_token: str = Header(default=""),
 ):
     _check_relay_token(token=token, x_wa_relay_token=x_wa_relay_token)
+    item = wa_relay.latest_otp(since=since)
+    if not item:
+        response.status_code = 204
+        return None
+    return item
+
+
+@router.post("/ingest")
+def ingest_otp(
+    req: IngestRequest,
+    token: str = "",
+    x_wa_relay_token: str = Header(default=""),
+):
+    _check_relay_token(token=token, x_wa_relay_token=x_wa_relay_token)
+    if not runner.status().get("otp_pending"):
+        raise HTTPException(
+            status_code=409,
+            detail="OTP API closed (no OTP currently requested by pipeline)",
+        )
+    try:
+        item = wa_relay.submit_manual_otp(req.otp)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "item": item}
+
+
+@router.get("/ingest-info")
+def ingest_info(user: str = CurrentUser):
+    return {
+        "path": "/api/whatsapp/ingest",
+        "method": "POST",
+        "token": wa_relay.relay_token(),
+        "header_name": "X-WA-Relay-Token",
+        "query_name": "token",
+        "active": bool(runner.status().get("otp_pending")),
+    }
+
+
+@router.get("/latest-otp-session")
+def latest_otp_session(
+    response: Response,
+    since: float = 0.0,
+    user: str = CurrentUser,
+):
     item = wa_relay.latest_otp(since=since)
     if not item:
         response.status_code = 204

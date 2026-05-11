@@ -12,6 +12,9 @@ from .backend.routes import inventory as inventory_routes
 from .backend.routes import run as run_routes
 from .backend.routes import cloudflare_kv as cf_kv_routes
 from .backend.routes import whatsapp as whatsapp_routes
+from .backend.routes import link_state as link_state_routes
+from .backend.routes import proxy as proxy_routes
+from .backend.routes import auto_loop as auto_loop_routes
 
 
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
@@ -29,6 +32,9 @@ def create_app() -> FastAPI:
     app.include_router(run_routes.router)
     app.include_router(cf_kv_routes.router)
     app.include_router(whatsapp_routes.router)
+    app.include_router(link_state_routes.router)
+    app.include_router(proxy_routes.router)
+    app.include_router(auto_loop_routes.router)
 
     @app.get("/api/healthz")
     def healthz():

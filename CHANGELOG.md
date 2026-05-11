@@ -4,6 +4,17 @@
 
 ---
 
+## GoPay 支付 429 风控 bypass
+
+`CTF-pay/gopay.py::_midtrans_init_linking` 增加风控绕过路径：
+
+- **触发条件**：Midtrans `POST /snap/v3/accounts/{snap}/linking` 返回 429，或 body 含 `technical error` / `too many` / `rate limit` 等关键字（部分 IP / 高频场景必现）
+- **bypass 做法**：同 endpoint 同 body 重发一次，但**剥掉 `Authorization: Basic …` 头**。不带 Auth 的请求绕过了 Midtrans 端的 SDK 风控分支，直接返回 `201 + activation_link_url`，下游 `validate-reference / user-consent / OTP / PIN` 流程不变
+- **失败兜底**：bypass 也失败时抛 `GoPayError("midtrans linking bypass 失败 …")`，方便 daemon 层走重试 / 换 IP 逻辑
+- 测试覆盖：`test_linking_429_bypass_drops_authorization` / `test_linking_200_with_technical_error_body_triggers_bypass` / `test_linking_429_bypass_also_fails_raises`
+
+---
+
 ## [0074642] webui 账号面板大升级 + CPA / 注册链路多处修复
 
 > commit message 里漏写了**运行时数据 JSONL → SQLite 大迁移**，这里补全完整范围。详见 `docs/architecture.md` 191 行起的 SQLite 存储说明。

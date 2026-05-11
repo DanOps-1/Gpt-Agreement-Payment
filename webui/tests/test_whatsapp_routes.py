@@ -164,3 +164,158 @@ def test_whatsapp_start_error_returns_400(client, monkeypatch):
     r = client.post("/api/whatsapp/start", json={"mode": "qr"})
     assert r.status_code == 400
     assert "boom" in r.json()["detail"]
+
+
+def test_whatsapp_ingest_rejects_missing_token(client):
+    r = client.post("/api/whatsapp/ingest", json={"otp": "123456"})
+    assert r.status_code == 403
+
+
+def test_whatsapp_ingest_rejects_wrong_token(client):
+    r = client.post(
+        "/api/whatsapp/ingest",
+        json={"otp": "123456"},
+        headers={"X-WA-Relay-Token": "definitely-not-the-real-token"},
+    )
+    assert r.status_code == 403
+
+
+def _set_otp_pending(value: bool) -> None:
+    import webui.backend.runner as runner_mod
+    runner_mod._otp_pending = value
+
+
+def test_whatsapp_ingest_rejects_empty_otp(client):
+    from webui.backend import wa_relay
+
+    token = wa_relay.relay_token()
+    _set_otp_pending(True)
+    try:
+        r = client.post(
+            f"/api/whatsapp/ingest?token={token}",
+            json={"otp": "no-digits-here"},
+        )
+    finally:
+        _set_otp_pending(False)
+    assert r.status_code == 400
+    assert "OTP" in r.json()["detail"]
+
+
+def test_whatsapp_ingest_rejects_when_no_otp_pending(client):
+    from webui.backend import wa_relay
+
+    token = wa_relay.relay_token()
+    _set_otp_pending(False)
+    r = client.post(
+        "/api/whatsapp/ingest",
+        json={"otp": "246810"},
+        headers={"X-WA-Relay-Token": token},
+    )
+    assert r.status_code == 409
+    assert "closed" in r.json()["detail"].lower()
+
+
+def test_whatsapp_ingest_stores_otp_for_latest_endpoint(client):
+    from webui.backend import wa_relay
+
+    token = wa_relay.relay_token()
+    _set_otp_pending(True)
+    try:
+        r = client.post(
+            "/api/whatsapp/ingest",
+            json={"otp": "246810"},
+            headers={"X-WA-Relay-Token": token},
+        )
+    finally:
+        _set_otp_pending(False)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["item"]["otp"] == "246810"
+
+    r2 = client.get(f"/api/whatsapp/latest-otp?token={token}")
+    assert r2.status_code == 200
+    assert r2.json()["otp"] == "246810"
+
+
+def test_whatsapp_ingest_strips_non_digits(client):
+    from webui.backend import wa_relay
+
+    token = wa_relay.relay_token()
+    _set_otp_pending(True)
+    try:
+        r = client.post(
+            "/api/whatsapp/ingest",
+            json={"otp": "your code is 9-9-8-7-7-7"},
+            headers={"X-WA-Relay-Token": token},
+        )
+    finally:
+        _set_otp_pending(False)
+    assert r.status_code == 200
+    assert r.json()["item"]["otp"] == "998777"
+
+
+def test_whatsapp_ingest_info_requires_auth(client):
+    r = client.get("/api/whatsapp/ingest-info")
+    assert r.status_code == 401
+
+
+def test_whatsapp_ingest_info_returns_token_and_path(client):
+    _login(client)
+
+    from webui.backend import wa_relay
+    expected = wa_relay.relay_token()
+
+    _set_otp_pending(True)
+    try:
+        r = client.get("/api/whatsapp/ingest-info")
+    finally:
+        _set_otp_pending(False)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["path"] == "/api/whatsapp/ingest"
+    assert body["method"] == "POST"
+    assert body["token"] == expected
+    assert body["header_name"] == "X-WA-Relay-Token"
+    assert body["query_name"] == "token"
+    assert body["active"] is True
+
+
+def test_whatsapp_ingest_info_active_false_when_idle(client):
+    _login(client)
+    _set_otp_pending(False)
+    r = client.get("/api/whatsapp/ingest-info")
+    assert r.status_code == 200
+    assert r.json()["active"] is False
+
+
+def test_whatsapp_latest_otp_session_requires_auth(client):
+    r = client.get("/api/whatsapp/latest-otp-session")
+    assert r.status_code == 401
+
+
+def test_whatsapp_latest_otp_session_returns_204_when_empty(client):
+    _login(client)
+    r = client.get("/api/whatsapp/latest-otp-session")
+    assert r.status_code == 204
+
+
+def test_whatsapp_latest_otp_session_returns_latest_after_ingest(client):
+    _login(client)
+    from webui.backend import wa_relay
+
+    token = wa_relay.relay_token()
+    _set_otp_pending(True)
+    try:
+        r = client.post(
+            "/api/whatsapp/ingest",
+            json={"otp": "557799"},
+            headers={"X-WA-Relay-Token": token},
+        )
+        assert r.status_code == 200
+    finally:
+        _set_otp_pending(False)
+
+    r2 = client.get("/api/whatsapp/latest-otp-session")
+    assert r2.status_code == 200
+    assert r2.json()["otp"] == "557799"

@@ -11,4 +11,15 @@ def current_user(session_id: str | None = Cookie(default=None)) -> str:
     return user
 
 
+def current_user_optional(session_id: str | None = Cookie(default=None)) -> str | None:
+    """Return the logged-in user if any, otherwise None (no exception).
+
+    Used by endpoints that accept either a session cookie OR a separate token
+    auth path; the route then decides which paths are acceptable.
+    """
+    if not session_id:
+        return None
+    return get_db().lookup_session(session_id)
+
+
 CurrentUser = Depends(current_user)

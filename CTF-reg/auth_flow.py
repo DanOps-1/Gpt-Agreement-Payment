@@ -1169,6 +1169,30 @@ class AuthFlow:
         self.session = create_http_session(proxy=self.config.proxy, impersonate=imp)
         return True
 
+    @staticmethod
+    def _datadog_trace_headers() -> dict:
+        """生成 Datadog APM 追踪头。
+
+        OpenAI 前端集成 Datadog RUM，所有真实浏览器请求都带这 6 个头；
+        缺失会被风控判定为非浏览器会话，OTP 邮件等敏感操作会被 silent-drop
+        （接口返 200 但邮件不下发）。
+
+        参考 https://github.com/zc-zhangchen/any-auto-register
+        platforms/chatgpt/utils.py:generate_datadog_trace（MIT）。
+        """
+        trace_id = str(random.getrandbits(64))
+        parent_id = str(random.getrandbits(64))
+        trace_hex = format(int(trace_id), "016x")
+        parent_hex = format(int(parent_id), "016x")
+        return {
+            "traceparent": f"00-0000000000000000{trace_hex}-{parent_hex}-01",
+            "tracestate": "dd=s:1;o:rum",
+            "x-datadog-origin": "rum",
+            "x-datadog-parent-id": parent_id,
+            "x-datadog-sampling-priority": "1",
+            "x-datadog-trace-id": trace_id,
+        }
+
     def _common_headers(self, referer: str = "https://chatgpt.com/") -> dict:
         """
         构造通用请求头。
@@ -1177,6 +1201,7 @@ class AuthFlow:
         - Origin 必须与 Referer 同源（尤其 auth.openai.com 的状态机接口），
           否则容易触发 invalid_state / 风控分支。
         - 在 auth.openai.com 域下，尽量补充 oai-device-id，提升状态机连续性。
+        - 全请求注入 Datadog trace 头，避免 OTP silent-drop。
         """
         origin = "https://chatgpt.com"
         try:
@@ -1203,6 +1228,7 @@ class AuthFlow:
             if device_id:
                 headers["oai-device-id"] = device_id
 
+        headers.update(self._datadog_trace_headers())
         return headers
 
     # ── Step 1: 检查代理连通性 ──
@@ -1490,11 +1516,7 @@ class AuthFlow:
     # ── Step 7: 发送 OTP ──
     def send_otp(self):
         logger.info("[6/10] 发送 OTP...")
-        headers = {
-            "referer": "https://auth.openai.com/create-account/password",
-            "accept": "application/json",
-            "User-Agent": USER_AGENT,
-        }
+        headers = self._common_headers("https://auth.openai.com/create-account/password")
         if self._last_sentinel_token:
             headers["openai-sentinel-token"] = self._last_sentinel_token
         # zhuce6 用 GET /api/accounts/email-otp/send
@@ -2298,7 +2320,7 @@ class AuthFlow:
             refresh_only_mode = self._env_flag("OAUTH_REFRESH_ONLY", "0")
             pre_exchange_default = "1" if refresh_only_mode else "0"
             pre_exchange = self._env_flag("OAUTH_EXCHANGE_BEFORE_CALLBACK", pre_exchange_default)
-            if pre_exchange:
+            if pre_exchange and not self._env_flag("SKIP_OAUTH_TOKEN_EXCHANGE", "0"):
                 self.oauth_token_exchange(continue_url, continue_url)
             callback_url, final_url = self.follow_redirect_chain(continue_url)
             if (not callback_url) and final_url and ("/workspace" in final_url):
@@ -2316,7 +2338,8 @@ class AuthFlow:
         # 可选 token 交换
         if callback_url or continue_url:
             self.fetch_client_auth_session_dump("pre_oauth_exchange_register")
-            self.oauth_token_exchange(callback_url or "", continue_url or "")
+            if not self._env_flag("SKIP_OAUTH_TOKEN_EXCHANGE", "0"):
+                self.oauth_token_exchange(callback_url or "", continue_url or "")
             if (not self.result.refresh_token) and self._env_flag("OAUTH_CODEX_RT_EXCHANGE", "1"):
                 self.oauth_codex_rt_exchange(mail_provider=mail_provider)
             if (not self.result.refresh_token) and self._env_flag("OAUTH_SECONDARY_AUTHORIZE_EXCHANGE", "0"):

@@ -589,14 +589,25 @@ class RegistrationError(RuntimeError):
     pass
 
 
-def register(cardw_config_path, proxy=None, python="python3", timeout=600, browser: bool = True):
+def register(cardw_config_path, proxy=None, python="python3", timeout=600,
+             browser: bool | None = None):
     """注册一个新 ChatGPT 账号。
 
-    browser=True 时走 Camoufox 真浏览器注册流程（Turnstile 真实执行，避免账号被风控）。
-    browser=False 时走原 HTTP 协议注册（快但容易被标记 bot）。
+    `browser` 优先级：显式参数 > `WEBUI_REG_MODE` 环境变量 > 默认 True。
+    `WEBUI_REG_MODE=protocol` 走 `auth_flow.AuthFlow.run_register`（HTTP
+    直连，sentinel + OTP 协议链路），`=browser` 走 Camoufox/Playwright。
+    WebUI 在 Run 页加了切换按钮，每次启动 pipeline 时把选择透传成环境变量。
 
     返回 dict: {email, session_token, access_token, device_id, ...}
     """
+    if browser is None:
+        mode = (os.environ.get("WEBUI_REG_MODE") or "").strip().lower()
+        if mode in ("protocol", "http", "api", "auth_flow"):
+            browser = False
+        elif mode in ("browser", "camoufox", "playwright"):
+            browser = True
+        else:
+            browser = True
     cardw_config_path = str(Path(cardw_config_path).resolve())
     auth_bundle_dir = str(CARDW_DIR)
 
@@ -1328,7 +1339,8 @@ def _select_recent_registered_account_for_pay_only() -> dict | None:
 
 
 def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
-             gopay_otp_file=None, timeout_pay=600, prefer_recent=True):
+             gopay_otp_file=None, timeout_pay=600, prefer_recent=True,
+             target_email: str = ""):
     """Retry payment only.
 
     Default behavior is now:
@@ -1340,7 +1352,19 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
     This preserves the old config-token path while preventing freshly
     registered-but-unpaid accounts from being wasted.
     """
-    account = _select_recent_registered_account_for_pay_only() if prefer_recent else None
+    if target_email:
+        # 显式指定账号——不走 consumed 过滤，让用户对选中行操作（即使曾经付费过
+        # 也允许重试，便于测试）。读不到时回退正常逻辑。
+        target_norm = _norm_email(target_email)
+        row = get_db().find_latest_registered_account(target_norm) or None
+        if row:
+            account = row
+            print(f"[pay-only] 使用指定账号: {target_norm}")
+        else:
+            print(f"[pay-only] ⚠ 指定账号 {target_norm} 在 DB 没找到，回退默认逻辑")
+            account = _select_recent_registered_account_for_pay_only() if prefer_recent else None
+    else:
+        account = _select_recent_registered_account_for_pay_only() if prefer_recent else None
     email = _norm_email(account.get("email")) if account else ""
     try:
         card_cfg = _read_card_cfg(card_config_path)
@@ -1395,6 +1419,162 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         record["payment"] = {"status": "error", "email": email, "error": str(e)[:200]}
         _append_result(record)
         raise
+
+
+# ──────────────────────────────────────────────
+# RT-only：对已注册账号补抓 refresh_token（不付款）
+# ──────────────────────────────────────────────
+
+
+def rt_only_for_email(card_config_path: str, target_email: str) -> dict:
+    """对单个 email 跑 RT 交换：用 DB 里现有 password/session 走 Codex OAuth
+    拿 refresh_token，写回 registered_accounts。不会付款不会改账号 plan。
+    """
+    target = _norm_email(target_email)
+    if not target:
+        return {"status": "no_email"}
+
+    account = get_db().find_latest_registered_account(target) or {}
+    if not account:
+        print(f"[rt-only] ⚠ DB 找不到账号: {target}")
+        return {"status": "no_account", "email": target}
+
+    if account.get("refresh_token"):
+        print(f"[rt-only] {target} 已有 refresh_token (len={len(account['refresh_token'])}), 跳过")
+        return {"status": "already_has_rt", "email": target}
+
+    # 借 card.py 的 RT 交换函数。card.py top-level 副作用较大但只需 import 一次。
+    sys.path.insert(0, str(CARD_DIR))
+    try:
+        from card import (
+            _exchange_refresh_token_with_session,
+            _build_proxy_url_from_cfg,
+            _codex_oauth_client_id_from_config,
+        )
+    except Exception as e:
+        print(f"[rt-only] import card.py 失败: {e}")
+        return {"status": "import_failed", "error": str(e)[:200]}
+    finally:
+        try: sys.path.remove(str(CARD_DIR))
+        except ValueError: pass
+
+    try:
+        with open(card_config_path, "r", encoding="utf-8") as f:
+            card_cfg = json.load(f)
+    except Exception as e:
+        return {"status": "read_card_cfg_failed", "error": str(e)[:200]}
+
+    mail_cfg = {}
+    reg_cfg_path = ROOT / "CTF-reg" / "config.paypal-proxy.json"
+    if reg_cfg_path.exists():
+        try:
+            with open(reg_cfg_path, "r", encoding="utf-8") as f:
+                mail_cfg = (json.load(f).get("mail") or {})
+        except Exception:
+            mail_cfg = {}
+
+    if not mail_cfg:
+        print(f"[rt-only] 缺 mail_cfg（{reg_cfg_path}），无法接收 OTP")
+        return {"status": "no_mail_cfg", "email": target}
+
+    print(f"[rt-only] 启动 Codex OAuth → email={target} password={'有' if account.get('password') else '无(passwordless)'}")
+    try:
+        rt = _exchange_refresh_token_with_session(
+            email=target,
+            password=account.get("password", "") or "",
+            mail_cfg=mail_cfg,
+            proxy_url=_build_proxy_url_from_cfg(card_cfg.get("proxy")),
+            oauth_client_id=_codex_oauth_client_id_from_config(card_cfg),
+        )
+    except Exception as e:
+        print(f"[rt-only] 异常: {type(e).__name__}: {str(e)[:200]}")
+        return {"status": "exception", "error": str(e)[:200], "email": target}
+
+    if not rt:
+        print(f"[rt-only] ❌ {target} 未获得 refresh_token")
+        return {"status": "no_rt", "email": target}
+
+    # 写回 DB。注意：find_latest_registered_account() 的 SELECT 不返 id 字段，
+    # 所以 account['id'] 是空。这里直接按 email 查最新一行的 id 再 UPDATE。
+    try:
+        db = get_db()
+        with db._conn() as c:
+            row = c.execute(
+                "SELECT id FROM registered_accounts WHERE email = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (target,),
+            ).fetchone()
+            if not row:
+                print(f"[rt-only] 拿到 RT 但找不到 {target} 在 DB 的行（被删了？）")
+                return {"status": "row_gone", "email": target}
+            row_id = int(row["id"])
+            cur = c.execute(
+                "UPDATE registered_accounts SET refresh_token = ? WHERE id = ?",
+                (rt, row_id),
+            )
+            updated = cur.rowcount
+        if updated < 1:
+            print(f"[rt-only] UPDATE 0 行（id={row_id}），写库未生效")
+            return {"status": "update_zero", "email": target, "id": row_id}
+        print(f"[rt-only] ✅ {target} refresh_token 已写库 (len={len(rt)} id={row_id})")
+        return {"status": "succeeded", "email": target, "refresh_token_len": len(rt), "id": row_id}
+    except Exception as e:
+        print(f"[rt-only] 拿到 RT 但写库失败: {e}")
+        return {"status": "write_failed", "email": target, "error": str(e)[:200]}
+
+
+def rt_only_targets(card_config_path: str, target_emails: list[str]) -> dict:
+    """批量 RT-only：串行跑每个 email，汇总结果。"""
+    results = []
+    ok = 0
+    skip = 0
+    fail = 0
+    for em in target_emails:
+        em = (em or "").strip()
+        if not em:
+            continue
+        r = rt_only_for_email(card_config_path, em)
+        results.append(r)
+        st = r.get("status", "")
+        if st == "succeeded":
+            ok += 1
+        elif st in ("already_has_rt",):
+            skip += 1
+        else:
+            fail += 1
+    print(f"\n[rt-only] 完成: ok={ok} skip={skip} fail={fail} 共 {len(results)}")
+    return {"results": results, "ok": ok, "skip": skip, "fail": fail}
+
+
+def pay_only_targets(card_config_path: str, target_emails: list[str], *,
+                     use_paypal=False, use_gopay=False, gopay_otp_file=None) -> dict:
+    """批量 pay-only：对指定 email 列表逐个跑支付。"""
+    results = []
+    ok = 0
+    fail = 0
+    for em in target_emails:
+        em = (em or "").strip()
+        if not em:
+            continue
+        try:
+            r = pay_only(
+                card_config_path,
+                use_paypal=use_paypal,
+                use_gopay=use_gopay,
+                gopay_otp_file=gopay_otp_file,
+                target_email=em,
+            )
+            results.append({"email": em, "result": r})
+            if (r or {}).get("status") == "succeeded":
+                ok += 1
+            else:
+                fail += 1
+        except Exception as e:
+            print(f"[pay-only-targets] {em} 异常: {e}")
+            results.append({"email": em, "status": "error", "error": str(e)[:200]})
+            fail += 1
+    print(f"\n[pay-only-targets] 完成: ok={ok} fail={fail} 共 {len(results)}")
+    return {"results": results, "ok": ok, "fail": fail}
 
 
 # ──────────────────────────────────────────────
@@ -2222,6 +2402,22 @@ def _build_domain_pool_from_cardw(cardw_path, cooldown_hours=24):
         else:
             print(f"[CF] auto_provision 已启用但缺 token 或 zone（api_token={bool(token)}, zones={zones}）")
 
+    # auto-loop / daemon 单 zone 锁定：WEBUI_FORCE_ZONE 让本次进程只用指定 zone
+    # 的域（含其子域），并把 multi-zone provisioner 切到该 zone。
+    forced_zone = (os.environ.get("WEBUI_FORCE_ZONE", "") or "").strip().lower()
+    if forced_zone:
+        kept = [d for d in lst if d.lower() == forced_zone or d.lower().endswith("." + forced_zone)]
+        if kept:
+            print(f"[DomainPool] WEBUI_FORCE_ZONE={forced_zone} → 池过滤 {len(lst)}→{len(kept)} 个域")
+            lst = kept
+        else:
+            print(f"[DomainPool] WEBUI_FORCE_ZONE={forced_zone} 但池里无匹配域，保留原 {len(lst)} 个")
+        if provisioner and hasattr(provisioner, "set_active_zone"):
+            try:
+                provisioner.set_active_zone(forced_zone)
+            except Exception:
+                pass
+
     min_avail = int(ap_cfg.get("min_available", 2))
     return DomainPool(lst, DOMAIN_STATE_KEY, cooldown_hours,
                        provisioner=provisioner, min_available=min_avail)
@@ -2391,16 +2587,40 @@ def _swap_gost_relay(new_ip: str, new_port: int, username: str, password: str,
                               stdin=subprocess.DEVNULL, start_new_session=True)
     finally:
         os.close(fd)
-    time.sleep(1.5)
+    time.sleep(0.5)
     if p.poll() is not None:
         raise RuntimeError(f"gost 启动即退出，见 {log_path}")
-    print(f"[gost] 启动新中继 PID={p.pid}  {upstream}")
+    # 同步验证上游真能通——避免"代码已轮 IP，gost 还冷启"窗口里调用方
+    # 第一个请求踩 SOCKS5 失败被误归到 proxy_dead → 又触发轮换的螺旋。
+    settle_deadline = time.time() + 15
+    while time.time() < settle_deadline:
+        if _probe_gost_upstream(listen_port, timeout_s=3):
+            print(f"[gost] 启动新中继 PID={p.pid}  {upstream}  (探活通过)")
+            return
+        time.sleep(0.5)
+    raise RuntimeError(
+        f"gost 启动后 15s 探活仍失败，IP={new_ip}:{new_port}（见 {log_path}）"
+    )
+
+
+def _probe_gost_upstream(listen_port: int, timeout_s: int = 5) -> bool:
+    """探活：curl 走 socks5://127.0.0.1:<port> 出公网。200 算活；其它（407、SOCKS5 97 等）算死。"""
+    try:
+        r = subprocess.run(
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+             "--max-time", str(timeout_s),
+             "-x", f"socks5h://127.0.0.1:{listen_port}",
+             "https://api.ipify.org"],
+            capture_output=True, text=True, timeout=timeout_s + 2,
+        )
+        return r.stdout.strip() == "200"
+    except Exception:
+        return False
 
 
 def _ensure_gost_alive(card_cfg: dict, team_client=None) -> bool:
-    """启动/循环前调。检 listen_port 是否有进程监听；没的话从 Webshare API 拿
-    当前 IP 自动拉起 gost + 同步 team 全局代理。成功返回 True，失败 False。
-    （不进行 refresh，只是拉起; refresh 留给 no_perm 触发路径）"""
+    """启动/循环前调。先检 listen，再做上游探活——任何一关挂了都走 refresh+swap
+    自愈（覆盖 Webshare 换 IP 但 gost 还指着旧 IP 这种 407 场景）。"""
     ws_cfg = (card_cfg or {}).get("webshare") or {}
     if not ws_cfg.get("enabled"):
         return False
@@ -2408,14 +2628,29 @@ def _ensure_gost_alive(card_cfg: dict, team_client=None) -> bool:
     listen_port = int(ws_cfg.get("gost_listen_port", 18898))
     if not api_key:
         return False
-    # 已监听则跳
+    # 检 listen
+    listening = False
     try:
         ck = subprocess.run(["ss", "-ltn", f"sport = :{listen_port}"],
                              capture_output=True, text=True, timeout=3)
-        if f":{listen_port}" in ck.stdout:
-            return True
+        listening = f":{listen_port}" in ck.stdout
     except Exception:
         pass
+    # listen 在 → 还要探上游能否出网
+    if listening:
+        if _probe_gost_upstream(listen_port):
+            return True
+        print(f"[gost] listen :{listen_port} 在但上游探活失败 → 触发 refresh + swap 自愈")
+        try:
+            _rotate_webshare_ip(card_cfg, team_client=team_client)
+            # rotate 完再探一次
+            if _probe_gost_upstream(listen_port):
+                return True
+            print(f"[gost] rotate 后探活仍失败")
+            return False
+        except Exception as e:
+            print(f"[gost] 上游死，rotate 自愈也失败: {e}")
+            return False
     print(f"[gost] listen :{listen_port} 无监听，自动拉起")
     try:
         client = WebshareClient(api_key)
@@ -2444,8 +2679,20 @@ def _ensure_gost_alive(card_cfg: dict, team_client=None) -> bool:
     return True
 
 
-def _rotate_webshare_ip(card_cfg: dict, team_client=None, prev_ip: str = "") -> dict:
-    """整合：refresh → 轮询新 IP → 换 gost → 同步 team 全局代理。返回新 proxy dict。"""
+# Rotate 冷却：模块级时间戳 + 上次结果缓存。任何调用方（auto-loop 分类 /
+# pipeline._ensure_gost_alive / 手动 /api/proxy/rotate-ip）共享，避免短时间内
+# 重复 refresh 烧 Webshare 配额。冷却内的调用直接返回上次 IP，不查 API。
+_LAST_ROTATE_TS: float = 0.0
+_LAST_ROTATE_PX: dict | None = None
+
+
+def _rotate_webshare_ip(card_cfg: dict, team_client=None, prev_ip: str = "",
+                          force: bool = False) -> dict:
+    """整合：refresh → 轮询新 IP → 换 gost → 同步 team 全局代理。返回新 proxy dict。
+
+    cooldown 由 cardw.webshare.rotate_cooldown_s 控制（默认 300s）；
+    传 force=True 跳过冷却（手动按钮 /api/proxy/rotate-ip 用得着）。"""
+    global _LAST_ROTATE_TS, _LAST_ROTATE_PX
     ws_cfg = (card_cfg or {}).get("webshare") or {}
     if not ws_cfg.get("enabled"):
         raise RuntimeError("webshare 未启用")
@@ -2457,6 +2704,16 @@ def _rotate_webshare_ip(card_cfg: dict, team_client=None, prev_ip: str = "") -> 
     team_scheme = str(ws_cfg.get("team_proxy_scheme", "socks5"))
     sync_team = bool(ws_cfg.get("sync_team_proxy", True))
     poll_wait = int(ws_cfg.get("poll_timeout_s", 120))
+    cooldown = int(ws_cfg.get("rotate_cooldown_s", 300))
+
+    if not force and cooldown > 0 and _LAST_ROTATE_PX:
+        elapsed = time.time() - _LAST_ROTATE_TS
+        if elapsed < cooldown:
+            print(
+                f"[Webshare] 距上次 rotate {elapsed:.0f}s < 冷却 {cooldown}s，"
+                f"跳过新 refresh（沿用 IP={_LAST_ROTATE_PX.get('proxy_address')}）"
+            )
+            return _LAST_ROTATE_PX
 
     client = WebshareClient(api_key)
     try:
@@ -2494,6 +2751,8 @@ def _rotate_webshare_ip(card_cfg: dict, team_client=None, prev_ip: str = "") -> 
         except Exception as e:
             print(f"[Team] 更新全局代理失败: {e}")
 
+    _LAST_ROTATE_TS = time.time()
+    _LAST_ROTATE_PX = new_px
     return new_px
 
 
@@ -3393,6 +3652,12 @@ def main():
                         help="free_only 模式：读数据库老号记录补 rt + 推 CPA(free)，跳过已 succeeded/dead")
     parser.add_argument("--count", type=int, default=0, metavar="N",
                         help="--free-register 模式下注册 N 次后退出（0 = 无限）")
+    parser.add_argument("--target-emails", default="", metavar="EMAILS",
+                        help="逗号分隔的目标 email 列表。配合 --pay-only 或 --rt-only 用，"
+                             "对 webui inventory 选中的具体账号操作")
+    parser.add_argument("--rt-only", action="store_true",
+                        help="只对 --target-emails 跑 RT 交换：用现有 password/session "
+                             "走 Codex OAuth 拿 refresh_token 写回 DB（不付款）")
     args = parser.parse_args()
 
     if args.paypal and args.gopay:
@@ -3417,6 +3682,27 @@ def main():
             self_dealer(args.config, cardw_config_path=args.cardw_config,
                         use_paypal=args.paypal, members_count=args.self_dealer,
                         resume_owner_email=args.self_dealer_resume)
+            return
+
+        target_emails_list: list[str] = []
+        if args.target_emails:
+            target_emails_list = [e.strip() for e in args.target_emails.split(",") if e.strip()]
+
+        if args.rt_only:
+            if not target_emails_list:
+                print("[ERROR] --rt-only 必须配合 --target-emails 使用", file=sys.stderr)
+                sys.exit(2)
+            r = rt_only_targets(args.config, target_emails_list)
+            print(f"\n结果: ok={r['ok']} skip={r['skip']} fail={r['fail']}")
+            return
+
+        if args.pay_only and target_emails_list:
+            r = pay_only_targets(
+                args.config, target_emails_list,
+                use_paypal=args.paypal, use_gopay=args.gopay,
+                gopay_otp_file=args.gopay_otp_file,
+            )
+            print(f"\n结果: ok={r['ok']} fail={r['fail']}")
             return
 
         # batch 是循环外壳，跟 register-only / pay-only 正交组合

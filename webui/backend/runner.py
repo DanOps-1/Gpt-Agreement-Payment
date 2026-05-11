@@ -11,13 +11,14 @@ file provider 的兼容 fallback。
 import json
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import Optional
 
-from . import settings as s
+from . import link_state, settings as s
 from . import wa_relay
 
 
@@ -34,6 +35,22 @@ _otp_file: Optional[Path] = None       # legacy file provider path, if used
 _otp_to_db: bool = False               # True when gopay.py waits on WebUI SQLite OTP endpoint
 _otp_pending: bool = False             # set when gopay.py asks/waits for OTP
 _otp_file_is_temp: bool = False
+_active_gopay_phone: str = ""          # digits-only phone for the running gopay flow
+_preserve_log_on_next_start: bool = False  # auto-loop sets True so log scrolls across iterations
+
+
+def _read_pay_config() -> dict:
+    try:
+        return json.loads(s.PAY_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+_LINK_OK_RE = re.compile(r"\[gopay\]\s+midtrans linking ok\s+reference=(\S+)")
+_CHARGE_SETTLED_RE = re.compile(r"\[gopay\]\s+charge settled")
+# 406「account already linked」signal —— Midtrans 服务端确认该号已绑，
+# 不论后续重试是否成功，本地都应该 mark linked 来跟服务端对齐
+_LINK_406_RE = re.compile(r"\[gopay\]\s+midtrans linking 406")
 
 
 def _gopay_auto_otp_enabled() -> bool:
@@ -71,7 +88,8 @@ def _gopay_auto_otp_enabled() -> bool:
 
 def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: int,
               register_only: bool, pay_only: bool, gopay: bool = False,
-              gopay_otp_file: str = "", count: int = 0) -> list[str]:
+              gopay_otp_file: str = "", count: int = 0,
+              target_emails: Optional[list] = None, rt_only: bool = False) -> list[str]:
     """根据参数拼出最终命令行。"""
     cmd = ["xvfb-run", "-a", "python", "-u", "pipeline.py",
            "--config", str(s.PAY_CONFIG_PATH)]
@@ -104,6 +122,12 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
         cmd.append("--register-only")
     elif pay_only:
         cmd.append("--pay-only")
+    if rt_only:
+        cmd.append("--rt-only")
+    if target_emails:
+        joined = ",".join(e.strip() for e in target_emails if e and e.strip())
+        if joined:
+            cmd.extend(["--target-emails", joined])
     return cmd
 
 
@@ -125,9 +149,12 @@ def status() -> dict:
 
 def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
           self_dealer: int = 0, register_only: bool = False, pay_only: bool = False,
-          gopay: bool = False, count: int = 0) -> dict:
+          gopay: bool = False, count: int = 0, register_mode: str = "browser",
+          env_overrides: Optional[dict] = None,
+          target_emails: Optional[list] = None, rt_only: bool = False) -> dict:
     global _proc, _started_at, _ended_at, _exit_code, _cmd, _mode
     global _log_lines, _seq_counter, _otp_file, _otp_to_db, _otp_pending, _otp_file_is_temp
+    global _active_gopay_phone
     with _lock:
         if _proc is not None and _proc.poll() is None:
             raise RuntimeError("a pipeline is already running")
@@ -137,11 +164,29 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
 
         cmd = build_cmd(mode, paypal, batch, workers, self_dealer,
                         register_only, pay_only, gopay=gopay,
-                        gopay_otp_file="", count=count)
+                        gopay_otp_file="", count=count,
+                        target_emails=target_emails, rt_only=rt_only)
 
-        # Reset
-        _log_lines = []
-        _seq_counter = 0
+        # GoPay link-state pre-flight: if the configured phone is currently
+        # linked from a prior successful charge, GoPay will reject the next
+        # linking attempt with 406 "account already linked". Refuse to start
+        # until an external service POSTs to /api/gopay/link-state/unlink.
+        active_phone = ""
+        if gopay:
+            cfg = _read_pay_config()
+            active_phone = link_state.phone_from_gopay_config(cfg)
+            if active_phone and link_state.is_linked(active_phone):
+                raise RuntimeError(
+                    f"gopay phone {active_phone} is currently linked; "
+                    "external service must POST /api/gopay/link-state/unlink first"
+                )
+
+        # Reset (auto-loop 跨 iteration 时保留之前的日志，方便用户连续看)
+        global _preserve_log_on_next_start
+        if not _preserve_log_on_next_start:
+            _log_lines = []
+            _seq_counter = 0
+        _preserve_log_on_next_start = False
         _started_at = time.time()
         _ended_at = None
         _exit_code = None
@@ -151,10 +196,20 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
         _otp_to_db = False
         _otp_file_is_temp = otp_p is not None
         _otp_pending = False
+        _active_gopay_phone = active_phone
 
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         if gopay:
             env["WEBUI_GOPAY_OTP_URL"] = wa_relay.otp_url()
+        # 注册路径切换：browser=Camoufox/Playwright；protocol=auth_flow HTTP 直连
+        rm = (register_mode or "browser").strip().lower()
+        env["WEBUI_REG_MODE"] = "protocol" if rm == "protocol" else "browser"
+        if env_overrides:
+            for k, v in env_overrides.items():
+                if v is None:
+                    env.pop(str(k), None)
+                else:
+                    env[str(k)] = str(v)
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -164,6 +219,9 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
                 text=True,
                 bufsize=1,
                 env=env,
+                # 让 pipeline 子进程独立成 session leader，webui 后端重启时
+                # 不会随之被杀。stop() 用 killpg 显式终止整组。
+                start_new_session=True,
             )
         except FileNotFoundError as e:
             _ended_at = time.time()
@@ -197,6 +255,7 @@ def _detect_otp_wait_target(line: str) -> tuple[str, Optional[Path]]:
 
 def _drain(proc: subprocess.Popen) -> None:
     global _ended_at, _exit_code, _seq_counter, _log_lines, _otp_pending, _otp_file, _otp_to_db, _otp_file_is_temp
+    last_link_ref = ""
     try:
         if proc.stdout is None:
             return
@@ -219,6 +278,39 @@ def _drain(proc: subprocess.Popen) -> None:
                     _otp_file = wait_path
                     _otp_file_is_temp = _otp_file_is_temp or "GOPAY_OTP_REQUEST" in line
                     _otp_pending = True
+
+                # Track the merchant reference from the linking step so we can
+                # store it alongside the linked-state record on charge settle.
+                m = _LINK_OK_RE.search(line)
+                if m:
+                    last_link_ref = m.group(1).strip().strip(",.")
+
+                # 提前检测 406：Midtrans 已经认定 phone 绑了，本地应同步。
+                # 不等 charge settled 才更新——失败的支付也会留下 linked 状态，
+                # 否则下一单还会盲目重试，被同样的 406 拦下。
+                if _LINK_406_RE.search(line) and _active_gopay_phone:
+                    try:
+                        link_state.mark_linked(
+                            _active_gopay_phone,
+                            payment_ref=last_link_ref or "auto_from_406",
+                            source="pipeline_406_detect",
+                        )
+                    except Exception:
+                        pass
+
+                # Mark the configured phone as linked when a charge settles.
+                # GoPay treats the phone as bound at this point, so subsequent
+                # linking attempts return 406 unless an external service has
+                # called /api/gopay/link-state/unlink in the meantime.
+                if _CHARGE_SETTLED_RE.search(line) and _active_gopay_phone:
+                    try:
+                        link_state.mark_linked(
+                            _active_gopay_phone,
+                            payment_ref=last_link_ref,
+                            source="pipeline",
+                        )
+                    except Exception:
+                        pass
     finally:
         proc.wait()
         with _lock:
@@ -241,12 +333,29 @@ def stop() -> dict:
         proc = _proc
         if proc is None or proc.poll() is not None:
             return status()
-    proc.terminate()
+    # subprocess 是独立 session leader（start_new_session=True），用 killpg
+    # 终止整组，否则只 SIGTERM 父进程会留下 xvfb-run/python pipeline 孤儿。
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.terminate()
+        except Exception:
+            pass
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=2)
+        except Exception:
+            pass
     return status()
 
 
@@ -268,6 +377,24 @@ def submit_otp(value: str) -> dict:
     with _lock:
         _otp_pending = False
     return status()
+
+
+def append_log(line: str) -> None:
+    """Append a synthetic line into the rolling log (used by auto-loop to inject
+    [auto-loop] progress markers between subprocess iterations)."""
+    global _seq_counter, _log_lines
+    with _lock:
+        _seq_counter += 1
+        _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line})
+        if len(_log_lines) > 3000:
+            _log_lines = _log_lines[-2000:]
+
+
+def preserve_log_on_next_start() -> None:
+    """Auto-loop calls before each runner.start() to keep the rolling log
+    instead of wiping it on every iteration."""
+    global _preserve_log_on_next_start
+    _preserve_log_on_next_start = True
 
 
 def get_lines_since(since_seq: int = 0, limit: int = 1000) -> list[dict]:

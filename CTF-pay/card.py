@@ -2543,6 +2543,27 @@ def generate_fresh_checkout(
                             ),
                             referer_url=canonical_chatgpt_url or provider_url or fresh_url,
                         )
+                        # Promo 优惠不生效就直接 abort，避免真扣款。
+                        # 原项目仅把 check_coupon 当观测信号（README 说明），
+                        # 但这会导致 promo 失效时静默走完支付流程真扣 IDR ~35w。
+                        # 默认行为改成 fail-fast；要绕过设
+                        # `fresh_checkout.allow_charge_when_coupon_ineligible=true`
+                        # 或环境变量 `ALLOW_CHARGE_WHEN_COUPON_INELIGIBLE=1`。
+                        coupon_state = (coupon_check.get("state") or "").strip().lower()
+                        allow_override = bool(fresh_cfg.get("allow_charge_when_coupon_ineligible"))
+                        if not allow_override:
+                            allow_override = str(
+                                os.environ.get("ALLOW_CHARGE_WHEN_COUPON_INELIGIBLE", "")
+                            ).strip().lower() in ("1", "true", "yes", "on")
+                        if coupon_state and coupon_state != "eligible" and not allow_override:
+                            redemption = coupon_check.get("redemption") or {}
+                            raise RuntimeError(
+                                f"promo coupon '{promo_coupon}' state={coupon_state} "
+                                f"(user_redeemed={redemption.get('redeemed_by_user')} "
+                                f"workspace_redeemed={redemption.get('redeemed_by_workspace')}) "
+                                "→ 拒绝继续支付以免真扣款；要强行继续设 "
+                                "fresh_checkout.allow_charge_when_coupon_ineligible=true"
+                            )
 
                 if fresh_cfg.get("warmup_route_data", True) and canonical_chatgpt_url and cookie_header:
                     route_data_url = (
@@ -2652,6 +2673,25 @@ def generate_fresh_checkout(
         raise FreshCheckoutAuthError(
             f"fresh checkout 返回无法解析的 200 响应: {json.dumps(last_response_data, ensure_ascii=False)[:400]}"
         )
+
+    # 提前识别「User is already paid」并落库带 email 标记 → 下次 pay-only
+    # `_paid_or_consumed_emails()` 能匹配到，跳过这个账号不再重试。
+    # 之前所有 raise 都不带 email，导致同一已付费账号反复被选中。
+    error_blob = " | ".join(errors[:8])
+    if "user is already paid" in error_blob.lower():
+        _email = fresh_cfg.get("_chatgpt_email") or ""
+        if _email:
+            try:
+                _record_result(
+                    status="error",
+                    chatgpt_email=_email,
+                    payment_channel="fresh_checkout",
+                    config_path="",
+                    error_msg=f"User is already paid (fresh_checkout 400)",
+                )
+                _log(f"      [fresh] ⚠ {_email} 已是 Plus 付费账号，标记 inventory 跳过")
+            except Exception as _e:
+                _log(f"      [fresh] 标记 already-paid 失败: {_e}")
 
     raise FreshCheckoutAuthError(
         "生成 fresh checkout 失败: " + " | ".join(errors[:4])
@@ -8693,7 +8733,12 @@ def run(
         pass
 
     # 支付成功才拿 refresh_token（失败不拿）
-    if result_state == "succeeded" and chatgpt_email:
+    # auto-loop 不需要 RT，可设 SKIP_PAY_RT_EXCHANGE=1 跳过整段。
+    if (
+        result_state == "succeeded"
+        and chatgpt_email
+        and str(os.environ.get("SKIP_PAY_RT_EXCHANGE", "")).strip().lower() not in ("1", "true", "yes", "on")
+    ):
         try:
             # 从 SQLite 主存储取本账号的 password。
             import os as _os
@@ -8717,8 +8762,14 @@ def run(
                 except Exception as e:
                     _log(f"      [RT] 读取 mail 配置失败: {e}")
 
-            if _password and _mail_cfg:
-                _log("      [RT] 支付成功，重新登录拿 refresh_token ...")
+            # passwordless_signup 账号 DB 里 password=""——但浏览器流程在
+            # card.py:5240 已有 passwordless 分支（找不到密码框就跳到 OTP 等
+            # 邮件再 callback）。所以 password 不再是硬条件，mail_cfg 够就启动。
+            if _mail_cfg:
+                if _password:
+                    _log("      [RT] 支付成功，重新登录拿 refresh_token ...")
+                else:
+                    _log("      [RT] 支付成功，账号无 password (passwordless_signup)，走 OTP 登录路径...")
                 rt_value = _exchange_refresh_token_with_session(
 	                    email=chatgpt_email,
 	                    password=_password,
@@ -8732,7 +8783,7 @@ def run(
                 else:
                     _log("      [RT] ❌ refresh_token 获取失败（不影响支付结果）")
             else:
-                _log(f"      [RT] 缺少条件，跳过 (password={bool(_password)} mail_cfg={bool(_mail_cfg)})")
+                _log(f"      [RT] 缺少 mail_cfg，跳过（无邮件渠道接 OTP）")
         except Exception as e:
             _log(f"      [RT] 获取异常: {e}")
 
