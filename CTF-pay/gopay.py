@@ -955,12 +955,16 @@ class GoPayCharger:
                 "Referer": f"https://app.midtrans.com/snap/v4/redirection/{snap_token}",
             },
             timeout=DEFAULT_TIMEOUT,
+            allow_redirects=True,
             retry_label="midtrans load transaction",
         )
         r.raise_for_status()
         body = r.json()
         enabled = [p.get("type") for p in body.get("enabled_payments", [])]
-        self.log(f"[gopay] midtrans enabled_payments={enabled}")
+        self.log(
+            f"[gopay] midtrans enabled_payments={enabled} "
+            f"final_url={str(getattr(r, 'url', ''))[:180]} redirects={len(getattr(r, 'history', []) or [])}"
+        )
 
     def _midtrans_basic_auth(self) -> dict:
         import base64
@@ -2105,6 +2109,7 @@ class GoPayCharger:
                         url,
                         headers=headers,
                         timeout=DEFAULT_TIMEOUT,
+                        allow_redirects=True,
                         retry_label="midtrans snap qris status",
                     )
                     raw_text = r.text or ""
@@ -2122,6 +2127,8 @@ class GoPayCharger:
                     self.log(
                         f"[gopay-qris] midtrans snap status attempt={attempt} "
                         f"method=GET url={url} http={r.status_code} "
+                        f"final_url={str(getattr(r, 'url', ''))[:180]} "
+                        f"redirects={len(getattr(r, 'history', []) or [])} "
                         f"content_type={str(r.headers.get('content-type') or '-')[:80]} "
                         f"transaction_status={status or '-'} body={body_preview!r}"
                     )
