@@ -526,14 +526,27 @@ def normalize_gopay_accounts(gopay_cfg: dict) -> list[dict]:
         return accounts
 
     if _has_gopay_account_fields(gopay_cfg):
-        return [{
+        account = {
             "label": gopay_cfg.get("label") or gopay_cfg.get("name") or "default",
             "country_code": gopay_cfg.get("country_code"),
             "phone_number": gopay_cfg.get("phone_number"),
             "pin": gopay_cfg.get("pin"),
             "midtrans_client_id": gopay_cfg.get("midtrans_client_id"),
             "_account_index": 0,
-        }]
+        }
+        for key in (
+            "use_sms_otp",
+            "sms_otp",
+            "sms_otp_poll_url",
+            "sms_otp_url",
+            "sms_otp_timeout",
+            "sms_otp_interval",
+            "sms_otp_headers",
+            "sms_otp_params",
+        ):
+            if key in gopay_cfg:
+                account[key] = gopay_cfg.get(key)
+        return [account]
     return []
 
 
@@ -652,6 +665,14 @@ class GoPayCharger:
             gopay_cfg.get("midtrans_client_id") or DEFAULT_MIDTRANS_CLIENT_ID
         )
         self.qr_wait_timeout = _float_cfg(gopay_cfg, "qr_wait_timeout", QR_WAIT_TIMEOUT_S)
+        self.use_sms_otp = _truthy_cfg(gopay_cfg.get("use_sms_otp") or gopay_cfg.get("sms_otp"))
+        self.sms_otp_poll_url = str(
+            gopay_cfg.get("sms_otp_poll_url")
+            or gopay_cfg.get("sms_otp_url")
+            or ""
+        ).strip()
+        self.sms_otp_timeout = _float_cfg(gopay_cfg, "sms_otp_timeout", _float_cfg(gopay_cfg, "otp_timeout", 300.0))
+        self.sms_otp_interval = _float_cfg(gopay_cfg, "sms_otp_interval", _float_cfg(gopay_cfg, "otp_interval", 1.0))
         self.midtrans_page_url = ""
         self.gopay_activation_link_url = ""
         self.stop_after_link_pin_url = bool(
@@ -1123,6 +1144,48 @@ class GoPayCharger:
         if not r.json().get("success"):
             raise GoPayError(f"user-consent failed: {r.text[:300]}")
         self.log("[gopay] consent ok, OTP sent via WhatsApp")
+
+    def _gopay_resend_sms_otp(self, reference_id: str):
+        r = self.ext.post(
+            "https://gwa.gopayapi.com/v1/linking/resend-otp",
+            json={"reference_id": reference_id},
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Content-Type": "application/json",
+                "Origin": "https://merchants-gws-app.gopayapi.com",
+                "Referer": "https://merchants-gws-app.gopayapi.com/",
+                "accept-language": "zh-CN,zh;q=0.9",
+                "priority": "u=1, i",
+                "sec-ch-ua": '"Microsoft Edge";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-site",
+                "x-user-locale": "zh-CN",
+            },
+            timeout=DEFAULT_TIMEOUT,
+        )
+        r.raise_for_status()
+        data = r.json() if str(r.headers.get("content-type") or "").startswith("application/json") and r.text else {}
+        if isinstance(data, dict) and data.get("success") is False:
+            raise GoPayError(f"resend-otp failed: {r.text[:300]}")
+        self.log("[gopay] SMS OTP resend requested")
+
+    def _poll_sms_otp(self) -> str:
+        if not self.sms_otp_poll_url:
+            raise GoPayError("SMS OTP enabled but sms_otp_poll_url is empty")
+        provider = sms_http_otp_provider(
+            self.sms_otp_poll_url,
+            timeout=self.sms_otp_timeout,
+            interval=self.sms_otp_interval,
+            headers=_headers_cfg(self.gopay_cfg.get("sms_otp_headers")),
+            params=self.gopay_cfg.get("sms_otp_params") if isinstance(self.gopay_cfg.get("sms_otp_params"), dict) else None,
+            phone=self.phone,
+            country_code=self.country_code,
+            log=self.log,
+        )
+        return provider()
 
     def _gopay_validate_otp(self, reference_id: str, otp: str) -> tuple[str, str]:
         """Returns (challenge_id, client_id) for PIN tokenization."""
@@ -2662,14 +2725,17 @@ class GoPayCharger:
 
         # ── Linking: OTP + first PIN
         self._gopay_validate_reference(reference_id)
-        self._gopay_user_consent(reference_id)
+        if self.use_sms_otp:
+            self._gopay_resend_sms_otp(reference_id)
+        else:
+            self._gopay_user_consent(reference_id)
         if self.gopay_activation_link_url:
             self.log(f"[gopay-test] OTP page url={self.gopay_activation_link_url}")
         print(
             f"GOPAY_OTP_TARGET phone={self.phone} country_code={self.country_code}",
             flush=True,
         )
-        otp = self.otp_provider()
+        otp = self._poll_sms_otp() if self.use_sms_otp else self.otp_provider()
         if not otp:
             raise OTPCancelled("OTP not provided")
         challenge_id, client_id = self._gopay_validate_otp(reference_id, otp)
@@ -3038,6 +3104,59 @@ def whatsapp_http_otp_provider(
             time.sleep(max(0.2, interval))
         detail = f"; last_error={last_error}" if last_error else ""
         raise OTPCancelled(f"OTP timeout after {timeout}s (url={url}{detail})")
+
+    return provider
+
+
+def sms_http_otp_provider(
+    url: str,
+    *,
+    timeout: float = 300.0,
+    interval: float = 1.0,
+    headers: Optional[dict] = None,
+    params: Optional[dict] = None,
+    phone: str = "",
+    country_code: str = "",
+    log: Callable[[str], None] = print,
+) -> Callable[[], str]:
+    def provider() -> str:
+        deadline = time.time() + timeout
+        sess = trace_session(requests.Session(), "gopay.sms_otp_relay")
+        base_params = dict(params or {})
+        if phone and "phone" not in base_params:
+            base_params["phone"] = phone
+        if country_code and "country_code" not in base_params:
+            base_params["country_code"] = country_code
+        last_error = ""
+        log(f"[gopay] waiting SMS OTP from relay: {url}")
+        while time.time() < deadline:
+            try:
+                resp = sess.get(
+                    url,
+                    headers=headers or {},
+                    params=base_params,
+                    timeout=min(10.0, max(2.0, interval + 1.0)),
+                )
+                if resp.status_code in (204, 404):
+                    time.sleep(max(0.2, interval))
+                    continue
+                resp.raise_for_status()
+                try:
+                    payload: Any = resp.json()
+                except ValueError:
+                    payload = resp.text
+                code = _extract_otp_from_payload(
+                    payload,
+                    code_regex=r"(?<!\d)(\d{6})(?!\d)",
+                )
+                if code:
+                    return code
+                last_error = ""
+            except Exception as exc:
+                last_error = str(exc)
+            time.sleep(max(0.2, interval))
+        detail = f"; last_error={last_error}" if last_error else ""
+        raise OTPCancelled(f"SMS OTP timeout after {timeout}s (url={url}{detail})")
 
     return provider
 

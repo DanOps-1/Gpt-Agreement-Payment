@@ -40,6 +40,11 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
             "phone_number": str(item.get("phone_number") or ""),
             "pin": str(item.get("pin") or ""),
         }
+        if item.get("use_sms_otp") or item.get("sms_otp"):
+            account["use_sms_otp"] = True
+        sms_otp_poll_url = str(item.get("sms_otp_poll_url") or item.get("sms_otp_url") or "").strip()
+        if sms_otp_poll_url:
+            account["sms_otp_poll_url"] = sms_otp_poll_url
         if item.get("midtrans_client_id") or gp.get("midtrans_client_id"):
             account["midtrans_client_id"] = str(item.get("midtrans_client_id") or gp.get("midtrans_client_id"))
         for key in ("headers", "qris_headers", "qris_raw_headers", "qris", "qris_base_url", "qris_hmac_key", "qris_service_id", "qris_merchant_id"):
@@ -62,6 +67,11 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
             "phone_number": str(gp["phone_number"]),
             "pin": str(gp["pin"]),
         }
+        if gp.get("use_sms_otp") or gp.get("sms_otp"):
+            account["use_sms_otp"] = True
+        sms_otp_poll_url = str(gp.get("sms_otp_poll_url") or gp.get("sms_otp_url") or "").strip()
+        if sms_otp_poll_url:
+            account["sms_otp_poll_url"] = sms_otp_poll_url
         if gp.get("midtrans_client_id"):
             account["midtrans_client_id"] = str(gp["midtrans_client_id"])
         for key in ("headers", "qris_headers", "qris_raw_headers", "qris", "qris_base_url", "qris_hmac_key", "qris_service_id", "qris_merchant_id"):

@@ -94,6 +94,8 @@ def test_export_writes_gopay_auto_otp(client, tmp_path, monkeypatch):
             "country_code": "62",
             "phone_number": "81234567890",
             "pin": "123456",
+            "use_sms_otp": True,
+            "sms_otp_poll_url": "https://sms.example/latest",
             "otp_timeout": 240,
             "auto_unbind_base_url": "https://gwa.gopayapi.com",
             "auto_unbind_raw_request": "POST /v1/linking/unbind HTTP/2\r\nhost: gwa.gopayapi.com\r\n\r\n{}",
@@ -111,6 +113,8 @@ def test_export_writes_gopay_auto_otp(client, tmp_path, monkeypatch):
         "country_code": "62",
         "phone_number": "81234567890",
         "pin": "123456",
+        "use_sms_otp": True,
+        "sms_otp_poll_url": "https://sms.example/latest",
     }]
     assert pay["gopay"]["otp"]["source"] == "auto"
     assert "path" not in pay["gopay"]["otp"]

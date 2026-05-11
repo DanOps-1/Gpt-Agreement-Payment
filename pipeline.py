@@ -1871,11 +1871,11 @@ def _pool_plan_type(card_cfg: dict | None = None) -> str:
     return ""
 
 
-def _pool_update(email: str, to_status: str, stage: str, reason: str = "",
+def _pool_update(target_email: str, to_status: str, stage: str, reason: str = "",
                  payload: dict | None = None, **fields) -> None:
     try:
         transition_item_by_email(
-            email,
+            target_email,
             to_status=to_status,
             stage=stage,
             reason=reason,
@@ -1883,7 +1883,7 @@ def _pool_update(email: str, to_status: str, stage: str, reason: str = "",
             **fields,
         )
     except Exception as e:
-        print(f"[pool] 更新规划池失败: {email or '-'} stage={stage}: {e}")
+        print(f"[pool] 更新规划池失败: {target_email or '-'} stage={stage}: {e}")
 
 
 def _pool_registration_success(reg: dict, *, task_id: str = "", round_id: str = "",

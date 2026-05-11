@@ -474,9 +474,9 @@ def claim_unused_emails(limit: int, *, task_id: str = "", round_id: str = "") ->
     return claimed
 
 
-def transition_item_by_email(email: str, *, to_status: str, stage: str, reason: str = "",
+def transition_item_by_email(target_email: str, *, to_status: str, stage: str, reason: str = "",
                              payload: dict | None = None, **fields: Any) -> bool:
-    target = _email(email)
+    target = _email(target_email)
     if not target or to_status not in POOL_STATUS_LABELS:
         return False
     now = time.time()

@@ -57,6 +57,21 @@ def build_logged_charger(logs: list[str], otp_value: str = "123456", pin: str = 
     return gopay.GoPayCharger(cs_session, cfg, otp_provider=lambda: otp_value, log=logs.append)
 
 
+def build_sms_charger(logs: list[str], pin: str = "654321") -> gopay.GoPayCharger:
+    cs_session = requests.Session()
+    cs_session.headers["Cookie"] = "__Secure-next-auth.session-token=fake"
+    cfg = {
+        "country_code": "86",
+        "phone_number": "00000000000",
+        "pin": pin,
+        "use_sms_otp": True,
+        "sms_otp_poll_url": "https://sms.example/latest",
+        "sms_otp_timeout": 5,
+        "sms_otp_interval": 0.1,
+    }
+    return gopay.GoPayCharger(cs_session, cfg, otp_provider=lambda: "should-not-use", log=logs.append)
+
+
 # ────────────────── full happy path ──────────────────
 
 
@@ -219,6 +234,31 @@ def test_full_flow_succeeds():
     result = charger.run(stripe_pk=STRIPE_PK)
     assert result["state"] == "succeeded"
     assert result["cs_id"] == CS_ID
+
+
+@responses.activate
+def test_sms_otp_mode_resends_and_polls_six_digit_code():
+    logs: list[str] = []
+    charger = build_sms_charger(logs)
+    responses.post(
+        "https://gwa.gopayapi.com/v1/linking/resend-otp",
+        json={"success": True, "data": {"next_action": "linking-validate-otp"}},
+    )
+    responses.get(
+        "https://sms.example/latest",
+        body=(
+            "YES|(GOJEK) Ini OTP buat hubungkan OpenAI LLC ke GoPay. "
+            "JANGAN KASIH KE SIAPA PUN. OTP: 927716 gojek.com/safety "
+            "merchants-gws-app.gopayapi.com #927716"
+        ),
+    )
+
+    charger._gopay_resend_sms_otp(LINK_REF)
+    assert charger._poll_sms_otp() == "927716"
+    resend = responses.calls[0].request
+    assert resend.url == "https://gwa.gopayapi.com/v1/linking/resend-otp"
+    assert resend.headers["x-user-locale"] == "zh-CN"
+    assert b'"reference_id": "33333333-dddd-eeee-ffff-444444444444"' in resend.body
 
 
 # ────────────────── 406 retry exhausted ──────────────────

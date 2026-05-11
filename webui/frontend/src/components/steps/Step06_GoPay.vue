@@ -28,6 +28,19 @@
           <TermField v-model="account.country_code" label="国家区号" placeholder="62" />
           <TermField v-model="account.phone_number" label="手机号" placeholder="81234567890" />
           <TermField v-model="account.pin" label="支付 PIN" type="password" placeholder="GoPay PIN" />
+          <label class="qr-toggle">
+            <input v-model="account.use_sms_otp" type="checkbox" />
+            <span>
+              <strong>SMS 验证码</strong>
+              <small>勾选后绑定 OTP 使用短信 resend-otp，并从轮询地址提取 6 位验证码。</small>
+            </span>
+          </label>
+          <TermField
+            v-if="account.use_sms_otp"
+            v-model="account.sms_otp_poll_url"
+            label="SMS 轮询地址"
+            placeholder="https://example.com/latest-sms"
+          />
         </div>
       </div>
     </div>
@@ -207,6 +220,10 @@ type GoPayAccountForm = {
   phone_number: string;
   pin: string;
   midtrans_client_id?: string;
+  use_sms_otp: boolean;
+  sms_otp?: boolean;
+  sms_otp_poll_url: string;
+  sms_otp_url?: string;
   auto_unbind_raw_request?: string;
   auto_unbind_base_url?: string;
   auto_unbind_unlink_raw_request?: string;
@@ -225,6 +242,8 @@ function newAccount(seed?: Partial<GoPayAccountForm>, index = 0): GoPayAccountFo
     phone_number: seed?.phone_number ?? "",
     pin: seed?.pin ?? "",
     midtrans_client_id: seed?.midtrans_client_id ?? "",
+    use_sms_otp: Boolean(seed?.use_sms_otp || seed?.sms_otp),
+    sms_otp_poll_url: seed?.sms_otp_poll_url ?? seed?.sms_otp_url ?? "",
     auto_unbind_raw_request: seed?.auto_unbind_raw_request ?? "",
     auto_unbind_base_url: seed?.auto_unbind_base_url ?? "",
     auto_unbind_unlink_raw_request: seed?.auto_unbind_unlink_raw_request ?? "",
@@ -241,6 +260,8 @@ function initialAccounts(): GoPayAccountForm[] {
       phone_number: item.phone_number ?? "",
       pin: item.pin ?? "",
       midtrans_client_id: item.midtrans_client_id ?? init.midtrans_client_id ?? "",
+      use_sms_otp: Boolean(item.use_sms_otp || item.sms_otp),
+      sms_otp_poll_url: item.sms_otp_poll_url ?? item.sms_otp_url ?? "",
       auto_unbind_raw_request: item.auto_unbind_raw_request ?? item.auto_unbind?.raw_request ?? (idx === 0 ? init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "" : ""),
       auto_unbind_base_url: item.auto_unbind_base_url ?? item.auto_unbind?.base_url ?? (idx === 0 ? init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "" : ""),
       auto_unbind_unlink_raw_request: item.auto_unbind_unlink_raw_request ?? item.auto_unbind?.unlink_raw_request ?? (idx === 0 ? init.auto_unbind_unlink_raw_request ?? init.auto_unbind?.unlink_raw_request ?? "" : ""),
@@ -252,6 +273,8 @@ function initialAccounts(): GoPayAccountForm[] {
     phone_number: init.phone_number ?? "",
     pin: init.pin ?? "",
     midtrans_client_id: init.midtrans_client_id ?? "",
+    use_sms_otp: Boolean(init.use_sms_otp || init.sms_otp),
+    sms_otp_poll_url: init.sms_otp_poll_url ?? init.sms_otp_url ?? "",
     auto_unbind_raw_request: init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "",
     auto_unbind_base_url: init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "",
     auto_unbind_unlink_raw_request: init.auto_unbind_unlink_raw_request ?? init.auto_unbind?.unlink_raw_request ?? "",
@@ -513,6 +536,10 @@ function cleanAccount(account: GoPayAccountForm, index: number) {
     pin: String(account.pin || ""),
     midtrans_client_id: String(account.midtrans_client_id || ""),
   };
+  if (account.use_sms_otp) {
+    cleaned.use_sms_otp = true;
+    cleaned.sms_otp_poll_url = String(account.sms_otp_poll_url || "").trim();
+  }
   if (String(account.auto_unbind_base_url || "").trim()) {
     cleaned.auto_unbind_base_url = String(account.auto_unbind_base_url || "").trim();
   }
