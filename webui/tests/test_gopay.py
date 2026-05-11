@@ -261,6 +261,17 @@ def test_sms_otp_mode_resends_and_polls_six_digit_code():
     assert b'"reference_id": "33333333-dddd-eeee-ffff-444444444444"' in resend.body
 
 
+def test_sms_otp_extractor_requires_message_context():
+    text = (
+        "YES|(GOJEK) Ini OTP buat hubungkan OpenAI LLC ke GoPay. "
+        "JANGAN KASIH KE SIAPA PUN. OTP: 927716 gojek.com/safety "
+        "merchants-gws-app.gopayapi.com #927716"
+    )
+
+    assert gopay._extract_sms_otp_from_payload(text) == "927716"
+    assert gopay._extract_sms_otp_from_payload({"status": 200, "id": "123456"}) == ""
+
+
 def test_disabled_gopay_accounts_are_not_selected():
     logs: list[str] = []
     cfg = {

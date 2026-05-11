@@ -1229,7 +1229,17 @@ class GoPayCharger:
                      "Referer": "https://merchants-gws-app.gopayapi.com/"},
             timeout=DEFAULT_TIMEOUT,
         )
-        r.raise_for_status()
+        raw_text = getattr(r, "text", "") or ""
+        content_type = str((getattr(r, "headers", {}) or {}).get("content-type") or "")
+        if r.status_code >= 400:
+            raise GoPayError(
+                "validate-otp failed "
+                f"status={r.status_code} "
+                f"content_type={content_type or '-'} "
+                f"reference_id={reference_id} "
+                f"otp_suffix={str(otp or '')[-2:]} "
+                f"body={raw_text[:600]!r}"
+            )
         data = r.json()
         if not data.get("success"):
             raise GoPayError(f"validate-otp failed: {data}")
@@ -3008,6 +3018,44 @@ def _extract_otp_from_payload(
     return found
 
 
+def _payload_to_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return str(value or "")
+
+
+def _extract_sms_otp_from_payload(payload: Any) -> str:
+    text = _payload_to_text(payload).strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if not (
+        "otp" in lowered
+        or "gopay" in lowered
+        or "gojek" in lowered
+        or "verification" in lowered
+        or "verifikasi" in lowered
+        or "验证码" in text
+        or "驗證碼" in text
+    ):
+        return ""
+    for pattern in (
+        r"\bOTP\b[^\d]{0,30}(\d{6})(?!\d)",
+        r"(?:gopay|gojek)[^\d]{0,120}\bOTP\b[^\d]{0,30}(\d{6})(?!\d)",
+        r"(?<!\d)(\d{6})(?!\d)[^\n\r]{0,80}(?:otp|gopay|gojek|verification|verifikasi|验证码|驗證碼)",
+        r"(?<!\d)#(\d{6})(?!\d)",
+    ):
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            code = _clean_otp_candidate(match.group(1))
+            if len(code) == 6:
+                return code
+    return ""
+
+
 def _float_cfg(cfg: dict, key: str, default: float) -> float:
     try:
         return float(cfg.get(key, default))
@@ -3178,10 +3226,7 @@ def sms_http_otp_provider(
                     payload: Any = resp.json()
                 except ValueError:
                     payload = resp.text
-                code = _extract_otp_from_payload(
-                    payload,
-                    code_regex=r"(?<!\d)(\d{6})(?!\d)",
-                )
+                code = _extract_sms_otp_from_payload(payload)
                 if code:
                     return code
                 last_error = ""
