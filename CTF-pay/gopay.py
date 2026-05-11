@@ -1181,10 +1181,20 @@ class GoPayCharger:
             },
             timeout=DEFAULT_TIMEOUT,
         )
-        r.raise_for_status()
-        data = r.json() if str(r.headers.get("content-type") or "").startswith("application/json") and r.text else {}
+        raw_text = getattr(r, "text", "") or ""
+        content_type = str((getattr(r, "headers", {}) or {}).get("content-type") or "")
+        if r.status_code >= 400:
+            raise GoPayError(
+                "resend-otp failed "
+                f"status={r.status_code} "
+                f"content_type={content_type or '-'} "
+                f"url=https://gwa.gopayapi.com/v1/linking/resend-otp "
+                f"reference_id={reference_id} "
+                f"body={raw_text[:600]!r}"
+            )
+        data = r.json() if content_type.startswith("application/json") and raw_text else {}
         if isinstance(data, dict) and data.get("success") is False:
-            raise GoPayError(f"resend-otp failed: {r.text[:300]}")
+            raise GoPayError(f"resend-otp failed status={r.status_code} body={raw_text[:600]!r}")
         self.log("[gopay] SMS OTP resend requested")
 
     def _poll_sms_otp(self) -> str:
