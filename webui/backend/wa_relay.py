@@ -200,7 +200,7 @@ def relay_token() -> str:
 
 def otp_url() -> str:
     base = os.environ.get("WEBUI_INTERNAL_BASE_URL", "http://127.0.0.1:8765").rstrip("/")
-    return f"{base}/api/whatsapp/latest-otp?token={relay_token()}"
+    return f"{base}/api/whatsapp/status?token={relay_token()}"
 
 
 def _digits(value: str | int | float | None) -> str:

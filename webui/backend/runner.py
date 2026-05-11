@@ -258,8 +258,8 @@ def _detect_otp_wait_target(line: str) -> tuple[str, Optional[Path]]:
     if m:
         return "file", Path(m.group(1).strip().strip("'\""))
 
-    # New DB-backed WebUI provider, e.g.
-    # [gopay] waiting WhatsApp OTP from relay: http://127.0.0.1:8765/api/whatsapp/latest-otp?...
+    # DB-backed WebUI provider, e.g.
+    # [gopay] waiting WhatsApp OTP from relay: http://127.0.0.1:8765/api/whatsapp/status?...
     if re.search(r"\[gopay\]\s+waiting WhatsApp OTP from relay:", line):
         return "db", None
     return "", None

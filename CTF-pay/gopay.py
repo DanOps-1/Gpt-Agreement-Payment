@@ -3958,8 +3958,8 @@ def build_configured_otp_provider(
       "gopay": {
         "otp": {
           "source": "http" | "file" | "command" | "manual" | "auto",
-          "url": "http://127.0.0.1:8765/api/whatsapp/latest-otp?token=...",
-          "url": "http://127.0.0.1:8765/api/whatsapp/latest-otp?token=...",
+          "url": "http://127.0.0.1:8765/api/whatsapp/status?token=...",
+          "url": "http://127.0.0.1:8765/api/whatsapp/status?token=...",
           "command": ["python", "scripts/get_wa_otp.py"],
           "timeout": 300,
           "interval": 1,
