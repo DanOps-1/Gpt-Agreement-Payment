@@ -27,6 +27,7 @@
           <TermField v-model="account.label" label="标签" placeholder="钱包标签" />
           <TermField v-model="account.country_code" label="国家区号" placeholder="62" />
           <TermField v-model="account.phone_number" label="手机号" placeholder="81234567890" />
+          <TermField v-model="account.auto_login_phone" label="自动登录账号" placeholder="89530397723" />
           <TermField v-model="account.pin" label="支付 PIN" type="password" placeholder="GoPay PIN" />
           <label class="qr-toggle">
             <input v-model="account.disabled" type="checkbox" />
@@ -232,6 +233,10 @@ type GoPayAccountForm = {
   sms_otp?: boolean;
   sms_otp_poll_url: string;
   sms_otp_url?: string;
+  auto_login_phone: string;
+  login_phone?: string;
+  auto_login_otp_poll_url?: string;
+  auto_login_token_dir?: string;
   auto_unbind_raw_request?: string;
   auto_unbind_base_url?: string;
   auto_unbind_unlink_raw_request?: string;
@@ -253,6 +258,9 @@ function newAccount(seed?: Partial<GoPayAccountForm>, index = 0): GoPayAccountFo
     disabled: Boolean(seed?.disabled),
     use_sms_otp: Boolean(seed?.use_sms_otp || seed?.sms_otp),
     sms_otp_poll_url: seed?.sms_otp_poll_url ?? seed?.sms_otp_url ?? "",
+    auto_login_phone: seed?.auto_login_phone ?? seed?.login_phone ?? "",
+    auto_login_otp_poll_url: seed?.auto_login_otp_poll_url ?? "",
+    auto_login_token_dir: seed?.auto_login_token_dir ?? "",
     auto_unbind_raw_request: seed?.auto_unbind_raw_request ?? "",
     auto_unbind_base_url: seed?.auto_unbind_base_url ?? "",
     auto_unbind_unlink_raw_request: seed?.auto_unbind_unlink_raw_request ?? "",
@@ -272,6 +280,9 @@ function initialAccounts(): GoPayAccountForm[] {
       disabled: Boolean(item.disabled),
       use_sms_otp: Boolean(item.use_sms_otp || item.sms_otp),
       sms_otp_poll_url: item.sms_otp_poll_url ?? item.sms_otp_url ?? "",
+      auto_login_phone: item.auto_login_phone ?? item.login_phone ?? "",
+      auto_login_otp_poll_url: item.auto_login_otp_poll_url ?? "",
+      auto_login_token_dir: item.auto_login_token_dir ?? "",
       auto_unbind_raw_request: item.auto_unbind_raw_request ?? item.auto_unbind?.raw_request ?? (idx === 0 ? init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "" : ""),
       auto_unbind_base_url: item.auto_unbind_base_url ?? item.auto_unbind?.base_url ?? (idx === 0 ? init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "" : ""),
       auto_unbind_unlink_raw_request: item.auto_unbind_unlink_raw_request ?? item.auto_unbind?.unlink_raw_request ?? (idx === 0 ? init.auto_unbind_unlink_raw_request ?? init.auto_unbind?.unlink_raw_request ?? "" : ""),
@@ -286,6 +297,9 @@ function initialAccounts(): GoPayAccountForm[] {
     disabled: Boolean(init.disabled),
     use_sms_otp: Boolean(init.use_sms_otp || init.sms_otp),
     sms_otp_poll_url: init.sms_otp_poll_url ?? init.sms_otp_url ?? "",
+    auto_login_phone: init.auto_login_phone ?? init.login_phone ?? "",
+    auto_login_otp_poll_url: init.auto_login_otp_poll_url ?? "",
+    auto_login_token_dir: init.auto_login_token_dir ?? "",
     auto_unbind_raw_request: init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "",
     auto_unbind_base_url: init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "",
     auto_unbind_unlink_raw_request: init.auto_unbind_unlink_raw_request ?? init.auto_unbind?.unlink_raw_request ?? "",
@@ -553,6 +567,15 @@ function cleanAccount(account: GoPayAccountForm, index: number) {
   if (account.use_sms_otp) {
     cleaned.use_sms_otp = true;
     cleaned.sms_otp_poll_url = String(account.sms_otp_poll_url || "").trim();
+  }
+  if (String(account.auto_login_phone || "").trim()) {
+    cleaned.auto_login_phone = String(account.auto_login_phone || "").trim();
+  }
+  if (String(account.auto_login_otp_poll_url || "").trim()) {
+    cleaned.auto_login_otp_poll_url = String(account.auto_login_otp_poll_url || "").trim();
+  }
+  if (String(account.auto_login_token_dir || "").trim()) {
+    cleaned.auto_login_token_dir = String(account.auto_login_token_dir || "").trim();
   }
   if (String(account.auto_unbind_base_url || "").trim()) {
     cleaned.auto_unbind_base_url = String(account.auto_unbind_base_url || "").trim();

@@ -63,9 +63,27 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
         sms_otp_poll_url = str(item.get("sms_otp_poll_url") or item.get("sms_otp_url") or "").strip()
         if sms_otp_poll_url:
             account["sms_otp_poll_url"] = sms_otp_poll_url
+        auto_login_phone = str(item.get("auto_login_phone") or item.get("login_phone") or "").strip()
+        if auto_login_phone:
+            account["auto_login_phone"] = auto_login_phone
         if item.get("midtrans_client_id") or gp.get("midtrans_client_id"):
             account["midtrans_client_id"] = str(item.get("midtrans_client_id") or gp.get("midtrans_client_id"))
-        for key in ("headers", "qris_headers", "qris_raw_headers", "qris", "qris_base_url", "qris_hmac_key", "qris_service_id", "qris_merchant_id"):
+        for key in (
+            "headers", "qris_headers", "qris_raw_headers", "qris", "qris_base_url",
+            "qris_hmac_key", "qris_service_id", "qris_merchant_id",
+            "login_headers", "auto_login_headers", "auto_login_client_id",
+            "auto_login_client_secret", "auto_login_flow", "auto_login_method",
+            "auto_login_verify_flow", "auto_login_account_id",
+            "auto_login_otp_poll_url", "auto_login_otp_headers", "auto_login_otp_params",
+            "auto_login_otp_timeout", "auto_login_otp_interval", "auto_login_otp_regex",
+            "auto_login_otp_json_path", "auto_login_otp_filter_phone",
+            "auto_login_token_dir", "auto_login_keep_authorization",
+            "auto_login_setup_pin", "auto_login_pin", "auto_login_pin_flow",
+            "auto_login_pin_method", "auto_login_pin_client_id",
+            "auto_login_pin_challenge_id",
+            "login_otp_poll_url", "login_token_dir",
+            "login_hmac_key", "login_nonce_marker",
+        ):
             value = item.get(key) if key in item else gp.get(key)
             if value:
                 account[key] = value
@@ -94,9 +112,27 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
         sms_otp_poll_url = str(gp.get("sms_otp_poll_url") or gp.get("sms_otp_url") or "").strip()
         if sms_otp_poll_url:
             account["sms_otp_poll_url"] = sms_otp_poll_url
+        auto_login_phone = str(gp.get("auto_login_phone") or gp.get("login_phone") or "").strip()
+        if auto_login_phone:
+            account["auto_login_phone"] = auto_login_phone
         if gp.get("midtrans_client_id"):
             account["midtrans_client_id"] = str(gp["midtrans_client_id"])
-        for key in ("headers", "qris_headers", "qris_raw_headers", "qris", "qris_base_url", "qris_hmac_key", "qris_service_id", "qris_merchant_id"):
+        for key in (
+            "headers", "qris_headers", "qris_raw_headers", "qris", "qris_base_url",
+            "qris_hmac_key", "qris_service_id", "qris_merchant_id",
+            "login_headers", "auto_login_headers", "auto_login_client_id",
+            "auto_login_client_secret", "auto_login_flow", "auto_login_method",
+            "auto_login_verify_flow", "auto_login_account_id",
+            "auto_login_otp_poll_url", "auto_login_otp_headers", "auto_login_otp_params",
+            "auto_login_otp_timeout", "auto_login_otp_interval", "auto_login_otp_regex",
+            "auto_login_otp_json_path", "auto_login_otp_filter_phone",
+            "auto_login_token_dir", "auto_login_keep_authorization",
+            "auto_login_setup_pin", "auto_login_pin", "auto_login_pin_flow",
+            "auto_login_pin_method", "auto_login_pin_client_id",
+            "auto_login_pin_challenge_id",
+            "login_otp_poll_url", "login_token_dir",
+            "login_hmac_key", "login_nonce_marker",
+        ):
             if gp.get(key):
                 account[key] = gp[key]
         auto_unbind = _gopay_auto_unbind_from_value(gp)

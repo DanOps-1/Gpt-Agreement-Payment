@@ -111,6 +111,8 @@ DEFAULT_STRIPE_PK = (
 
 GOPAY_PIN_CLIENT_ID_LINK = "51b5f09a-3813-11ee-be56-0242ac120002-MGUPA"
 GOPAY_PIN_CLIENT_ID_CHARGE = "47180a8e-f56e-11ed-a05b-0242ac120003-GWC"
+GOPAY_LOGIN_CLIENT_ID = "gopay:consumer:app"
+GOPAY_LOGIN_CLIENT_SECRET = "raOUumeMRBNifqvZRFjvsgTnjAlaA9"
 
 DEFAULT_TIMEOUT = 30
 LINK_RETRY_LIMIT = 2  # 406 "account already linked" retry
@@ -128,6 +130,7 @@ TRANSIENT_REQUEST_RETRY_LIMIT = 3
 TRANSIENT_REQUEST_RETRY_MIN_S = 1.0
 TRANSIENT_REQUEST_RETRY_MAX_S = 2.5
 DEFAULT_OTP_REGEX = r"(?<!\d)(\d{6})(?!\d)"
+GOPAY_AUTO_LOGIN_OTP_REGEX = r"(?<!\d)(\d{4,8})(?!\d)"
 
 
 def _looks_transient_request_error(exc: Exception) -> bool:
@@ -199,6 +202,19 @@ def _proxy_list_from_cfg(cfg: Optional[dict], primary_proxy: Optional[str] = Non
 
 def _json_dumps_compact(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _write_json_file(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _safe_filename_part(value: Any, default: str = "unknown") -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"[^A-Za-z0-9_.+-]+", "_", text).strip("._")
+    return text or default
 
 
 def _raw_headers_to_dict(raw: Any) -> dict[str, str]:
@@ -285,6 +301,17 @@ def _default_qris_headers(gopay_cfg: dict) -> dict[str, str]:
         ),
         "content-type": "application/json",
     }
+
+
+def _default_gopay_app_headers(gopay_cfg: dict) -> dict[str, str]:
+    headers = _default_qris_headers(gopay_cfg)
+    headers.update({
+        "x-authsdk-version": str(gopay_cfg.get("x_authsdk_version") or "1.0.0"),
+        "x-cvsdk-version": str(gopay_cfg.get("x_cvsdk_version") or "1.0.0"),
+        "x-request-id": str(uuid.uuid1()),
+        "transaction-id": str(uuid.uuid4()),
+    })
+    return headers
 
 
 def _parse_tlv(value: str) -> list[tuple[str, str]]:
@@ -558,6 +585,39 @@ def normalize_gopay_accounts(gopay_cfg: dict) -> list[dict]:
             "sms_otp_interval",
             "sms_otp_headers",
             "sms_otp_params",
+            "auto_login_phone",
+            "auto_login_country_code",
+            "auto_login",
+            "login_phone",
+            "login_country_code",
+            "login_headers",
+            "auto_login_headers",
+            "auto_login_client_id",
+            "auto_login_client_secret",
+            "auto_login_flow",
+            "auto_login_method",
+            "auto_login_verify_flow",
+            "auto_login_account_id",
+            "auto_login_otp_poll_url",
+            "auto_login_otp_headers",
+            "auto_login_otp_params",
+            "auto_login_otp_timeout",
+            "auto_login_otp_interval",
+            "auto_login_otp_regex",
+            "auto_login_otp_json_path",
+            "auto_login_otp_filter_phone",
+            "auto_login_token_dir",
+            "auto_login_keep_authorization",
+            "auto_login_setup_pin",
+            "auto_login_pin",
+            "auto_login_pin_flow",
+            "auto_login_pin_method",
+            "auto_login_pin_client_id",
+            "auto_login_pin_challenge_id",
+            "login_otp_poll_url",
+            "login_token_dir",
+            "login_hmac_key",
+            "login_nonce_marker",
         ):
             if key in gopay_cfg:
                 account[key] = gopay_cfg.get(key)
@@ -688,6 +748,32 @@ class GoPayCharger:
         ).strip()
         self.sms_otp_timeout = _float_cfg(gopay_cfg, "sms_otp_timeout", _float_cfg(gopay_cfg, "otp_timeout", 300.0))
         self.sms_otp_interval = _float_cfg(gopay_cfg, "sms_otp_interval", _float_cfg(gopay_cfg, "otp_interval", 1.0))
+        self.auto_login_otp_poll_url = str(
+            gopay_cfg.get("auto_login_otp_poll_url")
+            or gopay_cfg.get("login_otp_poll_url")
+            or gopay_cfg.get("sms_otp_poll_url")
+            or gopay_cfg.get("sms_otp_url")
+            or ""
+        ).strip()
+        self.auto_login_otp_timeout = _float_cfg(gopay_cfg, "auto_login_otp_timeout", self.sms_otp_timeout)
+        self.auto_login_otp_interval = _float_cfg(gopay_cfg, "auto_login_otp_interval", self.sms_otp_interval)
+        self.auto_login_token_dir = str(
+            gopay_cfg.get("auto_login_token_dir")
+            or gopay_cfg.get("login_token_dir")
+            or ""
+        ).strip()
+        self.auto_login_phone = _phone_digits(
+            gopay_cfg.get("auto_login_phone")
+            or gopay_cfg.get("login_phone")
+            or ""
+        )
+        self.auto_login_country_code = str(
+            gopay_cfg.get("auto_login_country_code")
+            or gopay_cfg.get("login_country_code")
+            or self.country_code
+            or "62"
+        ).lstrip("+")
+        self.auto_login_pin = _phone_digits(gopay_cfg.get("auto_login_pin") or self.pin)
         self.midtrans_page_url = ""
         self.gopay_activation_link_url = ""
         self.stop_after_link_pin_url = bool(
@@ -746,6 +832,516 @@ class GoPayCharger:
         if last_exc:
             raise last_exc
         raise GoPayError(f"request retry exhausted: {method} {url}")
+
+    def _gopay_signed_headers_for_url(
+        self,
+        method: str,
+        url: str,
+        body_text: str,
+        *,
+        extra_headers: Any = None,
+        strip_authorization: bool = False,
+        body_for_signature: str | None = None,
+    ) -> dict[str, str]:
+        headers = _merge_header_sources(
+            _default_gopay_app_headers(self.gopay_cfg),
+            *_auto_unbind_header_sources(self.gopay_cfg),
+            self.gopay_cfg.get("headers"),
+            self.gopay_cfg.get("login_headers"),
+            self.gopay_cfg.get("auto_login_headers"),
+            extra_headers,
+        )
+        parsed = urlsplit(url)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        has_authorization = any(
+            key.lower() == "authorization" and str(value or "").strip()
+            for key, value in headers.items()
+        )
+        send_authorization = not (strip_authorization or not has_authorization)
+        if not send_authorization:
+            for name in list(headers):
+                if name.lower() == "authorization":
+                    headers.pop(name, None)
+            if _signed_gopay_headers is not None:
+                headers["authorization"] = "Bearer "
+        if _signed_gopay_headers is None:
+            headers["host"] = parsed.netloc
+            return headers
+        key = str(self.gopay_cfg.get("login_hmac_key") or self.gopay_cfg.get("qris_hmac_key") or "")
+        kwargs: dict[str, Any] = {
+            "method": method.upper(),
+            "host": parsed.netloc,
+            "path": path,
+            "body": body_text,
+        }
+        if body_for_signature is not None:
+            kwargs["body_for_signature"] = body_for_signature
+            kwargs["body_text"] = body_text
+        if key:
+            kwargs["key"] = key
+        nonce_marker = str(self.gopay_cfg.get("login_nonce_marker") or self.gopay_cfg.get("qris_nonce_marker") or "")
+        if nonce_marker:
+            kwargs["nonce_marker_hex"] = nonce_marker
+        try:
+            signed = _signed_gopay_headers(headers, **kwargs)
+        except Exception as exc:
+            raise GoPayError(f"gopay auto-login header signing failed: {exc}") from exc
+        if not send_authorization:
+            for name in list(signed):
+                if name.lower() == "authorization":
+                    signed.pop(name, None)
+        return signed
+
+    def _gopay_app_signed_headers(self, method: str, url: str, body_text: str, extra_headers: Any = None) -> dict[str, str]:
+        return self._gopay_signed_headers_for_url(
+            method,
+            url,
+            body_text,
+            extra_headers=extra_headers,
+            strip_authorization=not _truthy_cfg(self.gopay_cfg.get("auto_login_keep_authorization")),
+        )
+
+    def _gopay_signed_json_post(
+        self,
+        base_url: str,
+        path: str,
+        body: dict,
+        *,
+        label: str,
+        allow_statuses: tuple[int, ...] = (),
+        extra_headers: Any = None,
+        strip_authorization: bool = False,
+    ) -> dict:
+        url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+        body_text = _json_dumps_compact(body)
+        headers = self._gopay_signed_headers_for_url(
+            "POST",
+            url,
+            body_text,
+            extra_headers=extra_headers,
+            strip_authorization=strip_authorization,
+        )
+        r = self._request_ext(
+            "POST",
+            url,
+            data=body_text,
+            headers=headers,
+            timeout=DEFAULT_TIMEOUT,
+            retry_label=f"{label} {path}",
+        )
+        raw_text = getattr(r, "text", "") or ""
+        content_type = str((getattr(r, "headers", {}) or {}).get("content-type") or "")
+        try:
+            data = r.json() if "json" in content_type.lower() and raw_text else {}
+        except Exception:
+            data = {}
+        if r.status_code >= 400 and r.status_code not in allow_statuses:
+            raise GoPayError(
+                f"{label} POST {path} failed "
+                f"status={r.status_code} content_type={content_type or '-'} body={raw_text[:600]!r}"
+            )
+        return {
+            "status_code": r.status_code,
+            "body": data,
+            "raw_text": raw_text,
+            "content_type": content_type,
+        }
+
+    def _gopay_app_post(
+        self,
+        path: str,
+        body: dict,
+        *,
+        allow_statuses: tuple[int, ...] = (),
+        extra_headers: Any = None,
+        strip_authorization: bool | None = None,
+    ) -> dict:
+        return self._gopay_signed_json_post(
+            "https://accounts.goto-products.com/",
+            path,
+            body,
+            label="gopay auto-login",
+            allow_statuses=allow_statuses,
+            extra_headers=extra_headers,
+            strip_authorization=(
+                not _truthy_cfg(self.gopay_cfg.get("auto_login_keep_authorization"))
+                if strip_authorization is None
+                else strip_authorization
+            ),
+        )
+
+    def _gopay_customer_post(
+        self,
+        path: str,
+        body: dict,
+        *,
+        extra_headers: Any = None,
+        allow_statuses: tuple[int, ...] = (),
+    ) -> dict:
+        return self._gopay_signed_json_post(
+            GOPAY_CUSTOMER_BASE_URL,
+            path,
+            body,
+            label="gopay customer",
+            allow_statuses=allow_statuses,
+            extra_headers=extra_headers,
+            strip_authorization=False,
+        )
+
+    def _poll_auto_login_otp(self, phone: str, country_code: str, *, exclude_codes: Any = None) -> str:
+        if not self.auto_login_otp_poll_url:
+            raise GoPayError("auto-login initiate returned otp_token but auto_login_otp_poll_url/sms_otp_poll_url is empty")
+        params = self.gopay_cfg.get("auto_login_otp_params")
+        if not isinstance(params, dict):
+            params = self.gopay_cfg.get("sms_otp_params") if isinstance(self.gopay_cfg.get("sms_otp_params"), dict) else {}
+        params = dict(params or {})
+        if phone and "phone" not in params:
+            params["phone"] = phone
+        if country_code and "country_code" not in params:
+            params["country_code"] = country_code
+        filter_phone = _truthy_cfg(self.gopay_cfg.get("auto_login_otp_filter_phone"))
+        provider = whatsapp_http_otp_provider(
+            self.auto_login_otp_poll_url,
+            timeout=self.auto_login_otp_timeout,
+            interval=self.auto_login_otp_interval,
+            headers=_headers_cfg(self.gopay_cfg.get("auto_login_otp_headers") or self.gopay_cfg.get("sms_otp_headers")),
+            params=params,
+            code_regex=str(self.gopay_cfg.get("auto_login_otp_regex") or GOPAY_AUTO_LOGIN_OTP_REGEX),
+            json_path=str(self.gopay_cfg.get("auto_login_otp_json_path") or self.gopay_cfg.get("sms_otp_json_path") or ""),
+            phone=phone if filter_phone else "",
+            country_code=country_code if filter_phone else "",
+            exclude_codes=exclude_codes,
+            log=self.log,
+        )
+        return provider()
+
+    def _gopay_save_login_tokens(
+        self,
+        *,
+        phone: str,
+        country_code: str,
+        account_id: str,
+        token_body: dict,
+        account_list: list[Any],
+        verification_id: str,
+        pin_setup_result: dict | None = None,
+    ) -> str:
+        data = token_body.get("data") if isinstance(token_body.get("data"), dict) else {}
+        root = Path(self.auto_login_token_dir) if self.auto_login_token_dir else Path(__file__).resolve().parents[1] / "output" / "gopay_tokens"
+        filename = f"{_safe_filename_part(country_code)}_{_safe_filename_part(phone)}.json"
+        path = root / filename
+        payload = {
+            "phone_number": phone,
+            "country_code": f"+{country_code}",
+            "account_id": account_id,
+            "verification_id": verification_id,
+            "saved_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "client_id": str(self.gopay_cfg.get("auto_login_client_id") or GOPAY_LOGIN_CLIENT_ID),
+            "token": {
+                "access_token": data.get("access_token"),
+                "refresh_token": data.get("refresh_token"),
+                "user_type": data.get("user_type"),
+                "flags": data.get("flags"),
+            },
+            "account_list": account_list,
+        }
+        if pin_setup_result:
+            payload["pin_setup"] = pin_setup_result
+        _write_json_file(path, payload)
+        return str(path)
+
+    def _gopay_setup_pin_after_login(
+        self,
+        *,
+        phone: str,
+        country_code: str,
+        access_token: str,
+        client_id: str,
+        client_secret: str,
+        exclude_codes: Any = None,
+    ) -> dict:
+        setup_flag = self.gopay_cfg.get("auto_login_setup_pin")
+        if isinstance(setup_flag, str) and setup_flag.strip().lower() in ("0", "false", "no", "n", "off"):
+            return {"ok": False, "skipped": True, "reason": "disabled"}
+        if setup_flag is False:
+            return {"ok": False, "skipped": True, "reason": "disabled"}
+        if not self.auto_login_pin:
+            return {"ok": False, "skipped": True, "reason": "missing_pin"}
+
+        flow = str(self.gopay_cfg.get("auto_login_pin_flow") or "goto_pin_wa_sms")
+        method = str(self.gopay_cfg.get("auto_login_pin_method") or "otp_sms")
+        auth_headers = {"authorization": f"Bearer {access_token}"}
+        methods_resp = self._gopay_app_post(
+            "/cvs/v1/methods",
+            {
+                "country_code": None,
+                "email_address": None,
+                "client_id": client_id,
+                "phone_number": None,
+                "client_secret": client_secret,
+                "flow": flow,
+                "device_verification_token_id": None,
+            },
+            extra_headers=auth_headers,
+            strip_authorization=False,
+        )
+        methods_body = methods_resp.get("body") if isinstance(methods_resp.get("body"), dict) else {}
+        methods_data = methods_body.get("data") if isinstance(methods_body.get("data"), dict) else {}
+        verification_id = str(methods_data.get("verification_id") or self.gopay_cfg.get("auto_login_pin_verification_id") or "")
+        if not verification_id:
+            raise GoPayError(f"gopay auto-login pin methods missing verification_id: {_log_preview(methods_body or methods_resp.get('raw_text'), 500)}")
+
+        initiate_resp = self._gopay_app_post(
+            "/cvs/v1/initiate",
+            {
+                "verification_id": verification_id,
+                "flow": flow,
+                "verification_method": method,
+                "country_code": None,
+                "email_address": None,
+                "client_id": client_id,
+                "phone_number": None,
+                "client_secret": client_secret,
+                "is_multiple_method": None,
+                "device_verification_token_id": None,
+            },
+            extra_headers=auth_headers,
+            strip_authorization=False,
+        )
+        initiate_body = initiate_resp.get("body") if isinstance(initiate_resp.get("body"), dict) else {}
+        initiate_data = initiate_body.get("data") if isinstance(initiate_body.get("data"), dict) else {}
+        otp_token = str(initiate_data.get("otp_token") or "")
+        if not otp_token:
+            raise GoPayError(f"gopay auto-login pin initiate missing otp_token: {_log_preview(initiate_body or initiate_resp.get('raw_text'), 500)}")
+        self.log(
+            "[gopay-login] pin cvs/initiate "
+            f"status={initiate_resp.get('status_code')} "
+            f"otp_token=yes phone={str((initiate_data.get('metadata') or {}).get('phone') or _mask_phone(phone, country_code))}"
+        )
+
+        otp = self._poll_auto_login_otp(phone, country_code, exclude_codes=exclude_codes)
+        verify_resp = self._gopay_app_post(
+            "/cvs/v1/verify",
+            {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "flow": flow,
+                "verification_method": method,
+                "verification_id": verification_id,
+                "data": {"otp": otp, "otp_token": otp_token},
+            },
+        )
+        verify_body = verify_resp.get("body") if isinstance(verify_resp.get("body"), dict) else {}
+        verify_data = verify_body.get("data") if isinstance(verify_body.get("data"), dict) else {}
+        verification_token = str(verify_data.get("verification_token") or "")
+        if not verification_token:
+            raise GoPayError(f"gopay auto-login pin verify missing verification_token: {_log_preview(verify_body or verify_resp.get('raw_text'), 500)}")
+
+        setup_resp = self._gopay_customer_post(
+            "/api/v2/users/pins/setup/tokens",
+            {
+                "client_id": str(self.gopay_cfg.get("auto_login_pin_client_id") or ""),
+                "pin": self.auto_login_pin,
+                "challenge_id": str(self.gopay_cfg.get("auto_login_pin_challenge_id") or ""),
+            },
+            extra_headers={
+                "authorization": f"Bearer {access_token}",
+                "verification-token": f"Bearer {verification_token}",
+            },
+        )
+        setup_body = setup_resp.get("body") if isinstance(setup_resp.get("body"), dict) else {}
+        if setup_body.get("success") is False:
+            raise GoPayError(f"gopay auto-login pin setup failed: {_log_preview(setup_body or setup_resp.get('raw_text'), 500)}")
+        setup_data = setup_body.get("data") if isinstance(setup_body.get("data"), dict) else {}
+        setup_token = str(setup_data.get("token") or setup_body.get("token") or "")
+        self.log(
+            "[gopay-login] pin setup "
+            f"status={setup_resp.get('status_code')} "
+            f"token_tail={(setup_token[-8:] if setup_token else '-')}"
+        )
+        return {
+            "ok": True,
+            "methods_status": methods_resp.get("status_code"),
+            "initiate_status": initiate_resp.get("status_code"),
+            "verify_status": verify_resp.get("status_code"),
+            "setup_status": setup_resp.get("status_code"),
+            "verification_id": verification_id,
+            "setup_token_tail": setup_token[-8:] if setup_token else "",
+        }
+
+    def _gopay_complete_auto_login_tokens(
+        self,
+        *,
+        phone: str,
+        country_code: str,
+        verification_id: str,
+        otp_token: str,
+        client_id: str,
+        client_secret: str,
+    ) -> dict:
+        otp = self._poll_auto_login_otp(phone, country_code)
+        verify_resp = self._gopay_app_post(
+            "/cvs/v1/verify",
+            {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "flow": str(self.gopay_cfg.get("auto_login_verify_flow") or "login_1fa"),
+                "verification_method": str(self.gopay_cfg.get("auto_login_method") or "otp_sms"),
+                "verification_id": verification_id,
+                "data": {"otp": otp, "otp_token": otp_token},
+            },
+        )
+        verify_body = verify_resp.get("body") if isinstance(verify_resp.get("body"), dict) else {}
+        verify_data = verify_body.get("data") if isinstance(verify_body.get("data"), dict) else {}
+        verification_token = str(verify_data.get("verification_token") or "")
+        if not verification_token:
+            raise GoPayError(f"gopay auto-login verify missing verification_token: {_log_preview(verify_body or verify_resp.get('raw_text'), 500)}")
+
+        accountlist_headers = {"verification-token": f"Bearer {verification_token}"}
+        accountlist_resp = self._gopay_app_post(
+            "/goto-auth/accountlist",
+            {"client_id": client_id, "client_secret": client_secret},
+            extra_headers=accountlist_headers,
+        )
+        accountlist_body = accountlist_resp.get("body") if isinstance(accountlist_resp.get("body"), dict) else {}
+        accountlist_data = accountlist_body.get("data") if isinstance(accountlist_body.get("data"), dict) else {}
+        account_list = accountlist_data.get("account_list") if isinstance(accountlist_data.get("account_list"), list) else []
+        one_fa_token = str(accountlist_data.get("1fa_token") or "")
+        account_id = str(
+            self.gopay_cfg.get("auto_login_account_id")
+            or (account_list[0].get("account_id") if account_list and isinstance(account_list[0], dict) else "")
+        )
+        if not account_id or not one_fa_token:
+            raise GoPayError(f"gopay auto-login accountlist missing account_id/1fa_token: {_log_preview(accountlist_body or accountlist_resp.get('raw_text'), 500)}")
+
+        token_resp = self._gopay_app_post(
+            "/goto-auth/token",
+            {
+                "grant_type": "cvs",
+                "account_id": account_id,
+                "token": one_fa_token,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "ext_user_token": None,
+            },
+        )
+        token_body = token_resp.get("body") if isinstance(token_resp.get("body"), dict) else {}
+        token_data = token_body.get("data") if isinstance(token_body.get("data"), dict) else {}
+        access_token = str(token_data.get("access_token") or "")
+        refresh_token = str(token_data.get("refresh_token") or "")
+        if not access_token or not refresh_token:
+            raise GoPayError(f"gopay auto-login token missing access/refresh token: {_log_preview(token_body or token_resp.get('raw_text'), 500)}")
+        token_path = self._gopay_save_login_tokens(
+            phone=phone,
+            country_code=country_code,
+            account_id=account_id,
+            token_body=token_body,
+            account_list=account_list,
+            verification_id=verification_id,
+        )
+        self.log(
+            "[gopay-login] token saved "
+            f"phone={_mask_phone(phone, country_code)} account_id={account_id} "
+            f"access_tail={access_token[-8:]} refresh_tail={refresh_token[-8:]} path={token_path}"
+        )
+        pin_setup_result = self._gopay_setup_pin_after_login(
+            phone=phone,
+            country_code=country_code,
+            access_token=access_token,
+            client_id=client_id,
+            client_secret=client_secret,
+            exclude_codes=(otp,),
+        )
+        if pin_setup_result:
+            self._gopay_save_login_tokens(
+                phone=phone,
+                country_code=country_code,
+                account_id=account_id,
+                token_body=token_body,
+                account_list=account_list,
+                verification_id=verification_id,
+                pin_setup_result=pin_setup_result,
+            )
+        return {
+            "ok": True,
+            "verify_status": verify_resp.get("status_code"),
+            "accountlist_status": accountlist_resp.get("status_code"),
+            "token_status": token_resp.get("status_code"),
+            "account_id": account_id,
+            "access_tail": access_token[-8:],
+            "refresh_tail": refresh_token[-8:],
+            "token_path": token_path,
+            "pin_setup": pin_setup_result,
+        }
+
+    def _gopay_auto_login_if_configured(self) -> dict:
+        if not self.auto_login_phone:
+            return {"ok": False, "skipped": True, "reason": "missing_phone"}
+        country_code = self.auto_login_country_code or "62"
+        phone = self.auto_login_phone
+        client_id = str(self.gopay_cfg.get("auto_login_client_id") or GOPAY_LOGIN_CLIENT_ID)
+        client_secret = str(self.gopay_cfg.get("auto_login_client_secret") or GOPAY_LOGIN_CLIENT_SECRET)
+        verification_id = str(self.gopay_cfg.get("auto_login_verification_id") or uuid.uuid4())
+        login_body = {
+            "phone_number": phone,
+            "country_code": f"+{country_code}",
+            "email": "",
+            "device_verification_token_id": "",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+        login_resp = self._gopay_app_post(
+            "/goto-auth/login/methods",
+            login_body,
+            allow_statuses=(401,),
+        )
+        self.log(
+            "[gopay-login] login/methods "
+            f"status={login_resp.get('status_code')} body={_log_preview(login_resp.get('body') or login_resp.get('raw_text'))}"
+        )
+        initiate_body = {
+            "verification_id": verification_id,
+            "flow": str(self.gopay_cfg.get("auto_login_flow") or "signup"),
+            "verification_method": str(self.gopay_cfg.get("auto_login_method") or "otp_sms"),
+            "country_code": f"+{country_code}",
+            "email_address": None,
+            "client_id": client_id,
+            "phone_number": phone,
+            "client_secret": client_secret,
+            "is_multiple_method": None,
+            "device_verification_token_id": None,
+        }
+        initiate_resp = self._gopay_app_post("/cvs/v1/initiate", initiate_body)
+        body = initiate_resp.get("body") if isinstance(initiate_resp.get("body"), dict) else {}
+        data = body.get("data") if isinstance(body.get("data"), dict) else {}
+        otp_token = str(data.get("otp_token") or "")
+        masked_phone = str((data.get("metadata") or {}).get("phone") or "")
+        self.log(
+            "[gopay-login] cvs/initiate "
+            f"status={initiate_resp.get('status_code')} "
+            f"otp_token={'yes' if otp_token else 'no'} "
+            f"phone={masked_phone or _mask_phone(phone, country_code)}"
+        )
+        token_result = {}
+        if otp_token:
+            token_result = self._gopay_complete_auto_login_tokens(
+                phone=phone,
+                country_code=country_code,
+                verification_id=verification_id,
+                otp_token=otp_token,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+        return {
+            "ok": bool(otp_token or body.get("success")),
+            "login_methods_status": login_resp.get("status_code"),
+            "initiate_status": initiate_resp.get("status_code"),
+            "otp_token_received": bool(otp_token),
+            "verification_id": verification_id,
+            "token_result": token_result,
+        }
 
     # ───── Step 1-4: ChatGPT/Stripe checkout ─────
 
@@ -2777,6 +3373,7 @@ class GoPayCharger:
         return result
 
     def _run_midtrans_and_gopay(self, snap_token: str, cs_id: str) -> dict:
+        auto_login_result = self._gopay_auto_login_if_configured()
         self._midtrans_load_transaction(snap_token)
         reference_id = self._midtrans_init_linking(snap_token)
 
@@ -2814,8 +3411,14 @@ class GoPayCharger:
         self._gopay_payment_process(charge_ref, pin_token2)
 
         if cs_id:
-            return self._chatgpt_verify(cs_id)
-        return {"state": "succeeded", "snap_token": snap_token, "charge_ref": charge_ref}
+            result = self._chatgpt_verify(cs_id)
+            if auto_login_result and not auto_login_result.get("skipped"):
+                result["auto_login"] = auto_login_result
+            return result
+        result = {"state": "succeeded", "snap_token": snap_token, "charge_ref": charge_ref}
+        if auto_login_result and not auto_login_result.get("skipped"):
+            result["auto_login"] = auto_login_result
+        return result
 
 
 # ──────────────────────────── OTP providers ───────────────────────
@@ -2862,7 +3465,7 @@ def _clean_otp_candidate(value: Any) -> str:
     return ""
 
 
-def _extract_otp_from_text(text: str, code_regex: str = DEFAULT_OTP_REGEX) -> str:
+def _extract_otp_from_text(text: str, code_regex: str = DEFAULT_OTP_REGEX, exclude_codes: Any = None) -> str:
     """Extract the most likely WhatsApp OTP from a text blob.
 
     Keyword-aware patterns run before the generic regex to avoid confusing
@@ -2870,6 +3473,8 @@ def _extract_otp_from_text(text: str, code_regex: str = DEFAULT_OTP_REGEX) -> st
     """
     if not text:
         return ""
+    excluded = {_clean_otp_candidate(code) for code in (exclude_codes or [])}
+    excluded.discard("")
     patterns = [
         r"(?:otp|one[-\s]*time|verification|verify|code|kode|verifikasi|gopay|whatsapp|验证码|驗證碼)[^\d]{0,80}(\d{4,8})(?!\d)",
         r"(?<!\d)(\d{4,8})(?!\d)[^\n\r]{0,80}(?:otp|one[-\s]*time|verification|verify|code|kode|verifikasi|gopay|验证码|驗證碼)",
@@ -2884,7 +3489,7 @@ def _extract_otp_from_text(text: str, code_regex: str = DEFAULT_OTP_REGEX) -> st
             groups = match.groups() or (match.group(0),)
             for group in reversed(groups):
                 code = _clean_otp_candidate(group)
-                if code:
+                if code and code not in excluded:
                     return code
     return ""
 
@@ -2991,6 +3596,7 @@ def _extract_otp_from_payload(
     issued_after: float = 0.0,
     phone: str = "",
     country_code: str = "",
+    exclude_codes: Any = None,
 ) -> str:
     if isinstance(payload, str):
         stripped = payload.strip()
@@ -3000,11 +3606,11 @@ def _extract_otp_from_payload(
             except Exception:
                 if phone:
                     return ""
-                return _extract_otp_from_text(payload, code_regex=code_regex)
+                return _extract_otp_from_text(payload, code_regex=code_regex, exclude_codes=exclude_codes)
         else:
             if phone:
                 return ""
-            return _extract_otp_from_text(payload, code_regex=code_regex)
+            return _extract_otp_from_text(payload, code_regex=code_regex, exclude_codes=exclude_codes)
 
     if json_path:
         target, parent = _json_path_get_with_parent(payload, json_path)
@@ -3016,7 +3622,7 @@ def _extract_otp_from_payload(
                 return ""
         if not isinstance(target, str):
             target = json.dumps(target, ensure_ascii=False)
-        return _extract_otp_from_text(target, code_regex=code_regex)
+        return _extract_otp_from_text(target, code_regex=code_regex, exclude_codes=exclude_codes)
 
     found = ""
     for text, ts, source_obj in _iter_json_message_candidates(payload):
@@ -3026,7 +3632,7 @@ def _extract_otp_from_payload(
             phone_values = _collect_phone_values(source_obj)
             if not phone_values or not _phone_values_match(phone_values, phone, country_code):
                 continue
-        code = _extract_otp_from_text(text, code_regex=code_regex)
+        code = _extract_otp_from_text(text, code_regex=code_regex, exclude_codes=exclude_codes)
         if code:
             found = code
     return found
@@ -3149,6 +3755,7 @@ def whatsapp_http_otp_provider(
     phone: str = "",
     country_code: str = "",
     issued_after_slack_s: float = 15.0,
+    exclude_codes: Any = None,
     log: Callable[[str], None] = print,
 ) -> Callable[[], str]:
     """Poll a local/owned WhatsApp relay HTTP endpoint for the latest OTP.
@@ -3195,6 +3802,7 @@ def whatsapp_http_otp_provider(
                     issued_after=issued_after,
                     phone=phone,
                     country_code=country_code,
+                    exclude_codes=exclude_codes,
                 )
                 if code:
                     return code

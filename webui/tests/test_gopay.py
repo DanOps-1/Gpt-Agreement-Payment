@@ -5,6 +5,7 @@ All HTTP endpoints are mocked via the `responses` library; no live network.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import time
 from pathlib import Path
@@ -721,6 +722,192 @@ def test_qris_request_resigns_x_e1_per_body(monkeypatch):
     assert signed[1]["path"] == "/v1/qris/payments"
     assert signed[1]["body_for_signature"] == ""
     assert signed[1]["body_text"] == signed[1]["body"]
+
+
+@responses.activate
+def test_gopay_auto_login_posts_login_and_saves_token(monkeypatch, tmp_path):
+    signed: list[dict] = []
+    logs: list[str] = []
+    charger = gopay.GoPayCharger(
+        requests.Session(),
+        {
+            "country_code": "62",
+            "phone_number": "87868653447",
+            "pin": "123456",
+            "auto_login_phone": "89530397723",
+            "auto_login_otp_poll_url": "https://sms.example/auto-login",
+            "auto_login_token_dir": str(tmp_path),
+            "auto_login_pin_client_id": "",
+            "auto_login_pin_challenge_id": "",
+            "headers": {
+                "authorization": "Bearer token",
+                "x-m1": "m1",
+                "x-uniqueid": "unique",
+                "x-phonemake": "OPPO",
+                "x-phonemodel": "OPPO, PGEM10",
+                "x-deviceos": "Android, 12",
+                "x-appversion": "2.8.0",
+                "x-appid": "com.gojek.gopay",
+                "x-apptype": "GOPAY",
+                "x-platform": "Android",
+                "x-e1": "old",
+            },
+        },
+        otp_provider=lambda: "",
+        log=logs.append,
+    )
+
+    def fake_signed(headers, **kwargs):
+        signed.append({"headers": dict(headers), **kwargs})
+        out = dict(headers)
+        out["x-e1"] = f"signed:{kwargs['path']}"
+        return out
+
+    monkeypatch.setattr(gopay, "_signed_gopay_headers", fake_signed)
+    responses.post(
+        "https://accounts.goto-products.com/goto-auth/login/methods",
+        status=401,
+        json={
+            "data": None,
+            "success": False,
+            "errors": [{"code": "auth:error:user:not_found"}],
+        },
+    )
+    responses.post(
+        "https://accounts.goto-products.com/cvs/v1/initiate",
+        json={
+            "data": {
+                "otp_token": "otp-token",
+                "otp_length": 4,
+                "metadata": {"phone": "+62*******7723"},
+            },
+            "success": True,
+        },
+    )
+    responses.get(
+        "https://sms.example/auto-login",
+        body="YES|(GOJEK) OTP: 9302",
+    )
+    responses.get(
+        "https://sms.example/auto-login",
+        body="YES|(GOJEK) OTP: 9457",
+    )
+    responses.post(
+        "https://accounts.goto-products.com/cvs/v1/verify",
+        json={"data": {"verification_token": "verification-token"}, "success": True},
+    )
+    responses.post(
+        "https://accounts.goto-products.com/goto-auth/accountlist",
+        json={
+            "data": {
+                "account_list": [{"account_id": "758035604"}],
+                "1fa_token": "one-fa-token",
+            },
+            "success": True,
+        },
+    )
+    responses.post(
+        "https://accounts.goto-products.com/goto-auth/token",
+        status=201,
+        json={
+            "data": {
+                "access_token": "access-token-abcdef",
+                "refresh_token": "refresh-token-uvwxyz",
+                "flags": {"onetap_eligible": False},
+                "user_type": "customer",
+            },
+            "success": True,
+        },
+    )
+    responses.post(
+        "https://accounts.goto-products.com/cvs/v1/methods",
+        json={
+            "data": {
+                "default_method": "otp_wa",
+                "methods": ["otp_wa", "otp_sms"],
+                "verification_id": "pin-verification-id",
+            },
+            "success": True,
+        },
+    )
+    responses.post(
+        "https://accounts.goto-products.com/cvs/v1/initiate",
+        json={
+            "data": {
+                "otp_token": "pin-otp-token",
+                "otp_length": 4,
+                "metadata": {"phone": "+62*******7723"},
+            },
+            "success": True,
+        },
+    )
+    responses.post(
+        "https://accounts.goto-products.com/cvs/v1/verify",
+        json={"data": {"verification_token": "pin-verification-token"}, "success": True},
+    )
+    responses.post(
+        "https://customer.gopayapi.com/api/v2/users/pins/setup/tokens",
+        json={"data": {"token": "pin-setup-token-12345678"}, "success": True},
+    )
+
+    result = charger._gopay_auto_login_if_configured()
+
+    assert result["ok"] is True
+    assert result["otp_token_received"] is True
+    assert [item["path"] for item in signed] == [
+        "/goto-auth/login/methods",
+        "/cvs/v1/initiate",
+        "/cvs/v1/verify",
+        "/goto-auth/accountlist",
+        "/goto-auth/token",
+        "/cvs/v1/methods",
+        "/cvs/v1/initiate",
+        "/cvs/v1/verify",
+        "/api/v2/users/pins/setup/tokens",
+    ]
+    first_body = json.loads(responses.calls[0].request.body)
+    second_body = json.loads(responses.calls[1].request.body)
+    verify_body = json.loads(responses.calls[3].request.body)
+    accountlist_body = json.loads(responses.calls[4].request.body)
+    token_body = json.loads(responses.calls[5].request.body)
+    pin_methods_body = json.loads(responses.calls[6].request.body)
+    pin_initiate_body = json.loads(responses.calls[7].request.body)
+    pin_verify_body = json.loads(responses.calls[9].request.body)
+    pin_setup_body = json.loads(responses.calls[10].request.body)
+    assert first_body["phone_number"] == "89530397723"
+    assert first_body["country_code"] == "+62"
+    assert first_body["client_id"] == gopay.GOPAY_LOGIN_CLIENT_ID
+    assert "authorization" not in responses.calls[0].request.headers
+    assert second_body["flow"] == "signup"
+    assert second_body["verification_method"] == "otp_sms"
+    assert second_body["phone_number"] == "89530397723"
+    assert verify_body["data"] == {"otp": "9302", "otp_token": "otp-token"}
+    assert accountlist_body["client_id"] == gopay.GOPAY_LOGIN_CLIENT_ID
+    assert responses.calls[4].request.headers["verification-token"] == "Bearer verification-token"
+    assert token_body["account_id"] == "758035604"
+    assert token_body["token"] == "one-fa-token"
+    assert pin_methods_body["flow"] == "goto_pin_wa_sms"
+    assert responses.calls[6].request.headers["authorization"] == "Bearer access-token-abcdef"
+    assert pin_initiate_body["verification_id"] == "pin-verification-id"
+    assert pin_initiate_body["flow"] == "goto_pin_wa_sms"
+    assert pin_verify_body["data"] == {"otp": "9457", "otp_token": "pin-otp-token"}
+    assert pin_setup_body == {"client_id": "", "pin": "123456", "challenge_id": ""}
+    assert responses.calls[10].request.headers["authorization"] == "Bearer access-token-abcdef"
+    assert responses.calls[10].request.headers["verification-token"] == "Bearer pin-verification-token"
+    token_path = tmp_path / "62_89530397723.json"
+    saved = json.loads(token_path.read_text(encoding="utf-8"))
+    assert saved["phone_number"] == "89530397723"
+    assert saved["account_id"] == "758035604"
+    assert saved["token"]["access_token"] == "access-token-abcdef"
+    assert saved["token"]["refresh_token"] == "refresh-token-uvwxyz"
+    assert saved["pin_setup"]["ok"] is True
+    assert saved["pin_setup"]["setup_token_tail"] == "12345678"
+    assert result["token_result"]["token_path"] == str(token_path)
+    assert result["token_result"]["pin_setup"]["ok"] is True
+    assert any("login/methods status=401" in line for line in logs)
+    assert any("cvs/initiate status=200 otp_token=yes" in line for line in logs)
+    assert any("pin setup status=200" in line for line in logs)
+    assert any("token saved" in line for line in logs)
 
 
 def test_qris_request_reuses_auto_unbind_raw_headers(monkeypatch):
