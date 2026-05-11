@@ -38,9 +38,30 @@ def _pool_status_for_check(*, oauth_valid: bool, plan: str, usage_status: int, c
 def _summary_status(result: dict) -> str:
     if result.get("status") in {"ok", "quota_limited", "refreshed"}:
         return "ok"
-    if result.get("status") in {"invalid", "no_refresh_token"}:
+    if result.get("status") in {"invalid", "no_refresh_token", "error"}:
         return "fail"
     return "unknown"
+
+
+def _percent(value: object) -> float | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return round(float(value), 2)
+    except Exception:
+        return None
+
+
+def _usage_fields(status: str, message: str, five_hour: dict, weekly: dict) -> dict:
+    return {
+        "codex_usage_status": status,
+        "codex_usage_error": "" if status in {"ok", "quota_limited", "refreshed"} else message[:500],
+        "codex_usage_checked_at": time.time(),
+        "codex_5h_used_percent": _percent(five_hour.get("used_percent")),
+        "codex_5h_reset_at": str(five_hour.get("reset_at") or ""),
+        "codex_7d_used_percent": _percent(weekly.get("used_percent")),
+        "codex_7d_reset_at": str(weekly.get("reset_at") or ""),
+    }
 
 
 def _update_pool_item(item: dict, result: dict) -> None:
@@ -57,6 +78,7 @@ def _update_pool_item(item: dict, result: dict) -> None:
     plan = str(result.get("plan") or item.get("plan_type") or "")
     account_id = str(result.get("account_id") or item.get("account_id") or "")
     token_email = str(result.get("email") or item.get("chatgpt_email") or item.get("email") or "").strip().lower()
+    usage = result.get("usage_update") if isinstance(result.get("usage_update"), dict) else {}
 
     with get_db()._conn() as c:
         c.execute(
@@ -72,6 +94,13 @@ def _update_pool_item(item: dict, result: dict) -> None:
                 pool_status=?,
                 last_stage='status_check',
                 last_error=?,
+                codex_usage_status=COALESCE(NULLIF(?, ''), codex_usage_status),
+                codex_usage_error=?,
+                codex_usage_checked_at=COALESCE(?, codex_usage_checked_at),
+                codex_5h_used_percent=?,
+                codex_5h_reset_at=COALESCE(NULLIF(?, ''), codex_5h_reset_at),
+                codex_7d_used_percent=?,
+                codex_7d_reset_at=COALESCE(NULLIF(?, ''), codex_7d_reset_at),
                 updated_at=?,
                 activated_at=CASE WHEN ?='plus_with_rt' THEN ? ELSE activated_at END,
                 rt_obtained_at=CASE WHEN ?='plus_with_rt' THEN ? ELSE rt_obtained_at END,
@@ -88,6 +117,13 @@ def _update_pool_item(item: dict, result: dict) -> None:
                 str(result.get("status") or ""),
                 to_status,
                 message,
+                str(usage.get("codex_usage_status") or ""),
+                str(usage.get("codex_usage_error") or ""),
+                usage.get("codex_usage_checked_at"),
+                usage.get("codex_5h_used_percent"),
+                str(usage.get("codex_5h_reset_at") or ""),
+                usage.get("codex_7d_used_percent"),
+                str(usage.get("codex_7d_reset_at") or ""),
                 now,
                 to_status,
                 now,
@@ -186,22 +222,30 @@ def inspect_pool_item(item: dict, *, timeout_s: float = 10.0) -> dict:
         usage_message = f"usage {type(e).__name__}: {str(e)[:80]}"
 
     if usage_status in (401, 403):
+        usage_update = _usage_fields("error", f"usage http {usage_status}", {}, {})
         result = {
             "id": item_id,
             "email": email,
-            "status": "invalid",
-            "oauth_valid": False,
+            "status": "error",
+            "oauth_valid": True,
             "plan": plan,
             "account_id": account_id,
             "http_status": usage_status,
-            "to_status": "registration_failed",
+            "to_status": current_status,
             "message": f"usage http {usage_status}",
             "access_token": access_token,
             "id_token": id_token,
             "refresh_token": new_rt,
+            "usage_update": usage_update,
         }
         _update_pool_item(item, result)
-        return result
+        public = dict(result)
+        public.pop("access_token", None)
+        public.pop("id_token", None)
+        public.pop("refresh_token", None)
+        public.pop("usage_update", None)
+        public.update(usage_update)
+        return public
 
     status = "refreshed"
     message = "credential refreshed"
@@ -234,6 +278,7 @@ def inspect_pool_item(item: dict, *, timeout_s: float = 10.0) -> dict:
         "weekly_quota": weekly,
         "usage_windows": windows,
     }
+    usage_update = _usage_fields(status, message, five_hour, weekly)
     result = {
         "id": item_id,
         "email": email,
@@ -249,6 +294,7 @@ def inspect_pool_item(item: dict, *, timeout_s: float = 10.0) -> dict:
         "access_token": access_token,
         "id_token": id_token,
         "refresh_token": new_rt,
+        "usage_update": usage_update,
         "payload": __import__("json").dumps(payload, ensure_ascii=False, separators=(",", ":")),
     }
     _update_pool_item(item, result)
@@ -256,7 +302,9 @@ def inspect_pool_item(item: dict, *, timeout_s: float = 10.0) -> dict:
     public.pop("access_token", None)
     public.pop("id_token", None)
     public.pop("refresh_token", None)
+    public.pop("usage_update", None)
     public.pop("payload", None)
+    public.update(usage_update)
     return public
 
 

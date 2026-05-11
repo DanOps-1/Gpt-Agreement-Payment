@@ -85,6 +85,10 @@
       </select>
       <input v-model="moveReason" placeholder="移动原因" />
       <button class="btn ghost" type="button" :disabled="!selectedIds.length || !moveTarget || moving" @click="moveSelected">批量移动</button>
+      <label class="worker-field">
+        <span>线程</span>
+        <input v-model.number="retryWorkers" type="number" min="1" max="8" />
+      </label>
       <button v-if="filter.status === 'in_progress'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('registration')">重新注册执行</button>
       <button v-if="filter.status === 'registered_pending_plus'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('payment')">重新支付执行</button>
       <button class="btn ghost" type="button" :disabled="claiming" @click="claimPreview">领取未激活邮箱</button>
@@ -143,6 +147,7 @@
             <th>账号标识</th>
             <th>任务</th>
             <th>最近状态</th>
+            <th>Codex</th>
             <th>更新</th>
           </tr>
         </thead>
@@ -173,6 +178,13 @@
             <td>
               <div>{{ item.last_stage || '-' }}</div>
               <div class="error-text">{{ item.last_error || '' }}</div>
+            </td>
+            <td>
+              <div class="usage-line">
+                <span :class="['pill', codexStatusClass(item)]">{{ codexStatusLabel(item) }}</span>
+                <span>{{ codexUsageText(item) || '-' }}</span>
+              </div>
+              <div v-if="item.codex_usage_error" class="error-text">{{ item.codex_usage_error }}</div>
             </td>
             <td>{{ formatTime(item.updated_at) }}</td>
           </tr>
@@ -207,6 +219,10 @@
           <input v-model="checkQuery" placeholder="搜索邮箱 / account_id" @keydown.enter="refreshCheckCandidates" />
           <button class="btn ghost" type="button" :disabled="checkingLoading" @click="refreshCheckCandidates">刷新</button>
           <button class="btn" type="button" :disabled="!checkSelectedIds.length || checkingAccounts" @click="checkSelectedAccounts">检测选中</button>
+          <label class="worker-field">
+            <span>线程</span>
+            <input v-model.number="retryWorkers" type="number" min="1" max="8" />
+          </label>
           <button v-if="checkStatusFilter === 'registered_pending_plus'" class="btn" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">重新支付执行</button>
           <button v-if="checkStatusFilter === 'all'" class="btn ghost" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">重跑待激活</button>
         </div>
@@ -223,6 +239,7 @@
           <span :class="['pill', statusClass(item.pool_status)]">{{ item.status_label }}</span>
           <span :class="['pill', item.has_refresh_token ? 'ok' : 'muted-pill']">{{ item.has_refresh_token ? '有 RT' : '无 RT' }}</span>
           <span class="muted">{{ item.plan_type || '-' }} {{ item.account_id || item.team_account_id || '' }}</span>
+          <span class="usage-mini">{{ codexUsageText(item) || '-' }}</span>
         </label>
         <div v-if="!checkCandidates.length" class="empty-state">
           {{ checkingLoading ? '正在加载...' : '暂无可检测账号' }}
@@ -234,6 +251,7 @@
           <span :class="['pill', checkResultClass(result.status)]">{{ checkResultLabel(result.status) }}</span>
           <span>{{ result.plan || '-' }}</span>
           <span>{{ result.account_id || '' }}</span>
+          <span class="usage-mini">{{ codexUsageText(result) || '-' }}</span>
           <small>{{ result.message }}</small>
         </div>
       </div>
@@ -324,6 +342,7 @@ const deletingPools = ref(false);
 const checkingLoading = ref(false);
 const checkingAccounts = ref(false);
 const retryingAccounts = ref(false);
+const retryWorkers = ref(1);
 const showImport = ref(false);
 const activeTab = ref<"accounts" | "checks">("accounts");
 const importText = ref("");
@@ -703,7 +722,10 @@ async function retrySelected(type: "registration" | "payment", fromCheck = false
     return;
   }
   const label = type === "registration" ? "重新注册" : "重新支付";
-  const ok = window.confirm(`确认对 ${ids.length} 个账号执行${label}任务？当前只能同时运行一个任务。`);
+  const requestedWorkers = Math.max(1, Math.min(Number(retryWorkers.value || 1), 8));
+  const effectiveWorkers = Math.min(requestedWorkers, ids.length);
+  retryWorkers.value = requestedWorkers;
+  const ok = window.confirm(`确认对 ${ids.length} 个账号执行${label}任务？本次线程数 ${effectiveWorkers}，当前只能同时运行一个任务。`);
   if (!ok) return;
   retryingAccounts.value = true;
   try {
@@ -713,6 +735,7 @@ async function retrySelected(type: "registration" | "payment", fromCheck = false
       paypal: true,
       gopay: false,
       push_server: false,
+      max_workers: requestedWorkers,
     });
     const prepared = r.data?.prepared?.prepared || 0;
     message.success(`${label}任务已启动，已加入 ${prepared} 个账号`);
@@ -746,7 +769,7 @@ function statusClass(status: string) {
 
 function checkResultClass(status: string) {
   if (["ok", "quota_limited", "refreshed"].includes(status)) return "ok";
-  if (["invalid", "no_refresh_token"].includes(status)) return "danger";
+  if (["invalid", "no_refresh_token", "error"].includes(status)) return "danger";
   return "warn";
 }
 
@@ -756,10 +779,44 @@ function checkResultLabel(status: string) {
     refreshed: "已刷新",
     quota_limited: "额度限制",
     invalid: "失效",
+    error: "错误",
     no_refresh_token: "无 RT",
     unknown: "未知",
   };
   return map[status] || status || "-";
+}
+
+function codexStatusLabel(item: any) {
+  const status = String(item?.codex_usage_status || item?.status || "");
+  if (status === "error") return "错误";
+  if (status === "ok") return "可用";
+  if (status === "quota_limited") return "限额";
+  if (status === "refreshed") return "已刷新";
+  return status ? checkResultLabel(status) : "未检测";
+}
+
+function codexStatusClass(item: any) {
+  const status = String(item?.codex_usage_status || item?.status || "");
+  if (status === "error" || status === "invalid") return "danger";
+  if (status === "quota_limited") return "warn";
+  if (status === "ok" || status === "refreshed") return "ok";
+  return "muted-pill";
+}
+
+function percentText(value: any) {
+  if (value === undefined || value === null || value === "") return "";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  return `${Math.round(n)}%`;
+}
+
+function codexUsageText(item: any) {
+  const five = percentText(item?.codex_5h_used_percent ?? item?.five_hour_quota?.used_percent);
+  const seven = percentText(item?.codex_7d_used_percent ?? item?.weekly_quota?.used_percent);
+  const parts: string[] = [];
+  if (five) parts.push(`5h ${five}`);
+  if (seven) parts.push(`7d ${seven}`);
+  return parts.join(" / ");
 }
 
 function statusLabel(status: string) {
@@ -1028,6 +1085,7 @@ h1 {
 .upload-panel input,
 .bulk-bar input,
 .bulk-bar select,
+.worker-field input,
 .import-panel textarea {
   border: 1px solid #cbded7;
   background: #fff;
@@ -1049,7 +1107,8 @@ h1 {
 }
 
 .switch-line,
-.interval-field {
+.interval-field,
+.worker-field {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1058,6 +1117,14 @@ h1 {
 
 .interval-field input {
   width: 88px;
+}
+
+.worker-field {
+  color: #5e756c;
+}
+
+.worker-field input {
+  width: 74px;
 }
 
 .import-panel {
@@ -1193,6 +1260,10 @@ h1 {
   min-width: 240px;
 }
 
+.check-actions .worker-field input {
+  min-width: 74px;
+}
+
 .check-summary {
   margin-bottom: 10px;
   font-weight: 700;
@@ -1315,6 +1386,20 @@ tbody tr:hover {
 .muted-pill {
   background: #edf2f0;
   color: #62776f;
+}
+
+.usage-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.usage-mini {
+  min-width: 120px;
+  color: #25423a;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .error-text {

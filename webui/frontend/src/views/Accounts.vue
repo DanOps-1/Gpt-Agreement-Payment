@@ -737,6 +737,12 @@ function accessUsageBadges(acc: InventoryAccount): UsageBadge[] {
 function quotaBadgeLabel(prefix: string, quota: any): string {
   if (!quota || typeof quota !== "object") return "";
   const percent = quota.percent_remaining ?? quota.remaining_percent;
+  const usedPercent = quota.used_percent;
+  if (usedPercent !== undefined && usedPercent !== null && usedPercent !== "") {
+    const n = Number(usedPercent);
+    const value = Number.isFinite(n) ? Math.round(n) : String(usedPercent);
+    return `${prefix}:${value}% used`;
+  }
   if (percent !== undefined && percent !== null && percent !== "") {
     const n = Number(percent);
     const value = Number.isFinite(n) ? Math.round(n <= 1 ? n * 100 : n) : String(percent);

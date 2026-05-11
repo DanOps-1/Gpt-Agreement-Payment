@@ -95,6 +95,7 @@ class RetryRequest(IdsRequest):
     paypal: bool = True
     gopay: bool = False
     push_server: bool = False
+    max_workers: int = 1
 
 
 def _pool_account_for_downstream(item: dict) -> dict:
@@ -312,25 +313,32 @@ def retry_pool_accounts(req: RetryRequest, user: str = CurrentUser):
     if not req.ids:
         raise HTTPException(status_code=400, detail="ids 涓嶈兘涓虹┖")
     prepared = prepare_retry_items(req.ids, retry_type=req.retry_type, task_id=f"manual-retry-{datetime.now().strftime('%Y%m%d%H%M%S')}")
-    if int(prepared.get("prepared") or 0) <= 0:
+    prepared_count = int(prepared.get("prepared") or 0)
+    if prepared_count <= 0:
         raise HTTPException(status_code=400, detail="没有符合条件的账号可重新执行")
+    workers = max(1, min(int(req.max_workers or 1), prepared_count, 8))
+    mode = "batch" if workers > 1 else "singlexn"
     try:
         if req.retry_type == "registration":
             run = runner.start(
-                mode="singlexn",
+                mode=mode,
                 paypal=req.paypal,
+                batch=prepared_count if mode == "batch" else 0,
+                workers=workers,
                 gopay=req.gopay,
-                count=int(prepared.get("prepared") or 1),
+                count=prepared_count,
                 register_only=False,
                 pay_only=False,
                 push_server=req.push_server,
             )
         else:
             run = runner.start(
-                mode="singlexn",
+                mode=mode,
                 paypal=req.paypal,
+                batch=prepared_count if mode == "batch" else 0,
+                workers=workers,
                 gopay=req.gopay,
-                count=int(prepared.get("prepared") or 1),
+                count=prepared_count,
                 register_only=False,
                 pay_only=True,
                 push_server=req.push_server,

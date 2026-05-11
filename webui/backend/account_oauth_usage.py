@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 import httpx
@@ -12,9 +12,9 @@ import httpx
 from .db import get_db
 
 
-_USER_AGENT = "codex_cli_rs/0.118.0 (Windows 10.0; x86_64) CodexApp"
+_USER_AGENT = "codex_cli_rs/0.125.0"
 _OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
-_CODEX_USAGE_URL = "https://chatgpt.com/backend-api/codex/usage"
+_CODEX_USAGE_URL = "https://chatgpt.com/backend-api/codex/responses"
 _CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 
@@ -65,14 +65,70 @@ def _refresh_with_rt(refresh_token: str, *, timeout_s: float) -> tuple[dict, int
 def _usage_headers(access_token: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
+        "Accept": "text/event-stream",
         "Content-Type": "application/json",
+        "OpenAI-Beta": "responses=experimental",
         "Originator": "codex_cli_rs",
+        "Version": "0.125.0",
         "User-Agent": _USER_AGENT,
     }
 
 
+def _probe_payload() -> dict:
+    return {
+        "model": "gpt-5.4",
+        "input": [
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hi"}],
+            }
+        ],
+        "stream": True,
+        "store": False,
+        "instructions": "You are Codex.",
+    }
+
+
+def _float_header(headers: httpx.Headers, name: str) -> float | None:
+    raw = headers.get(name)
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return float(raw)
+    except Exception:
+        return None
+
+
+def _reset_at_from_seconds(seconds: float | None) -> str:
+    if seconds is None:
+        return ""
+    try:
+        return (datetime.now(timezone.utc) + timedelta(seconds=max(0, seconds))).isoformat()
+    except Exception:
+        return ""
+
+
+def _window_from_headers(prefix: str, headers: httpx.Headers) -> dict:
+    used = _float_header(headers, f"x-codex-{prefix}-used-percent")
+    reset_after = _float_header(headers, f"x-codex-{prefix}-reset-after-seconds")
+    window_minutes = _float_header(headers, f"x-codex-{prefix}-window-minutes")
+    if used is None and reset_after is None and window_minutes is None:
+        return {}
+    return {
+        "used_percent": used,
+        "reset_after_seconds": reset_after,
+        "window_minutes": window_minutes,
+        "reset_at": _reset_at_from_seconds(reset_after),
+    }
+
+
 def _extract_quota_windows(data: object) -> tuple[dict, dict, list[dict]]:
+    if isinstance(data, dict) and ("headers" in data or "five_hour" in data or "seven_day" in data):
+        five_hour = data.get("five_hour") if isinstance(data.get("five_hour"), dict) else {}
+        weekly = data.get("seven_day") if isinstance(data.get("seven_day"), dict) else {}
+        windows = [w for w in (five_hour, weekly) if w]
+        return five_hour, weekly, windows
+
     all_windows: list[dict] = []
 
     def add_window(name: str, node: dict) -> None:
@@ -128,6 +184,12 @@ def _format_quota_message(five_hour: dict, weekly: dict) -> str:
     for label, item in (("5h", five_hour), ("weekly", weekly)):
         if not item:
             continue
+        used = item.get("used_percent")
+        reset_at = item.get("reset_at")
+        if used is not None:
+            suffix = f", reset {reset_at}" if reset_at else ""
+            parts.append(f"{label}: {used}% used{suffix}")
+            continue
         percent = item.get("percent_remaining")
         remaining = item.get("remaining")
         limit = item.get("limit")
@@ -140,12 +202,27 @@ def _format_quota_message(five_hour: dict, weekly: dict) -> str:
 
 def _usage_from_access_token(access_token: str, *, timeout_s: float) -> tuple[dict, int, str]:
     with _client(timeout_s) as c:
-        r = c.get(_CODEX_USAGE_URL, headers=_usage_headers(access_token))
+        r = c.post(_CODEX_USAGE_URL, headers=_usage_headers(access_token), json=_probe_payload())
     text = r.text[:500]
-    try:
-        data = r.json()
-    except Exception:
-        data = {}
+    primary = _window_from_headers("primary", r.headers)
+    secondary = _window_from_headers("secondary", r.headers)
+    windows = [w for w in (primary, secondary) if w]
+    data: dict = {
+        "headers": True,
+        "primary": primary,
+        "secondary": secondary,
+        "usage_windows": windows,
+    }
+    if len(windows) >= 2:
+        ordered = sorted(windows, key=lambda w: float(w.get("window_minutes") or 0))
+        data["five_hour"] = ordered[0]
+        data["seven_day"] = ordered[-1]
+    elif len(windows) == 1:
+        one = windows[0]
+        if float(one.get("window_minutes") or 0) <= 360:
+            data["five_hour"] = one
+        else:
+            data["seven_day"] = one
     return data, r.status_code, text
 
 

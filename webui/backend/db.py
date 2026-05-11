@@ -182,6 +182,13 @@ CREATE TABLE IF NOT EXISTS account_pool_items (
   attempt_count INTEGER NOT NULL DEFAULT 0,
   last_stage TEXT DEFAULT '',
   last_error TEXT DEFAULT '',
+  codex_usage_status TEXT DEFAULT '',
+  codex_usage_error TEXT DEFAULT '',
+  codex_usage_checked_at REAL DEFAULT 0,
+  codex_5h_used_percent REAL DEFAULT NULL,
+  codex_5h_reset_at TEXT DEFAULT '',
+  codex_7d_used_percent REAL DEFAULT NULL,
+  codex_7d_reset_at TEXT DEFAULT '',
   source_registered_account_id INTEGER DEFAULT 0,
   source_card_result_id INTEGER DEFAULT 0,
   source_outlook_mail_id INTEGER DEFAULT 0,
@@ -278,6 +285,19 @@ class Database:
             c.execute("ALTER TABLE pipeline_results ADD COLUMN sub2api_import TEXT DEFAULT ''")
         if "server_push" not in existing_pipeline:
             c.execute("ALTER TABLE pipeline_results ADD COLUMN server_push TEXT DEFAULT ''")
+        existing_pool = {row["name"] for row in c.execute("PRAGMA table_info(account_pool_items)").fetchall()}
+        pool_columns = {
+            "codex_usage_status": "TEXT DEFAULT ''",
+            "codex_usage_error": "TEXT DEFAULT ''",
+            "codex_usage_checked_at": "REAL DEFAULT 0",
+            "codex_5h_used_percent": "REAL DEFAULT NULL",
+            "codex_5h_reset_at": "TEXT DEFAULT ''",
+            "codex_7d_used_percent": "REAL DEFAULT NULL",
+            "codex_7d_reset_at": "TEXT DEFAULT ''",
+        }
+        for name, ddl in pool_columns.items():
+            if name not in existing_pool:
+                c.execute(f"ALTER TABLE account_pool_items ADD COLUMN {name} {ddl}")
         c.execute(
             """
             CREATE TABLE IF NOT EXISTS outlook_mail_accounts (
@@ -332,6 +352,13 @@ class Database:
               attempt_count INTEGER NOT NULL DEFAULT 0,
               last_stage TEXT DEFAULT '',
               last_error TEXT DEFAULT '',
+              codex_usage_status TEXT DEFAULT '',
+              codex_usage_error TEXT DEFAULT '',
+              codex_usage_checked_at REAL DEFAULT 0,
+              codex_5h_used_percent REAL DEFAULT NULL,
+              codex_5h_reset_at TEXT DEFAULT '',
+              codex_7d_used_percent REAL DEFAULT NULL,
+              codex_7d_reset_at TEXT DEFAULT '',
               source_registered_account_id INTEGER DEFAULT 0,
               source_card_result_id INTEGER DEFAULT 0,
               source_outlook_mail_id INTEGER DEFAULT 0,
