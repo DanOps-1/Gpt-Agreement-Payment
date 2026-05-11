@@ -14,11 +14,11 @@
     <div class="pool-layout">
       <aside class="side-tabs">
         <button :class="{ active: activeTab === 'accounts' }" type="button" @click="activeTab = 'accounts'">
-          <span>????</span>
-          <small>????</small>
+          <span>账号管理</span>
+          <small>池子流转</small>
         </button>
         <button :class="{ active: activeTab === 'checks' }" type="button" @click="activeTab = 'checks'">
-          <span>????</span>
+          <span>状态检测</span>
           <small>Plus / Free / RT</small>
         </button>
       </aside>
@@ -85,8 +85,8 @@
       </select>
       <input v-model="moveReason" placeholder="移动原因" />
       <button class="btn ghost" type="button" :disabled="!selectedIds.length || !moveTarget || moving" @click="moveSelected">批量移动</button>
-      <button v-if="filter.status === 'in_progress'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('registration')">??????</button>
-      <button v-if="filter.status === 'registered_pending_plus'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('payment')">??????</button>
+      <button v-if="filter.status === 'in_progress'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('registration')">重新注册执行</button>
+      <button v-if="filter.status === 'registered_pending_plus'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('payment')">重新支付执行</button>
       <button class="btn ghost" type="button" :disabled="claiming" @click="claimPreview">领取未激活邮箱</button>
       <select v-model="downloadTarget">
         <option value="cpa">下载 CPA</option>
@@ -194,26 +194,26 @@
     <section v-else class="check-panel">
       <div class="check-head">
         <div>
-          <strong>??????</strong>
-          <span>?? RT ???? OAuth token??? plan/account_id???? Codex usage?</span>
+          <strong>账号状态检测</strong>
+          <span>使用 RT 刷新官方 OAuth token，解析 plan/account_id，并检测 Codex usage。</span>
         </div>
         <div class="check-actions">
           <select v-model="checkStatusFilter" @change="refreshCheckCandidates">
-            <option value="plus_with_rt">????</option>
-            <option value="plus_missing_rt">????</option>
-            <option value="registered_pending_plus">????</option>
-            <option value="all">??</option>
+            <option value="plus_with_rt">已激活池</option>
+            <option value="plus_missing_rt">待检测池</option>
+            <option value="registered_pending_plus">待激活池</option>
+            <option value="all">全部</option>
           </select>
-          <input v-model="checkQuery" placeholder="???? / account_id" @keydown.enter="refreshCheckCandidates" />
-          <button class="btn ghost" type="button" :disabled="checkingLoading" @click="refreshCheckCandidates">??</button>
-          <button class="btn" type="button" :disabled="!checkSelectedIds.length || checkingAccounts" @click="checkSelectedAccounts">????</button>
-          <button v-if="checkStatusFilter === 'registered_pending_plus'" class="btn" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">??????</button>
-          <button v-if="checkStatusFilter === 'all'" class="btn ghost" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">?????</button>
+          <input v-model="checkQuery" placeholder="搜索邮箱 / account_id" @keydown.enter="refreshCheckCandidates" />
+          <button class="btn ghost" type="button" :disabled="checkingLoading" @click="refreshCheckCandidates">刷新</button>
+          <button class="btn" type="button" :disabled="!checkSelectedIds.length || checkingAccounts" @click="checkSelectedAccounts">检测选中</button>
+          <button v-if="checkStatusFilter === 'registered_pending_plus'" class="btn" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">重新支付执行</button>
+          <button v-if="checkStatusFilter === 'all'" class="btn ghost" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">重跑待激活</button>
         </div>
       </div>
       <div class="check-summary">
-        <span>?? {{ checkCandidates.length }}</span>
-        <span>?? {{ checkSelectedIds.length }}</span>
+        <span>候选 {{ checkCandidates.length }}</span>
+        <span>已选 {{ checkSelectedIds.length }}</span>
         <span v-if="checkResult">OK {{ checkResult.summary?.ok || 0 }} / FAIL {{ checkResult.summary?.fail || 0 }} / UNKNOWN {{ checkResult.summary?.unknown || 0 }}</span>
       </div>
       <div class="check-list">
@@ -221,11 +221,11 @@
           <input type="checkbox" :checked="checkSelected.has(item.id)" @change="toggleCheckSelect(item.id)" />
           <span class="check-email">{{ item.primary_email || item.email }}</span>
           <span :class="['pill', statusClass(item.pool_status)]">{{ item.status_label }}</span>
-          <span :class="['pill', item.has_refresh_token ? 'ok' : 'muted-pill']">{{ item.has_refresh_token ? '? RT' : '? RT' }}</span>
+          <span :class="['pill', item.has_refresh_token ? 'ok' : 'muted-pill']">{{ item.has_refresh_token ? '有 RT' : '无 RT' }}</span>
           <span class="muted">{{ item.plan_type || '-' }} {{ item.account_id || item.team_account_id || '' }}</span>
         </label>
         <div v-if="!checkCandidates.length" class="empty-state">
-          {{ checkingLoading ? '????...' : '???????' }}
+          {{ checkingLoading ? '正在加载...' : '暂无可检测账号' }}
         </div>
       </div>
       <div v-if="checkResult" class="check-results">
