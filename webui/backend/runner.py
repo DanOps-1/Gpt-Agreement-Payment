@@ -43,6 +43,9 @@ _otp_pending_since: Optional[float] = None
 _otp_pending_phone: str = ""
 _otp_pending_country_code: str = ""
 _otp_file_is_temp: bool = False
+_OTP_RELAY_POLL_INTERVAL_SECONDS = 0.5
+_OTP_RELAY_POLL_TIMEOUT_SECONDS = 300.0
+_OTP_RELAY_LOOKBACK_SECONDS = 15.0
 # card.py runs GoPay auto-unbind with the exact selected account config.  The
 # runner only sees shared stdout, so doing it here would use the global config
 # and can unlink the wrong wallet when multiple GoPay accounts are configured.
@@ -275,6 +278,73 @@ def _detect_gopay_otp_target(line: str) -> tuple[str, str]:
     return phone, country_code
 
 
+def _otp_from_item(item: dict | None) -> str:
+    return "".join(ch for ch in str((item or {}).get("otp") or "") if ch.isdigit())
+
+
+def _feed_pending_otp_item(item: dict | None, *, via_poll: bool = False) -> bool:
+    """Write a stored webhook OTP into the active GoPay OTP wait target."""
+    global _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code
+    otp = _otp_from_item(item)
+    if not otp:
+        return False
+    with _lock:
+        if not _otp_pending:
+            return False
+        if _otp_pending_phone and item and not wa_relay._phone_matches(
+            item,
+            _otp_pending_phone,
+            _otp_pending_country_code,
+        ):
+            return False
+        run_id = _run_id
+        path = _otp_file
+        use_db = _otp_to_db
+        phone = _otp_pending_phone
+        country_code = _otp_pending_country_code
+
+    if use_db:
+        wa_relay.submit_manual_otp(otp, phone=phone, country_code=country_code)
+    else:
+        if path is None:
+            return False
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(otp, encoding="utf-8")
+
+    should_log = False
+    with _lock:
+        if run_id == _run_id and _otp_pending:
+            _otp_pending = False
+            _otp_pending_since = None
+            _otp_pending_phone = ""
+            _otp_pending_country_code = ""
+            should_log = True
+    if should_log:
+        source = str((item or {}).get("source") or "external")
+        suffix = " via local poll" if via_poll else ""
+        _append_log(f"[webui] external OTP from {source} forwarded to GoPay{suffix}")
+    return True
+
+
+def _poll_pending_otp_from_relay(run_id: int) -> None:
+    """Poll local SQLite OTP history while GoPay is waiting on a file provider."""
+    deadline = time.time() + _OTP_RELAY_POLL_TIMEOUT_SECONDS
+    while time.time() < deadline:
+        with _lock:
+            if run_id != _run_id or not _otp_pending or _otp_to_db or _otp_file is None:
+                return
+            since = max(0.0, (_otp_pending_since or time.time()) - _OTP_RELAY_LOOKBACK_SECONDS)
+            phone = _otp_pending_phone
+            country_code = _otp_pending_country_code
+        try:
+            item = wa_relay.latest_otp(since=since, phone=phone, country_code=country_code)
+        except Exception:
+            item = None
+        if item and _feed_pending_otp_item(item, via_poll=True):
+            return
+        time.sleep(_OTP_RELAY_POLL_INTERVAL_SECONDS)
+
+
 def _is_pay_success_line(line: str) -> bool:
     return bool(re.search(r"\[pay(?::[^\]]+)?\].*结果:\s*state=succeeded\b", line))
 
@@ -313,6 +383,7 @@ def _drain(proc: subprocess.Popen, run_id: int) -> None:
             # saved linkedapps/PATCH headers from the wizard can be reused as a
             # baseline after payment succeeds.
             should_auto_unbind = _RUN_GOPAY_AUTO_UNBIND_ENABLED and _is_pay_success_line(line)
+            should_start_otp_poll = False
             with _lock:
                 if run_id != _run_id or _proc is not proc:
                     continue
@@ -330,14 +401,18 @@ def _drain(proc: subprocess.Popen, run_id: int) -> None:
                 # when WhatsApp hides OTP bodies from linked devices.
                 wait_kind, wait_path = _detect_otp_wait_target(line)
                 if wait_kind:
+                    was_pending = _otp_pending
                     _otp_to_db = wait_kind == "db"
                     _otp_file = wait_path
                     _otp_file_is_temp = _otp_file_is_temp or "GOPAY_OTP_REQUEST" in line
                     if not _otp_pending:
                         _otp_pending_since = time.time()
                     _otp_pending = True
+                    should_start_otp_poll = wait_kind == "file" and not was_pending
             if should_auto_unbind:
                 threading.Thread(target=_run_gopay_auto_unbind, daemon=True).start()
+            if should_start_otp_poll:
+                threading.Thread(target=_poll_pending_otp_from_relay, args=(run_id,), daemon=True).start()
     finally:
         proc.wait()
         with _lock:
@@ -516,55 +591,7 @@ def submit_otp(value: str) -> dict:
 
 def notify_external_otp(item: dict | None = None) -> dict:
     """Feed a webhook OTP to the active GoPay wait, if one is pending."""
-    global _seq_counter, _log_lines
-    global _otp_pending, _otp_pending_since, _otp_pending_phone, _otp_pending_country_code
-    with _lock:
-        if _otp_pending:
-            if _otp_pending_phone and item and not wa_relay._phone_matches(
-                item,
-                _otp_pending_phone,
-                _otp_pending_country_code,
-            ):
-                return status()
-            path = _otp_file
-            use_db = _otp_to_db
-            phone = _otp_pending_phone
-            country_code = _otp_pending_country_code
-        else:
-            path = None
-            use_db = False
-            phone = ""
-            country_code = ""
-
-    wrote = False
-    otp = "".join(ch for ch in str((item or {}).get("otp") or "") if ch.isdigit())
-    if otp and path is not None and not use_db:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(otp, encoding="utf-8")
-        wrote = True
-    elif otp and use_db:
-        wa_relay.submit_manual_otp(otp, phone=phone, country_code=country_code)
-        wrote = True
-
-    with _lock:
-        if item and _otp_pending:
-            _seq_counter += 1
-            _log_lines.append({
-                "seq": _seq_counter,
-                "ts": time.time(),
-                "line": (
-                    "[webui] external OTP received from "
-                    f"{item.get('source', 'external')}"
-                    + (" and forwarded to GoPay" if wrote else "")
-                ),
-            })
-            if wrote:
-                _otp_pending = False
-                _otp_pending_since = None
-                _otp_pending_phone = ""
-                _otp_pending_country_code = ""
-            if len(_log_lines) > _MAX_LOG_LINES:
-                _log_lines = _log_lines[-_MAX_LOG_LINES:]
+    _feed_pending_otp_item(item)
     return status()
 
 

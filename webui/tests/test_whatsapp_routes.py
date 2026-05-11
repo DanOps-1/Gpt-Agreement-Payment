@@ -159,6 +159,47 @@ def test_external_otp_writes_latest_and_feeds_pending_file_wait(client, tmp_path
     runner._otp_pending_country_code = ""
 
 
+def test_pending_file_wait_replays_recent_external_otp(client, tmp_path, monkeypatch):
+    from webui.backend import runner, wa_relay
+
+    monkeypatch.setattr(runner, "_OTP_RELAY_POLL_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(runner, "_OTP_RELAY_POLL_TIMEOUT_SECONDS", 0.1)
+
+    token = wa_relay.relay_token()
+    otp_file = tmp_path / "gopay_otp_replay.txt"
+
+    r = client.post(
+        "/api/whatsapp/external-otp",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "otp": "456789",
+            "phone": "85143072070",
+            "country_code": "62",
+            "source": "android-notification-forwarder",
+        },
+    )
+    assert r.status_code == 200
+    assert not otp_file.exists()
+
+    run_id = runner._run_id
+    runner._otp_pending = True
+    runner._otp_to_db = False
+    runner._otp_file = otp_file
+    runner._otp_pending_since = wa_relay.latest_otp()["received_at"]
+    runner._otp_pending_phone = "85143072070"
+    runner._otp_pending_country_code = "62"
+
+    runner._poll_pending_otp_from_relay(run_id)
+
+    assert otp_file.read_text(encoding="utf-8") == "456789"
+    assert runner.status()["otp_pending"] is False
+
+    runner._otp_file = None
+    runner._otp_to_db = False
+    runner._otp_pending_phone = ""
+    runner._otp_pending_country_code = ""
+
+
 def test_external_otp_wrong_phone_does_not_resolve_pending_runner(client):
     from webui.backend import runner, wa_relay
 
