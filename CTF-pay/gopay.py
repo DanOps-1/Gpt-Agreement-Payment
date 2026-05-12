@@ -3366,7 +3366,7 @@ class GoPayCharger:
 
     def _run_midtrans_qr(self, snap_token: str, cs_id: str) -> dict:
         self._midtrans_load_transaction(snap_token)
-        pre_linking_result = self._run_qr_pre_linking(snap_token)
+        pre_linking_result = {"ok": False, "skipped": True, "reason": "temporarily_disabled"}
         qr_info = self._midtrans_create_qr_charge(snap_token)
         artifact = self._save_qr_artifact(qr_info)
         payload = str(qr_info.get("payload") or "")
