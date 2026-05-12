@@ -407,6 +407,35 @@ def _safe_qris_header_summary(headers: dict[str, str]) -> str:
     )
 
 
+def _safe_request_headers_for_debug(headers: Any) -> dict[str, Any]:
+    sensitive_parts = (
+        "authorization",
+        "cookie",
+        "token",
+        "pin",
+        "secret",
+        "password",
+        "passkey",
+    )
+    try:
+        items = headers.items()
+    except Exception:
+        return {}
+    out: dict[str, Any] = {}
+    for key, value in items:
+        name = str(key)
+        text = str(value)
+        if any(part in name.lower() for part in sensitive_parts):
+            out[name] = {
+                "redacted": True,
+                "len": len(text),
+                "prefix": text[:12],
+            }
+        else:
+            out[name] = text
+    return out
+
+
 def _safe_qris_preview(qris: str) -> str:
     text = str(qris or "").strip()
     if len(text) <= 32:
@@ -869,6 +898,20 @@ class GoPayCharger:
             self.ext.proxies = {"http": proxy, "https": proxy} if proxy else {"http": "", "https": ""}
         except Exception:
             pass
+
+    def _log_ext_exit_ip(self, label: str) -> None:
+        proxy = ""
+        try:
+            proxies = getattr(self.ext, "proxies", {}) or {}
+            proxy = str(proxies.get("https") or proxies.get("http") or "")
+        except Exception:
+            proxy = ""
+        try:
+            r = self.ext.get("https://api.ipify.org", timeout=12)
+            ip = str(getattr(r, "text", "") or "").strip()
+            self.log(f"{label} current_ip={ip or '-'} proxy={proxy or 'direct'}")
+        except Exception as exc:
+            self.log(f"{label} current_ip_check_failed={type(exc).__name__}: {str(exc)[:160]} proxy={proxy or 'direct'}")
 
     def _request_ext(self, method: str, url: str, *, retry_label: str = "", **kwargs: Any):
         last_exc: Exception | None = None
@@ -1949,19 +1992,25 @@ class GoPayCharger:
 
     def _tokenize_pin(self, challenge_id: str, client_id: str) -> str:
         """POST customer.gopayapi.com/api/v1/users/pin/tokens/nb → JWT."""
+        headers = {
+            "x-appversion": "1.0.0",
+            "x-correlation-id": str(uuid.uuid4()),
+            "x-is-mobile": "false",
+            "x-platform": "Mac OS 12.2.1",
+            "x-request-id": str(uuid.uuid4()),
+            "x-user-locale": "id",
+            "Origin": "https://pin-web-client.gopayapi.com",
+            "Referer": "https://pin-web-client.gopayapi.com/",
+        }
+        self.log(
+            "[gopay-pin] request headers "
+            + _json_for_log(_safe_request_headers_for_debug(headers))
+        )
+        self._log_ext_exit_ip("[gopay-pin]")
         r = self.ext.post(
             "https://customer.gopayapi.com/api/v1/users/pin/tokens/nb",
             json={"challenge_id": challenge_id, "client_id": client_id, "pin": self.pin},
-            headers={
-                "x-appversion": "1.0.0",
-                "x-correlation-id": str(uuid.uuid4()),
-                "x-is-mobile": "false",
-                "x-platform": "Mac OS 12.2.1",
-                "x-request-id": str(uuid.uuid4()),
-                "x-user-locale": "id",
-                "Origin": "https://pin-web-client.gopayapi.com",
-                "Referer": "https://pin-web-client.gopayapi.com/",
-            },
+            headers=headers,
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code in (400, 401, 403):
@@ -2508,6 +2557,12 @@ class GoPayCharger:
         body_for_signature, body_signature_source = self._qris_body_for_signature(method, sign_path, body, body_text)
         headers = self._qris_signed_headers(method, url, body_text, body_for_signature=body_for_signature)
         debug_logs = self._qris_debug_logs()
+        if method.upper() == "POST" and urlsplit(url).path.endswith("/api/v1/users/pin/tokens"):
+            self.log(
+                "[gopay-qris-pin] request headers "
+                + _json_for_log(_safe_request_headers_for_debug(headers))
+            )
+            self._log_ext_exit_ip("[gopay-qris-pin]")
         if debug_logs:
             self.log("[gopay-qris] === request start ===")
             self.log(f"[gopay-qris] method={method.upper()} url={url}")
