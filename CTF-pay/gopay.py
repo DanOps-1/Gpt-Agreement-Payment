@@ -193,10 +193,45 @@ def _normalize_proxy_url(proxy: str) -> str:
     return f"http://{proxy}"
 
 
+def _proxy_lines_from_value(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw = re.split(r"[\r\n,]+", value)
+    elif isinstance(value, (list, tuple, set)):
+        raw = value
+    else:
+        raw = []
+    return [_normalize_proxy_url(str(x).strip()) for x in raw if str(x).strip()]
+
+
+def _append_proxy_values(out: list[str], seen: set[str], *values: Any) -> None:
+    for value in values:
+        for proxy in _proxy_lines_from_value(value):
+            if proxy and proxy not in seen:
+                seen.add(proxy)
+                out.append(proxy)
+
+
 def _proxy_list_from_cfg(cfg: Optional[dict], primary_proxy: Optional[str] = None) -> list[str]:
     out: list[str] = []
-    if primary_proxy:
-        out.append(_normalize_proxy_url(str(primary_proxy).strip()))
+    seen: set[str] = set()
+    proxies_cfg = cfg.get("proxies") if isinstance(cfg, dict) and isinstance(cfg.get("proxies"), dict) else {}
+
+    _append_proxy_values(
+        out,
+        seen,
+        proxies_cfg.get("gopay_list"),
+        proxies_cfg.get("gopay_urls"),
+        proxies_cfg.get("gopay_url"),
+    )
+    if not out:
+        _append_proxy_values(
+            out,
+            seen,
+            proxies_cfg.get("payment_list"),
+            proxies_cfg.get("payment_urls"),
+            proxies_cfg.get("payment_url"),
+            primary_proxy,
+        )
     return out
 
 

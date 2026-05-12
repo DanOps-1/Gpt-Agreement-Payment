@@ -229,8 +229,126 @@ def _proxy_lines_from_value(value) -> list[str]:
     return [_normalize_proxy_url(str(x).strip()) for x in raw if str(x).strip()]
 
 
-def _ensure_gopay_proxy_for_http_session(session_obj, cfg: dict) -> str:
+def _first_proxy_from_values(*values) -> str:
+    for value in values:
+        proxies = _proxy_lines_from_value(value)
+        if proxies:
+            return proxies[0]
     return ""
+
+
+def _phase_proxy_url_from_cfg(cfg: dict | None, phase: str) -> str:
+    if not isinstance(cfg, dict):
+        return ""
+
+    proxies_cfg = cfg.get("proxies") if isinstance(cfg.get("proxies"), dict) else {}
+    if proxies_cfg and proxies_cfg.get("enabled") is False:
+        return _build_proxy_url_from_cfg(cfg.get("proxy"))
+
+    phase_key = str(phase or "").strip().lower()
+    if phase_key == "register":
+        phase_proxy = _first_proxy_from_values(
+            proxies_cfg.get("register_list"),
+            proxies_cfg.get("register_urls"),
+            proxies_cfg.get("register_url"),
+        )
+    elif phase_key == "gopay":
+        phase_proxy = _first_proxy_from_values(
+            proxies_cfg.get("gopay_list"),
+            proxies_cfg.get("gopay_urls"),
+            proxies_cfg.get("gopay_url"),
+        )
+        if not phase_proxy:
+            phase_proxy = _first_proxy_from_values(
+                proxies_cfg.get("payment_list"),
+                proxies_cfg.get("payment_urls"),
+                proxies_cfg.get("payment_url"),
+            )
+    else:
+        phase_proxy = _first_proxy_from_values(
+            proxies_cfg.get("payment_list"),
+            proxies_cfg.get("payment_urls"),
+            proxies_cfg.get("payment_url"),
+        )
+
+    if phase_proxy:
+        return phase_proxy
+
+    primary_proxy = _build_proxy_url_from_cfg(cfg.get("proxy"))
+    if primary_proxy:
+        return primary_proxy
+
+    return _first_proxy_from_values(
+        proxies_cfg.get("list"),
+        proxies_cfg.get("urls"),
+        proxies_cfg.get("url"),
+    )
+
+
+def _build_payment_stage_proxy_cfg(cfg: dict | None, *, use_gopay: bool = False) -> dict:
+    payment_proxy = _phase_proxy_url_from_cfg(cfg, "payment")
+    gopay_proxy = _phase_proxy_url_from_cfg(cfg, "gopay") or payment_proxy
+    post_address_proxy = gopay_proxy if use_gopay else payment_proxy
+
+    stage_proxy_cfg: dict[str, str] = {}
+
+    def _assign(stages: list[str], proxy_url: str):
+        if not proxy_url:
+            return
+        for stage in stages:
+            stage_proxy_cfg[stage] = proxy_url
+
+    _assign(
+        [
+            "fingerprint",
+            "fetch_publishable_key",
+            "stripe_init",
+            "telemetry_init",
+            "elements",
+            "link_lookup",
+            "address",
+            "telemetry_address",
+            "telemetry_card_input",
+        ],
+        payment_proxy,
+    )
+
+    _assign(
+        [
+            "payment_method",
+            "telemetry_confirm",
+            "confirm",
+            "verify_challenge",
+            "verify_challenge_browser",
+            "three_ds_authenticate",
+            "setup_intent_poll",
+            "telemetry_poll",
+            "poll",
+        ],
+        post_address_proxy,
+    )
+
+    return stage_proxy_cfg
+
+
+def _ensure_gopay_proxy_for_http_session(session_obj, cfg: dict) -> str:
+    proxy_url = _phase_proxy_url_from_cfg(cfg, "gopay")
+    if proxy_url:
+        _apply_proxy_to_http_session(session_obj, proxy_url)
+    return proxy_url
+
+
+def _restore_http_session_proxy(session_obj, proxies_state, trust_env_state):
+    if proxies_state is not _PROXY_OVERRIDE_SENTINEL and hasattr(session_obj, "proxies"):
+        try:
+            session_obj.proxies = dict(proxies_state or {})
+        except Exception:
+            pass
+    if trust_env_state is not _PROXY_OVERRIDE_SENTINEL:
+        try:
+            session_obj.trust_env = trust_env_state
+        except Exception:
+            pass
 
 
 def _apply_proxy_to_http_session(session_obj, proxy_url: str):
@@ -311,7 +429,30 @@ def _resolve_stage_proxy_cfg(stage_proxy_cfg: dict | None, stage_name: str):
 
 @contextmanager
 def _http_session_stage_proxy(session_obj, stage_proxy_cfg: dict | None, stage_name: str):
-    yield
+    proxy_cfg = _resolve_stage_proxy_cfg(stage_proxy_cfg, stage_name)
+    if proxy_cfg is _PROXY_OVERRIDE_SENTINEL:
+        yield
+        return
+
+    proxy_url = _build_proxy_url_from_cfg(proxy_cfg)
+    old_proxies = _PROXY_OVERRIDE_SENTINEL
+    old_trust_env = _PROXY_OVERRIDE_SENTINEL
+    if hasattr(session_obj, "proxies"):
+        try:
+            old_proxies = dict(getattr(session_obj, "proxies") or {})
+        except Exception:
+            old_proxies = _PROXY_OVERRIDE_SENTINEL
+    try:
+        old_trust_env = getattr(session_obj, "trust_env")
+    except Exception:
+        old_trust_env = _PROXY_OVERRIDE_SENTINEL
+
+    _apply_proxy_to_http_session(session_obj, proxy_url)
+    _log(f"      [proxy:{stage_name}] {_describe_proxy_cfg(proxy_url)}")
+    try:
+        yield
+    finally:
+        _restore_http_session_proxy(session_obj, old_proxies, old_trust_env)
 
 
 def _extract_api_error(resp) -> tuple[str, str]:
@@ -557,7 +698,10 @@ def _provision_openai_auth_via_local_bundle(cfg: dict, fresh_cfg: dict) -> dict:
                 mail_cfg[key] = value
 
     fresh_proxy_cfg = fresh_cfg["proxy"] if "proxy" in fresh_cfg else _PROXY_OVERRIDE_SENTINEL
-    proxy_url = _build_proxy_url_from_cfg(_resolve_proxy_cfg(cfg, fresh_proxy_cfg))
+    if fresh_proxy_cfg is _PROXY_OVERRIDE_SENTINEL:
+        proxy_url = _phase_proxy_url_from_cfg(cfg, "register")
+    else:
+        proxy_url = _build_proxy_url_from_cfg(_resolve_proxy_cfg(cfg, fresh_proxy_cfg))
     if auto_cfg.get("use_ctf_proxy", True):
         ab_cfg["proxy"] = proxy_url or ""
     elif auto_cfg.get("proxy") not in (None, ""):
@@ -8222,12 +8366,14 @@ def run(
 
     http = trace_session(requests.Session(), "card.payment_main")
     http.headers.update(_browser_like_session_headers(locale_profile["browser_locale"]))
-    stage_proxy_cfg = {}
+    stage_proxy_cfg = _build_payment_stage_proxy_cfg(cfg, use_gopay=use_gopay)
 
     # 代理配置
     proxy_cfg = cfg.get("proxy")
-    if proxy_cfg:
-        proxy_url = _build_proxy_url_from_cfg(proxy_cfg)
+    base_payment_proxy_url = _phase_proxy_url_from_cfg(cfg, "payment")
+    if base_payment_proxy_url:
+        proxy_cfg = base_payment_proxy_url
+        proxy_url = base_payment_proxy_url
         _apply_proxy_to_http_session(http, proxy_url)
         _log(f"      代理: {_describe_proxy_cfg(proxy_cfg)}")
     else:
@@ -8342,8 +8488,8 @@ def run(
     init_ctx["include_terms_of_service_consent"] = behavior_cfg.get("include_terms_of_service_consent")
     init_ctx["merchant_account_id"] = init_resp.get("account_settings", {}).get("account_id", "")
     # 全局代理 URL 传入 ctx，供 PayPal Playwright 浏览器使用
-    if proxy_cfg:
-        init_ctx["proxy_url"] = _build_proxy_url_from_cfg(proxy_cfg)
+    if base_payment_proxy_url:
+        init_ctx["proxy_url"] = base_payment_proxy_url
     init_ctx["captcha_api_key"] = captcha_cfg.get("api_key", "")
     init_ctx["stage_proxies"] = stage_proxy_cfg
     effective_external_solver_cfg = dict(browser_challenge_cfg.get("external_solver") or {})
@@ -8492,9 +8638,10 @@ def run(
                     http, pk, card, session_id, stripe_ver, ctx=init_ctx
                 )
         elif use_gopay:
-            pm_id = create_gopay_payment_method(
-                http, pk, card, session_id, stripe_ver, ctx=init_ctx
-            )
+            with _http_session_stage_proxy(http, stage_proxy_cfg, "payment_method"):
+                pm_id = create_gopay_payment_method(
+                    http, pk, card, session_id, stripe_ver, ctx=init_ctx
+                )
         elif init_ctx.get("confirm_mode") != "inline_payment_method_data":
             with _http_session_stage_proxy(http, stage_proxy_cfg, "payment_method"):
                 pm_id = create_payment_method(
@@ -8607,7 +8754,11 @@ def run(
                             "processor_entity": processor_entity,
                         }
                         # 创建独立 HTTP session 走 ChatGPT 代理
-                        chatgpt_http_for_approve, _transport = _create_chatgpt_http_session(cfg)
+                        approve_proxy_cfg = _resolve_stage_proxy_cfg(stage_proxy_cfg, "confirm")
+                        chatgpt_http_for_approve, _transport = _create_chatgpt_http_session(
+                            cfg,
+                            proxy_cfg_override=approve_proxy_cfg,
+                        )
                         ar = chatgpt_http_for_approve.post(
                             "https://chatgpt.com/backend-api/payments/checkout/approve",
                             json=approve_body, headers=approve_headers, timeout=20,

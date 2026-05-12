@@ -539,14 +539,24 @@ def test_midtrans_linking_prechecks_unbind_when_links_exist(monkeypatch):
     assert any("unlinking before linking" in line for line in logs)
 
 
-def test_gopay_proxy_pool_keeps_payment_proxy_stable():
+def test_gopay_proxy_pool_prefers_gopay_list():
     charger = build_charger()
     charger.proxy_pool = gopay._proxy_list_from_cfg(
         {"proxies": {"gopay_list": ["http://gopay-1.example:8080", "http://gopay-2.example:8080"]}},
         "http://payment.example:8080",
     )
 
-    assert charger.proxy_pool == ["http://payment.example:8080"]
+    assert charger.proxy_pool == ["http://gopay-1.example:8080", "http://gopay-2.example:8080"]
+
+
+def test_gopay_proxy_pool_falls_back_to_payment_list():
+    charger = build_charger()
+    charger.proxy_pool = gopay._proxy_list_from_cfg(
+        {"proxies": {"payment_list": ["http://payment-list.example:8080"]}},
+        "http://payment.example:8080",
+    )
+
+    assert charger.proxy_pool == ["http://payment-list.example:8080"]
 
 
 def test_qr_payment_mode_does_not_require_gopay_account():
