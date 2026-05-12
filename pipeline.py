@@ -3781,17 +3781,13 @@ class ProxyPool:
         return self.proxies[0]
 
     def pick_two_stage(self) -> tuple[str, str]:
-        if self.register_proxies or self.payment_proxies:
-            reg_choices = self.register_proxies or self.proxies
-            pay_choices = self.payment_proxies or self.proxies or reg_choices
-            reg_proxy = random.choice(reg_choices) if reg_choices else ""
-            pay_proxy = random.choice(pay_choices) if pay_choices else reg_proxy
-            return reg_proxy, pay_proxy
+        shared_choices = self.payment_proxies or self.register_proxies or self.proxies
+        if shared_choices:
+            proxy = random.choice(shared_choices) if self.rotation == "random" else shared_choices[0]
+            return proxy, proxy
         if not self.proxies:
             return "", ""
-        if len(self.proxies) == 1:
-            return self.proxies[0], self.proxies[0]
-        return self.proxies[0], self.proxies[1]
+        return self.proxies[0], self.proxies[0]
 
     def pick_for_worker(self, worker_id: int) -> str:
         if not self.proxies:
@@ -3806,7 +3802,18 @@ class ProxyPool:
         return self.proxies[0]
 
     def pick_two_stage_for_worker(self, worker_id: int) -> tuple[str, str]:
-        return self.pick_two_stage()
+        shared_choices = self.payment_proxies or self.register_proxies or self.proxies
+        if not shared_choices:
+            return "", ""
+        if self.rotation == "random":
+            with self._lock:
+                proxy = shared_choices[self._cursor % len(shared_choices)]
+                self._cursor += 1
+        elif len(shared_choices) > 1 or self.rotation in ("round_robin", "worker", "lru"):
+            proxy = shared_choices[int(worker_id) % len(shared_choices)]
+        else:
+            proxy = shared_choices[0]
+        return proxy, proxy
 
     def mark_fail(self, proxy):
         # TODO: 实现失败标记 + 冷却

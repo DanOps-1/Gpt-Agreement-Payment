@@ -227,10 +227,10 @@ def _proxy_list_from_cfg(cfg: Optional[dict], primary_proxy: Optional[str] = Non
         _append_proxy_values(
             out,
             seen,
+            primary_proxy,
             proxies_cfg.get("payment_list"),
             proxies_cfg.get("payment_urls"),
             proxies_cfg.get("payment_url"),
-            primary_proxy,
         )
     return out
 

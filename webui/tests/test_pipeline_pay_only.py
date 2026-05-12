@@ -435,7 +435,7 @@ def test_cpa_import_falls_back_to_access_token_without_refresh_token(tmp_path, m
     assert body["account_id"] == "acct_123"
 
 
-def test_worker_card_config_assigns_distinct_gopay_and_proxy(tmp_path):
+def test_worker_card_config_assigns_shared_non_gopay_proxy_and_distinct_gopay(tmp_path):
     card_config = tmp_path / "config.paypal.json"
     card_config.write_text(json.dumps({
         "proxy": "http://base-proxy",
@@ -455,14 +455,14 @@ def test_worker_card_config_assigns_distinct_gopay_and_proxy(tmp_path):
     card_cfg = pipeline._read_card_cfg(str(card_config))
     proxy_pool = pipeline._build_proxy_pool_from_card_cfg(card_cfg)
 
-    path0, px0 = pipeline._worker_card_config(str(card_config), card_cfg, 0, 2, proxy_pool, True)
-    path1, px1 = pipeline._worker_card_config(str(card_config), card_cfg, 1, 2, proxy_pool, True)
+    path0, reg0, pay0 = pipeline._worker_card_config(str(card_config), card_cfg, 0, 2, proxy_pool, True)
+    path1, reg1, pay1 = pipeline._worker_card_config(str(card_config), card_cfg, 1, 2, proxy_pool, True)
 
     try:
         data0 = json.loads(open(path0, encoding="utf-8").read())
         data1 = json.loads(open(path1, encoding="utf-8").read())
-        assert px0 == "http://proxy-a"
-        assert px1 == "http://proxy-b"
+        assert reg0 == pay0 == "http://proxy-a"
+        assert reg1 == pay1 == "http://proxy-b"
         assert data0["proxy"] == "http://proxy-a"
         assert data1["proxy"] == "http://proxy-b"
         assert data0["gopay"]["phone_number"] == "111"

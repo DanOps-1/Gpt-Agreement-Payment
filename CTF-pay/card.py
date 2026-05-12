@@ -242,29 +242,28 @@ def _phase_proxy_url_from_cfg(cfg: dict | None, phase: str) -> str:
         return ""
 
     proxies_cfg = cfg.get("proxies") if isinstance(cfg.get("proxies"), dict) else {}
+    primary_proxy = _build_proxy_url_from_cfg(cfg.get("proxy"))
     if proxies_cfg and proxies_cfg.get("enabled") is False:
-        return _build_proxy_url_from_cfg(cfg.get("proxy"))
+        return primary_proxy
 
     phase_key = str(phase or "").strip().lower()
-    if phase_key == "register":
-        phase_proxy = _first_proxy_from_values(
-            proxies_cfg.get("register_list"),
-            proxies_cfg.get("register_urls"),
-            proxies_cfg.get("register_url"),
-        )
-    elif phase_key == "gopay":
+    if phase_key == "gopay":
         phase_proxy = _first_proxy_from_values(
             proxies_cfg.get("gopay_list"),
             proxies_cfg.get("gopay_urls"),
             proxies_cfg.get("gopay_url"),
         )
         if not phase_proxy:
+            if primary_proxy:
+                return primary_proxy
             phase_proxy = _first_proxy_from_values(
                 proxies_cfg.get("payment_list"),
                 proxies_cfg.get("payment_urls"),
                 proxies_cfg.get("payment_url"),
             )
     else:
+        if primary_proxy:
+            return primary_proxy
         phase_proxy = _first_proxy_from_values(
             proxies_cfg.get("payment_list"),
             proxies_cfg.get("payment_urls"),
@@ -273,10 +272,6 @@ def _phase_proxy_url_from_cfg(cfg: dict | None, phase: str) -> str:
 
     if phase_proxy:
         return phase_proxy
-
-    primary_proxy = _build_proxy_url_from_cfg(cfg.get("proxy"))
-    if primary_proxy:
-        return primary_proxy
 
     return _first_proxy_from_values(
         proxies_cfg.get("list"),
@@ -699,7 +694,7 @@ def _provision_openai_auth_via_local_bundle(cfg: dict, fresh_cfg: dict) -> dict:
 
     fresh_proxy_cfg = fresh_cfg["proxy"] if "proxy" in fresh_cfg else _PROXY_OVERRIDE_SENTINEL
     if fresh_proxy_cfg is _PROXY_OVERRIDE_SENTINEL:
-        proxy_url = _phase_proxy_url_from_cfg(cfg, "register")
+        proxy_url = _phase_proxy_url_from_cfg(cfg, "payment")
     else:
         proxy_url = _build_proxy_url_from_cfg(_resolve_proxy_cfg(cfg, fresh_proxy_cfg))
     if auto_cfg.get("use_ctf_proxy", True):
