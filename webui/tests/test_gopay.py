@@ -630,7 +630,7 @@ def test_qr_payment_uses_qris_charge(monkeypatch):
     assert any("二维码已生成" in line for line in logs)
 
 
-def test_qr_payment_temporarily_skips_pre_linking(monkeypatch):
+def test_qr_payment_runs_pre_linking_when_account_is_available(monkeypatch):
     calls: list[str] = []
     charger = gopay.GoPayCharger(
         requests.Session(),
@@ -665,8 +665,8 @@ def test_qr_payment_temporarily_skips_pre_linking(monkeypatch):
 
     result = charger._run_midtrans_qr(SNAP_TOKEN, "cs_live_test")
 
-    assert calls == ["load", "qr_charge"]
-    assert result["qr_pre_linking"] == {"ok": False, "skipped": True, "reason": "temporarily_disabled"}
+    assert calls == ["load", "linking", f"complete:{LINK_REF}", "qr_charge"]
+    assert result["qr_pre_linking"] == {"ok": True, "reference_id": LINK_REF}
 
 
 def test_qr_payment_can_skip_pre_linking(monkeypatch):
