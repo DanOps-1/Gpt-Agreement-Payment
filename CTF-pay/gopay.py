@@ -971,6 +971,31 @@ class GoPayCharger:
             "accept-language": accept_language,
         }
 
+    def _gopay_web_headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        headers = {
+            "Origin": "https://merchants-gws-app.gopayapi.com",
+            "Referer": "https://merchants-gws-app.gopayapi.com/",
+        }
+        headers.update(self._location_defaults_for_current_ip())
+        if extra:
+            headers.update({k: v for k, v in extra.items() if str(v or "").strip()})
+        return headers
+
+    def _pin_web_headers(self) -> dict[str, str]:
+        location_headers = self._location_defaults_for_current_ip()
+        headers = {
+            "x-appversion": "1.0.0",
+            "x-correlation-id": str(uuid.uuid4()),
+            "x-is-mobile": "false",
+            "x-platform": "Mac OS 12.2.1",
+            "x-request-id": str(uuid.uuid4()),
+            "x-user-locale": location_headers.get("x-user-locale", "id"),
+            "Origin": "https://pin-web-client.gopayapi.com",
+            "Referer": "https://pin-web-client.gopayapi.com/",
+        }
+        headers.update(location_headers)
+        return headers
+
     def _request_ext(self, method: str, url: str, *, retry_label: str = "", **kwargs: Any):
         last_exc: Exception | None = None
         for attempt in range(1, TRANSIENT_REQUEST_RETRY_LIMIT + 1):
@@ -1909,8 +1934,7 @@ class GoPayCharger:
         r = self.ext.post(
             "https://gwa.gopayapi.com/v1/linking/validate-reference",
             json={"reference_id": reference_id},
-            headers={"Origin": "https://merchants-gws-app.gopayapi.com",
-                     "Referer": "https://merchants-gws-app.gopayapi.com/"},
+            headers=self._gopay_web_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
         r.raise_for_status()
@@ -1921,9 +1945,7 @@ class GoPayCharger:
         r = self.ext.post(
             "https://gwa.gopayapi.com/v1/linking/user-consent",
             json={"reference_id": reference_id},
-            headers={"Origin": "https://merchants-gws-app.gopayapi.com",
-                     "Referer": "https://merchants-gws-app.gopayapi.com/",
-                     "x-user-locale": "en-US"},
+            headers=self._gopay_web_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
         raw_text = getattr(r, "text", "") or ""
@@ -1947,18 +1969,18 @@ class GoPayCharger:
             "https://gwa.gopayapi.com/v1/linking/resend-otp",
             json={"reference_id": reference_id},
             headers={
-                "Accept": "application/json, text/plain, */*",
-                "Content-Type": "application/json",
-                "Origin": "https://merchants-gws-app.gopayapi.com",
-                "Referer": "https://merchants-gws-app.gopayapi.com/",
+                **self._gopay_web_headers({
+                    "Accept": "application/json, text/plain, */*",
+                    "Content-Type": "application/json",
+                    "priority": "u=1, i",
+                    "sec-ch-ua": '"Microsoft Edge";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"Windows"',
+                    "sec-fetch-dest": "empty",
+                    "sec-fetch-mode": "cors",
+                    "sec-fetch-site": "same-site",
+                }),
                 "accept-language": "zh-CN,zh;q=0.9",
-                "priority": "u=1, i",
-                "sec-ch-ua": '"Microsoft Edge";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "sec-fetch-dest": "empty",
-                "sec-fetch-mode": "cors",
-                "sec-fetch-site": "same-site",
                 "x-user-locale": "zh-CN",
             },
             timeout=DEFAULT_TIMEOUT,
@@ -2020,8 +2042,7 @@ class GoPayCharger:
         r = self.ext.post(
             "https://gwa.gopayapi.com/v1/linking/validate-otp",
             json={"reference_id": reference_id, "otp": otp},
-            headers={"Origin": "https://merchants-gws-app.gopayapi.com",
-                     "Referer": "https://merchants-gws-app.gopayapi.com/"},
+            headers=self._gopay_web_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
         raw_text = getattr(r, "text", "") or ""
@@ -2050,19 +2071,16 @@ class GoPayCharger:
 
     def _tokenize_pin(self, challenge_id: str, client_id: str) -> str:
         """POST customer.gopayapi.com/api/v1/users/pin/tokens/nb → JWT."""
-        headers = {
-            "x-appversion": "1.0.0",
-            "x-correlation-id": str(uuid.uuid4()),
-            "x-is-mobile": "false",
-            "x-platform": "Mac OS 12.2.1",
-            "x-request-id": str(uuid.uuid4()),
-            "x-user-locale": "id",
-            "Origin": "https://pin-web-client.gopayapi.com",
-            "Referer": "https://pin-web-client.gopayapi.com/",
-        }
+        headers = self._pin_web_headers()
         self.log(
             "[gopay-pin] request headers "
             + _json_for_log(_safe_request_headers_for_debug(headers))
+        )
+        self.log(
+            "[gopay-pin] location "
+            f"x-location={_header_value(headers, 'x-location') or '-'} "
+            f"country-code={_header_value(headers, 'country-code') or '-'} "
+            f"gojek-country-code={_header_value(headers, 'gojek-country-code') or '-'}"
         )
         self._log_ext_exit_ip("[gopay-pin]")
         r = self.ext.post(
@@ -2092,8 +2110,7 @@ class GoPayCharger:
         r = self.ext.post(
             "https://gwa.gopayapi.com/v1/linking/validate-pin",
             json={"reference_id": reference_id, "token": pin_token},
-            headers={"Origin": "https://merchants-gws-app.gopayapi.com",
-                     "Referer": "https://merchants-gws-app.gopayapi.com/"},
+            headers=self._gopay_web_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
         r.raise_for_status()
@@ -2616,18 +2633,23 @@ class GoPayCharger:
         body_for_signature, body_signature_source = self._qris_body_for_signature(method, sign_path, body, body_text)
         headers = self._qris_signed_headers(method, url, body_text, body_for_signature=body_for_signature)
         debug_logs = self._qris_debug_logs()
-        if method.upper() == "POST" and urlsplit(url).path.endswith("/api/v1/users/pin/tokens"):
+        request_method = method.upper()
+        request_path = urlsplit(url).path
+        is_qris_pin_token_request = request_method == "POST" and request_path.endswith("/api/v1/users/pin/tokens")
+        is_qris_capture_request = request_method == "PATCH" and request_path.startswith("/v3/payments/") and request_path.endswith("/capture")
+        if is_qris_pin_token_request or is_qris_capture_request:
+            log_label = "[gopay-qris-pin]" if is_qris_pin_token_request else "[gopay-qris-capture]"
             self.log(
-                "[gopay-qris-pin] request headers "
+                f"{log_label} request headers "
                 + _json_for_log(_safe_request_headers_for_debug(headers))
             )
             self.log(
-                "[gopay-qris-pin] location "
+                f"{log_label} location "
                 f"x-location={_header_value(headers, 'x-location') or '-'} "
                 f"country-code={_header_value(headers, 'country-code') or '-'} "
                 f"gojek-country-code={_header_value(headers, 'gojek-country-code') or '-'}"
             )
-            self._log_ext_exit_ip("[gopay-qris-pin]")
+            self._log_ext_exit_ip(log_label)
         if debug_logs:
             self.log("[gopay-qris] === request start ===")
             self.log(f"[gopay-qris] method={method.upper()} url={url}")
@@ -3267,8 +3289,7 @@ class GoPayCharger:
                 r = self._request_ext(
                     "get",
                     f"https://gwa.gopayapi.com/v1/payment/validate?reference_id={charge_ref}",
-                    headers={"Origin": "https://merchants-gws-app.gopayapi.com",
-                             "Referer": "https://merchants-gws-app.gopayapi.com/"},
+                    headers=self._gopay_web_headers(),
                     timeout=DEFAULT_TIMEOUT,
                     retry_label="gopay payment validate",
                 )
@@ -3288,8 +3309,7 @@ class GoPayCharger:
         r = self.ext.post(
             f"https://gwa.gopayapi.com/v1/payment/confirm?reference_id={charge_ref}",
             json={"payment_instructions": []},
-            headers={"Origin": "https://merchants-gws-app.gopayapi.com",
-                     "Referer": "https://merchants-gws-app.gopayapi.com/"},
+            headers=self._gopay_web_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
         r.raise_for_status()
@@ -3308,8 +3328,7 @@ class GoPayCharger:
                     "value": {"pin_token": pin_token},
                 },
             },
-            headers={"Origin": "https://merchants-gws-app.gopayapi.com",
-                     "Referer": "https://merchants-gws-app.gopayapi.com/"},
+            headers=self._gopay_web_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code != 200:

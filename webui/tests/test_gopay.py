@@ -549,14 +549,14 @@ def test_gopay_proxy_pool_prefers_gopay_list():
     assert charger.proxy_pool == ["http://gopay-1.example:8080", "http://gopay-2.example:8080"]
 
 
-def test_gopay_proxy_pool_falls_back_to_payment_list():
+def test_gopay_proxy_pool_falls_back_to_primary_proxy_before_payment_list():
     charger = build_charger()
     charger.proxy_pool = gopay._proxy_list_from_cfg(
         {"proxies": {"payment_list": ["http://payment-list.example:8080"]}},
         "http://payment.example:8080",
     )
 
-    assert charger.proxy_pool == ["http://payment-list.example:8080"]
+    assert charger.proxy_pool == ["http://payment.example:8080"]
 
 
 def test_qr_payment_mode_does_not_require_gopay_account():
