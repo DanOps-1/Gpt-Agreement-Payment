@@ -282,6 +282,11 @@ def _phase_proxy_url_from_cfg(cfg: dict | None, phase: str) -> str:
 
 def _build_payment_stage_proxy_cfg(cfg: dict | None, *, use_gopay: bool = False) -> dict:
     payment_proxy = _phase_proxy_url_from_cfg(cfg, "payment")
+    post_payment_method_proxy = (
+        _phase_proxy_url_from_cfg(cfg, "gopay") or payment_proxy
+        if use_gopay
+        else payment_proxy
+    )
 
     stage_proxy_cfg: dict[str, str] = {}
 
@@ -318,7 +323,7 @@ def _build_payment_stage_proxy_cfg(cfg: dict | None, *, use_gopay: bool = False)
             "telemetry_poll",
             "poll",
         ],
-        payment_proxy,
+        post_payment_method_proxy,
     )
 
     return stage_proxy_cfg
