@@ -601,3 +601,21 @@ def test_gopay_account_lease_pool_waits_until_phone_released():
 
     assert acquired[0]["phone_number"] == "811"
     pool.release(acquired[0], log=lambda _m: None)
+
+
+def test_gopay_account_lease_pool_excludes_disabled_accounts():
+    cfg = {
+        "gopay": {
+            "accounts": [
+                {"label": "off-1", "country_code": "62", "phone_number": "811", "pin": "111111", "disabled": True},
+                {"label": "off-2", "country_code": "62", "phone_number": "812", "pin": "222222", "enabled": False},
+                {"label": "on-1", "country_code": "62", "phone_number": "813", "pin": "333333"},
+                {"label": "on-2", "country_code": "62", "phone_number": "814", "pin": "444444"},
+            ]
+        }
+    }
+
+    pool = pipeline._build_gopay_account_lease_pool(cfg)
+
+    assert pool is not None
+    assert [account["phone_number"] for account in pool.accounts] == ["813", "814"]

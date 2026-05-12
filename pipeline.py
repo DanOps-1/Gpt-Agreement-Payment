@@ -3873,6 +3873,8 @@ def _gopay_accounts_from_card_cfg(card_cfg: dict) -> list[dict]:
         for item in accounts:
             if not isinstance(item, dict):
                 continue
+            if _gopay_account_disabled(item):
+                continue
             if all(str(item.get(k) or gp.get(k) or "").strip() for k in ("country_code", "phone_number", "pin")):
                 merged = dict(item)
                 if not merged.get("country_code") and gp.get("country_code"):
@@ -3880,7 +3882,7 @@ def _gopay_accounts_from_card_cfg(card_cfg: dict) -> list[dict]:
                 if not merged.get("midtrans_client_id") and gp.get("midtrans_client_id"):
                     merged["midtrans_client_id"] = gp.get("midtrans_client_id")
                 usable.append(merged)
-    elif all(str(gp.get(k) or "").strip() for k in ("country_code", "phone_number", "pin")):
+    elif all(str(gp.get(k) or "").strip() for k in ("country_code", "phone_number", "pin")) and not _gopay_account_disabled(gp):
         usable.append({
             "label": gp.get("label") or gp.get("name") or "default",
             "country_code": gp.get("country_code"),
@@ -3889,6 +3891,22 @@ def _gopay_accounts_from_card_cfg(card_cfg: dict) -> list[dict]:
             "midtrans_client_id": gp.get("midtrans_client_id"),
         })
     return usable
+
+
+def _truthy_cfg_value(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    return text in {"1", "true", "yes", "y", "on", "enabled"}
+
+
+def _gopay_account_disabled(cfg: dict) -> bool:
+    return _truthy_cfg_value(
+        cfg.get("disabled")
+        or cfg.get("disable")
+        or cfg.get("gopay_disabled")
+        or cfg.get("account_disabled")
+    ) or cfg.get("enabled") is False
 
 
 def _gopay_account_lease_key(account: dict) -> str:
