@@ -132,6 +132,17 @@ TRANSIENT_REQUEST_RETRY_MAX_S = 2.5
 DEFAULT_OTP_REGEX = r"(?<!\d)(\d{6})(?!\d)"
 GOPAY_AUTO_LOGIN_OTP_REGEX = r"(?<!\d)(\d{4,8})(?!\d)"
 
+GOPAY_COUNTRY_LOCATION_DEFAULTS = {
+    "ID": ("-6.2088,106.8456", "Asia/Jakarta", "id_ID", "id-ID"),
+    "JP": ("35.6762,139.6503", "Asia/Tokyo", "ja_JP", "ja-JP"),
+    "SG": ("1.3521,103.8198", "Asia/Singapore", "en_SG", "en-SG"),
+    "MY": ("3.1390,101.6869", "Asia/Kuala_Lumpur", "ms_MY", "ms-MY"),
+    "TH": ("13.7563,100.5018", "Asia/Bangkok", "th_TH", "th-TH"),
+    "VN": ("10.8231,106.6297", "Asia/Ho_Chi_Minh", "vi_VN", "vi-VN"),
+    "PH": ("14.5995,120.9842", "Asia/Manila", "en_PH", "en-PH"),
+    "US": ("37.7749,-122.4194", "America/Los_Angeles", "en_US", "en-US"),
+}
+
 
 def _looks_transient_request_error(exc: Exception) -> bool:
     text = str(exc).lower()
@@ -852,6 +863,7 @@ class GoPayCharger:
         self.log = log
         self.proxy_pool = _proxy_list_from_cfg(proxy_cfg, proxy)
         self.proxy_index = 0
+        self._ext_exit_ip_cache: dict[str, str] | None = None
         # Stripe runtime fingerprint (js_checksum / rv_timestamp / version) — these
         # are computed by Stripe.js client-side; replay the captured values from
         # config.runtime or HAR. Without them confirm 400.
@@ -906,12 +918,58 @@ class GoPayCharger:
             proxy = str(proxies.get("https") or proxies.get("http") or "")
         except Exception:
             proxy = ""
+        cached = self._ext_exit_ip_info()
+        if cached.get("ip"):
+            country = "/".join(x for x in (cached.get("country_code"), cached.get("country")) if x)
+            self.log(
+                f"{label} current_ip={cached.get('ip')} "
+                f"{country or '-'} proxy={proxy or 'direct'}"
+            )
+            return
+        error = cached.get("error")
+        if error:
+            self.log(f"{label} current_ip_check_failed={error} proxy={proxy or 'direct'}")
+            return
+
+    def _ext_exit_ip_info(self) -> dict[str, str]:
+        if isinstance(self._ext_exit_ip_cache, dict):
+            return self._ext_exit_ip_cache
         try:
             r = self.ext.get("https://api.ipify.org", timeout=12)
             ip = str(getattr(r, "text", "") or "").strip()
-            self.log(f"{label} current_ip={ip or '-'} proxy={proxy or 'direct'}")
+            info: dict[str, str] = {"ip": ip}
+            if ip:
+                try:
+                    geo = self.ext.get(f"http://ip-api.com/json/{ip}", timeout=8).json()
+                    if isinstance(geo, dict):
+                        info["country_code"] = str(geo.get("countryCode") or "").strip().upper()
+                        info["country"] = str(geo.get("country") or "").strip()
+                except Exception:
+                    pass
+            self._ext_exit_ip_cache = info
+            return info
         except Exception as exc:
-            self.log(f"{label} current_ip_check_failed={type(exc).__name__}: {str(exc)[:160]} proxy={proxy or 'direct'}")
+            info = {"error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+            self._ext_exit_ip_cache = info
+            return info
+
+    def _location_defaults_for_current_ip(self) -> dict[str, str]:
+        if self.gopay_cfg.get("auto_location_from_ip") is False:
+            return {}
+        country_code = str(self._ext_exit_ip_info().get("country_code") or "").strip().upper()
+        location_defaults = GOPAY_COUNTRY_LOCATION_DEFAULTS.get(country_code)
+        if not location_defaults:
+            return {}
+        location, timezone_name, locale, accept_language = location_defaults
+        return {
+            "country-code": country_code,
+            "gojek-country-code": country_code,
+            "x-location": location,
+            "custom_location": location,
+            "gojek-timezone": timezone_name,
+            "x-user-locale": locale,
+            "accept-language": accept_language,
+        }
 
     def _request_ext(self, method: str, url: str, *, retry_label: str = "", **kwargs: Any):
         last_exc: Exception | None = None
@@ -2468,6 +2526,7 @@ class GoPayCharger:
         headers = _merge_header_sources(
             *ordered_sources,
         )
+        headers.update(self._location_defaults_for_current_ip())
         headers = {k: v for k, v in headers.items() if str(v or "").strip()}
         missing = [
             name for name in (
@@ -2561,6 +2620,12 @@ class GoPayCharger:
             self.log(
                 "[gopay-qris-pin] request headers "
                 + _json_for_log(_safe_request_headers_for_debug(headers))
+            )
+            self.log(
+                "[gopay-qris-pin] location "
+                f"x-location={_header_value(headers, 'x-location') or '-'} "
+                f"country-code={_header_value(headers, 'country-code') or '-'} "
+                f"gojek-country-code={_header_value(headers, 'gojek-country-code') or '-'}"
             )
             self._log_ext_exit_ip("[gopay-qris-pin]")
         if debug_logs:
