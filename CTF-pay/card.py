@@ -8869,6 +8869,10 @@ def run(
     except Exception:
         pass
 
+    # GoPay 正常解绑提前到 ChatGPT verify 成功后、RT 获取前。
+    if use_gopay and result_state == "succeeded":
+        _run_gopay_auto_unbind_for_selected_account(cfg)
+
     # 支付成功才拿 refresh_token（失败不拿）
     if result_state == "succeeded" and chatgpt_email:
         try:
@@ -8912,9 +8916,6 @@ def run(
                 _log(f"      [RT] 缺少条件，跳过 (password={bool(_password)} mail_cfg={bool(_mail_cfg)})")
         except Exception as e:
             _log(f"      [RT] 获取异常: {e}")
-
-    if use_gopay and result_state == "succeeded":
-        _run_gopay_auto_unbind_for_selected_account(cfg)
 
     _record_result(
         status=result_state,

@@ -571,6 +571,7 @@ def test_qr_payment_uses_qris_charge(monkeypatch):
         requests.Session(),
         {
             "qr_payment": True,
+            "qr_pre_linking": False,
             "country_code": "62",
             "phone_number": "81234567890",
             "pin": "123456",
@@ -617,6 +618,84 @@ def test_qr_payment_uses_qris_charge(monkeypatch):
     assert result["qris_payment"]["payment_id"] == "A120260509150543TEST"
     assert any("starting GoPay APP payment" in line for line in logs)
     assert any("二维码已生成" in line for line in logs)
+
+
+def test_qr_payment_runs_pre_linking_before_qris_charge(monkeypatch):
+    calls: list[str] = []
+    charger = gopay.GoPayCharger(
+        requests.Session(),
+        {
+            "qr_payment": True,
+            "country_code": "62",
+            "phone_number": "81234567890",
+            "pin": "123456",
+        },
+        otp_provider=lambda: "000000",
+        log=lambda _m: None,
+    )
+
+    monkeypatch.setattr(charger, "_midtrans_load_transaction", lambda snap_token: calls.append("load"))
+    monkeypatch.setattr(charger, "_midtrans_init_linking", lambda snap_token: calls.append("linking") or LINK_REF)
+    monkeypatch.setattr(charger, "_complete_linking", lambda reference_id: calls.append(f"complete:{reference_id}") or reference_id)
+    monkeypatch.setattr(
+        charger,
+        "_midtrans_create_qr_charge",
+        lambda snap_token: calls.append("qr_charge") or {
+            "payload": "000201010212QRISDATA",
+            "payload_type": "qr_string",
+            "charge_mode": "qris",
+            "snap_token": snap_token,
+            "http_status": 201,
+            "response": {},
+        },
+    )
+    monkeypatch.setattr(charger, "_save_qr_artifact", lambda qr_info: "")
+    monkeypatch.setattr(charger, "_run_qris_app_payment", lambda qris, qr_info: {"payment_id": "A120260509150543TEST"})
+    monkeypatch.setattr(charger, "_chatgpt_verify", lambda cs_id, timeout_s=60.0, **_kwargs: {"state": "succeeded", "cs_id": cs_id})
+
+    result = charger._run_midtrans_qr(SNAP_TOKEN, "cs_live_test")
+
+    assert calls[:4] == ["load", "linking", f"complete:{LINK_REF}", "qr_charge"]
+    assert result["qr_pre_linking"] == {"ok": True, "reference_id": LINK_REF}
+
+
+def test_qr_payment_can_skip_pre_linking(monkeypatch):
+    calls: list[str] = []
+    charger = gopay.GoPayCharger(
+        requests.Session(),
+        {
+            "qr_payment": True,
+            "qr_pre_linking": False,
+            "country_code": "62",
+            "phone_number": "81234567890",
+            "pin": "123456",
+        },
+        otp_provider=lambda: "000000",
+        log=lambda _m: None,
+    )
+
+    monkeypatch.setattr(charger, "_midtrans_load_transaction", lambda snap_token: calls.append("load"))
+    monkeypatch.setattr(charger, "_midtrans_init_linking", lambda snap_token: calls.append("linking") or LINK_REF)
+    monkeypatch.setattr(
+        charger,
+        "_midtrans_create_qr_charge",
+        lambda snap_token: calls.append("qr_charge") or {
+            "payload": "000201010212QRISDATA",
+            "payload_type": "qr_string",
+            "charge_mode": "qris",
+            "snap_token": snap_token,
+            "http_status": 201,
+            "response": {},
+        },
+    )
+    monkeypatch.setattr(charger, "_save_qr_artifact", lambda qr_info: "")
+    monkeypatch.setattr(charger, "_run_qris_app_payment", lambda qris, qr_info: {"payment_id": "A120260509150543TEST"})
+    monkeypatch.setattr(charger, "_chatgpt_verify", lambda cs_id, timeout_s=60.0, **_kwargs: {"state": "succeeded", "cs_id": cs_id})
+
+    result = charger._run_midtrans_qr(SNAP_TOKEN, "cs_live_test")
+
+    assert calls == ["load", "qr_charge"]
+    assert result["qr_pre_linking"]["skipped"] is True
 
 
 def test_extract_qr_payload_from_midtrans_actions():

@@ -618,6 +618,9 @@ def normalize_gopay_accounts(gopay_cfg: dict) -> list[dict]:
             "login_token_dir",
             "login_hmac_key",
             "login_nonce_marker",
+            "qr_pre_linking",
+            "qris_pre_linking",
+            "linking_before_qr",
         ):
             if key in gopay_cfg:
                 account[key] = gopay_cfg.get(key)
@@ -740,6 +743,7 @@ class GoPayCharger:
             gopay_cfg.get("midtrans_client_id") or DEFAULT_MIDTRANS_CLIENT_ID
         )
         self.qr_wait_timeout = _float_cfg(gopay_cfg, "qr_wait_timeout", QR_WAIT_TIMEOUT_S)
+        self.qr_pre_linking_mode = self._resolve_qr_pre_linking_mode()
         self.use_sms_otp = _truthy_cfg(gopay_cfg.get("use_sms_otp") or gopay_cfg.get("sms_otp"))
         self.sms_otp_poll_url = str(
             gopay_cfg.get("sms_otp_poll_url")
@@ -800,6 +804,25 @@ class GoPayCharger:
         })
         if self.proxy_pool:
             self._apply_proxy(self.proxy_pool[0])
+
+    def _resolve_qr_pre_linking_mode(self) -> str:
+        for key in ("qr_pre_linking", "qris_pre_linking", "linking_before_qr"):
+            if key in self.gopay_cfg:
+                return "enabled" if _truthy_cfg(self.gopay_cfg.get(key)) else "disabled"
+        return "auto"
+
+    def _should_run_qr_pre_linking(self) -> bool:
+        if self.qr_pre_linking_mode == "disabled":
+            return False
+        has_link_account = bool(self.country_code and self.phone and self.pin)
+        if has_link_account:
+            return True
+        if self.qr_pre_linking_mode == "enabled":
+            raise GoPayError(
+                "gopay qr pre-linking requires country_code / phone_number / pin"
+            )
+        self.log("[gopay-qr] pre-linking skipped: no GoPay account configured")
+        return False
 
     def _apply_proxy(self, proxy: str) -> None:
         proxy = str(proxy or "").strip()
@@ -3343,6 +3366,7 @@ class GoPayCharger:
 
     def _run_midtrans_qr(self, snap_token: str, cs_id: str) -> dict:
         self._midtrans_load_transaction(snap_token)
+        pre_linking_result = self._run_qr_pre_linking(snap_token)
         qr_info = self._midtrans_create_qr_charge(snap_token)
         artifact = self._save_qr_artifact(qr_info)
         payload = str(qr_info.get("payload") or "")
@@ -3394,9 +3418,46 @@ class GoPayCharger:
             "qr_order_id": order_id,
             "qr_transaction_id": transaction_id,
             "qris_payment": qris_result,
+            "qr_pre_linking": pre_linking_result,
             "accounts_check": accounts_check,
         })
         return result
+
+    def _run_qr_pre_linking(self, snap_token: str) -> dict:
+        if not self._should_run_qr_pre_linking():
+            return {"ok": False, "skipped": True, "reason": "disabled_or_missing_account"}
+        self.log("[gopay-qr] pre-linking enabled; running GoPay linking before QR charge")
+        reference_id = self._midtrans_init_linking(snap_token)
+        self._complete_linking(reference_id)
+        self.log(f"[gopay-qr] pre-linking complete reference={reference_id}")
+        return {"ok": True, "reference_id": reference_id}
+
+    def _complete_linking(self, reference_id: str) -> str:
+        self._gopay_validate_reference(reference_id)
+        if self.use_sms_otp:
+            self._gopay_resend_sms_otp(reference_id)
+        else:
+            self._gopay_user_consent(reference_id)
+        if self.gopay_activation_link_url:
+            self.log(f"[gopay-test] OTP page url={self.gopay_activation_link_url}")
+        print(
+            f"GOPAY_OTP_TARGET phone={self.phone} country_code={self.country_code}",
+            flush=True,
+        )
+        otp = self._poll_sms_otp(reference_id) if self.use_sms_otp else self.otp_provider()
+        if not otp:
+            raise OTPCancelled("OTP not provided")
+        challenge_id, client_id = self._gopay_validate_otp(reference_id, otp)
+        pin_url = (
+            "https://pin-web-client.gopayapi.com/"
+            f"?challenge_id={challenge_id}&client_id={client_id}"
+        )
+        self.log(f"[gopay-test] PIN page url={pin_url}")
+        if self.stop_after_link_pin_url:
+            raise GoPayError("stopped after link PIN page url for testing")
+        pin_token = self._tokenize_pin(challenge_id, client_id)
+        self._gopay_validate_pin(reference_id, pin_token)
+        return reference_id
 
     def _run_midtrans_and_gopay(self, snap_token: str, cs_id: str) -> dict:
         auto_login_result = self._gopay_auto_login_if_configured()
