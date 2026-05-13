@@ -992,7 +992,7 @@ def _start_gopay_stock_worker(card_config_path: str, card_cfg: dict | None, *, w
     workers = max(1, int(workers or 1))
     auto = _gopay_auto_signup_cfg(card_cfg)
     min_stock = max(workers, int(float(auto.get("min_stock") or 0)))
-    max_prepare_workers = max(1, int(float(auto.get("max_prepare_workers") or workers)))
+    max_prepare_workers = 1
     interval = max(1.0, float(auto.get("stock_check_interval") or 2.0))
     py = python or sys.executable
     stop_event = threading.Event()
