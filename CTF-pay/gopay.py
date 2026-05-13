@@ -5124,11 +5124,14 @@ def main():
         sys.exit(2)
 
     auth_cfg = (cfg.get("fresh_checkout") or {}).get("auth") or {}
-    try:
-        cs_session = _build_chatgpt_session(auth_cfg)
-    except GoPayError as e:
-        print(f"[error] {e}", file=sys.stderr)
-        sys.exit(2)
+    if args.prepare_auto_signup:
+        cs_session = _new_session()
+    else:
+        try:
+            cs_session = _build_chatgpt_session(auth_cfg)
+        except GoPayError as e:
+            print(f"[error] {e}", file=sys.stderr)
+            sys.exit(2)
     # Apply proxy from config to both chatgpt + ext sessions
     proxy_url = (cfg.get("proxy") or "").strip() or None
 
