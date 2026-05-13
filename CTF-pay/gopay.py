@@ -108,6 +108,13 @@ SMSBOWER_API_URL = "https://smsbower.page/stubs/handler_api.php"
 GOPAY_PREPARED_PHONE_TTL_S = 16 * 60
 
 DEFAULT_TIMEOUT = 30
+DEFAULT_GOPAY_X_M1 = (
+    "3:1778075659812-8392149532688774801,4:127991,5:HONOR|3200|2,"
+    "6:9e:ae:ec:82:81:36,7:Belkin_368182ecae9e,8:1440x2560,"
+    "9:passive,network,fused,gps,10:1,"
+    "11:L7aWh4ZekbetUfzTxvluacSeH+NujKh7VUwQSZ+QRT4=,"
+    "15:f7920f96c692be5c2e7d7907ca6d9b2a,16:b334400e-b2f2-4295-890e-403984c34fd5"
+)
 LINK_RETRY_LIMIT = 2  # 406 "account already linked" retry
 LINK_RETRY_SLEEP_S = 12.0  # Midtrans 需要冷却 ~10s 才会让 406 → 201（实测）
 LINK_429_RETRY_LIMIT = 30
@@ -346,6 +353,8 @@ def _file_lock(lock_path: Path, timeout_s: float = 30.0):
 def _default_qris_headers(gopay_cfg: dict) -> dict[str, str]:
     app_version = str(gopay_cfg.get("app_version") or gopay_cfg.get("x_appversion") or "2.8.0")
     device_os = str(gopay_cfg.get("device_os") or gopay_cfg.get("x_deviceos") or "Android, 12")
+    phone_make = str(gopay_cfg.get("x_phonemake") or gopay_cfg.get("phone_make") or "HONOR")
+    phone_model = str(gopay_cfg.get("x_phonemodel") or gopay_cfg.get("phone_model") or "HONOR, BVL-AN20")
     return {
         "accept-encoding": "gzip",
         "country-code": str(gopay_cfg.get("gopay_country_code") or "ID"),
@@ -357,8 +366,8 @@ def _default_qris_headers(gopay_cfg: dict) -> dict[str, str]:
         "x-location-accuracy": str(gopay_cfg.get("x_location_accuracy") or "0.019999999552965164"),
         "custom_location": str(gopay_cfg.get("custom_location") or ""),
         "x-uniqueid": str(gopay_cfg.get("x_uniqueid") or gopay_cfg.get("x-uniqueid") or ""),
-        "x-phonemake": str(gopay_cfg.get("x_phonemake") or ""),
-        "x-phonemodel": str(gopay_cfg.get("x_phonemodel") or ""),
+        "x-phonemake": phone_make,
+        "x-phonemodel": phone_model,
         "x-deviceos": device_os,
         "x-user-type": str(gopay_cfg.get("x_user_type") or "customer"),
         "x-appid": str(gopay_cfg.get("x_appid") or "com.gojek.gopay"),
@@ -372,6 +381,7 @@ def _default_qris_headers(gopay_cfg: dict) -> dict[str, str]:
             or f"GoPay/{app_version} (com.gojek.gopay; build:{app_version.replace('.', '')}; {device_os})"
         ),
         "content-type": "application/json",
+        "x-m1": str(gopay_cfg.get("x_m1") or gopay_cfg.get("x-m1") or DEFAULT_GOPAY_X_M1),
     }
 
 

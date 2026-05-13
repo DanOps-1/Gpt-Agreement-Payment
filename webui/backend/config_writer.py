@@ -72,6 +72,7 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
             "headers", "qris_headers", "qris_raw_headers", "qris", "qris_base_url",
             "qris_hmac_key", "qris_service_id", "qris_merchant_id",
             "qr_pre_linking", "qris_pre_linking", "linking_before_qr",
+            "x_m1", "x-m1", "x_phonemake", "x-phonemake", "x_phonemodel", "x-phonemodel",
             "login_headers", "auto_login_headers", "auto_login_client_id",
             "auto_login_client_secret", "auto_login_flow", "auto_login_method",
             "auto_login_verify_flow", "auto_login_account_id",
@@ -120,6 +121,7 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
             "headers", "qris_headers", "qris_raw_headers", "qris", "qris_base_url",
             "qris_hmac_key", "qris_service_id", "qris_merchant_id",
             "qr_pre_linking", "qris_pre_linking", "linking_before_qr",
+            "x_m1", "x-m1", "x_phonemake", "x-phonemake", "x_phonemodel", "x-phonemodel",
             "login_headers", "auto_login_headers", "auto_login_client_id",
             "auto_login_client_secret", "auto_login_flow", "auto_login_method",
             "auto_login_verify_flow", "auto_login_account_id",
@@ -254,6 +256,7 @@ def _project_pay(answers: dict) -> dict:
                 "qris_base_url", "qris_hmac_key", "qris_service_id",
                 "qris_merchant_id", "qr_pre_linking", "qris_pre_linking",
                 "linking_before_qr",
+                "x_m1", "x-m1", "x_phonemake", "x-phonemake", "x_phonemodel", "x-phonemodel",
             ):
                 first_has_value = bool(accounts and key in first)
                 gp_has_value = key in gp
