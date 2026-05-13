@@ -1049,7 +1049,14 @@ class GoPayCharger:
 
     def _auto_signup_load_cache(self) -> dict:
         data = _safe_json_load(self._auto_signup_cache_path(), {})
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {"items": []}
+        if "items" not in data:
+            item = data.get("current") if isinstance(data.get("current"), dict) else {}
+            data = {"items": [item] if item else []}
+        if not isinstance(data.get("items"), list):
+            data["items"] = []
+        return data
 
     def _auto_signup_save_cache(self, data: dict) -> None:
         _safe_json_write(self._auto_signup_cache_path(), data)
@@ -1064,26 +1071,47 @@ class GoPayCharger:
             return False
         return (time.time() - acquired) <= self._auto_signup_phone_ttl()
 
+    def _auto_signup_reserved_is_stale(self, item: dict) -> bool:
+        if str(item.get("status") or "") != "reserved":
+            return False
+        auto = self._auto_signup_cfg()
+        stale_after = max(30.0, _float_cfg(auto, "reserved_stale_seconds", 120.0))
+        reserved_at = float(item.get("reserved_at") or 0)
+        return reserved_at > 0 and (time.time() - reserved_at) >= stale_after
+
     def _auto_signup_claim_ready_phone(self) -> dict:
         if not self._auto_signup_cache_enabled():
             return {}
         path = self._auto_signup_cache_path()
         with _file_lock(self._auto_signup_lock_path()):
             cache = self._auto_signup_load_cache()
-            item = cache.get("current") if isinstance(cache.get("current"), dict) else {}
-            if not self._auto_signup_cache_is_fresh(item):
-                if item:
+            items = [item for item in cache.get("items", []) if isinstance(item, dict)]
+            changed = False
+            for item in items:
+                if str(item.get("status") or "") in ("ready", "reserved") and not self._auto_signup_cache_is_fresh(item):
                     item["status"] = "expired"
                     item["expired_at"] = time.time()
-                    cache["current"] = item
+                    changed = True
+                elif self._auto_signup_reserved_is_stale(item):
+                    item["status"] = "ready"
+                    item["stale_reserved_released_at"] = time.time()
+                    item.pop("reserved_by", None)
+                    changed = True
+            ready_items = [
+                item for item in items
+                if str(item.get("status") or "") == "ready" and self._auto_signup_cache_is_fresh(item)
+            ]
+            if not ready_items:
+                if changed:
+                    cache["items"] = items
                     self._auto_signup_save_cache(cache)
                 return {}
-            if str(item.get("status") or "") != "ready":
-                return {}
+            item = sorted(ready_items, key=lambda x: float(x.get("phone_acquired_at") or x.get("ready_at") or 0))[0]
             item["status"] = "reserved"
             item["reserved_at"] = time.time()
             item["reserved_by"] = f"{os.getpid()}:{uuid.uuid4()}"
-            cache["current"] = item
+            item.setdefault("lease_id", str(uuid.uuid4()))
+            cache["items"] = items
             self._auto_signup_save_cache(cache)
             self.log(f"[gopay] prepared phone lease claimed cache={path}")
             return dict(item)
@@ -1113,11 +1141,35 @@ class GoPayCharger:
             return
         with _file_lock(self._auto_signup_lock_path()):
             cache = self._auto_signup_load_cache()
+            items = [x for x in cache.get("items", []) if isinstance(x, dict)]
             item = dict(item)
+            item.setdefault("lease_id", str(uuid.uuid4()))
             item["status"] = "ready"
             item["ready_at"] = time.time()
             item["expires_at"] = float(item.get("phone_acquired_at") or time.time()) + self._auto_signup_phone_ttl()
-            cache["current"] = item
+            activation_id = str(item.get("activation_id") or "")
+            phone = str(item.get("phone_number") or "")
+            replaced = False
+            for idx, existing in enumerate(items):
+                if (
+                    activation_id
+                    and str(existing.get("activation_id") or "") == activation_id
+                ) or (
+                    phone
+                    and str(existing.get("phone_number") or "") == phone
+                    and str(existing.get("country_code") or "") == str(item.get("country_code") or "")
+                ):
+                    items[idx] = item
+                    replaced = True
+                    break
+            if not replaced:
+                items.append(item)
+            cutoff = time.time() - max(self._auto_signup_phone_ttl(), 3600.0)
+            cache["items"] = [
+                x for x in items
+                if str(x.get("status") or "") in ("ready", "reserved")
+                or float(x.get("phone_acquired_at") or x.get("ready_at") or 0) >= cutoff
+            ]
             self._auto_signup_save_cache(cache)
             self.log(f"[gopay] prepared phone cached ttl={int(self._auto_signup_phone_ttl())}s")
 
@@ -1126,18 +1178,30 @@ class GoPayCharger:
             return
         activation_id = str(self._auto_signup_activation_id or "")
         phone = str(self.phone or "")
+        lease_id = str(self.gopay_cfg.get("_auto_signup_lease_id") or "")
         with _file_lock(self._auto_signup_lock_path()):
             cache = self._auto_signup_load_cache()
-            item = cache.get("current") if isinstance(cache.get("current"), dict) else {}
-            if not item:
-                return
-            if activation_id and str(item.get("activation_id") or "") != activation_id:
-                return
-            if phone and str(item.get("phone_number") or "") != phone:
+            items = [item for item in cache.get("items", []) if isinstance(item, dict)]
+            item = None
+            for candidate in items:
+                if lease_id and str(candidate.get("lease_id") or "") == lease_id:
+                    item = candidate
+                    break
+            if item is None:
+                for candidate in items:
+                    if activation_id and str(candidate.get("activation_id") or "") == activation_id:
+                        item = candidate
+                        break
+            if item is None:
+                for candidate in items:
+                    if phone and str(candidate.get("phone_number") or "") == phone:
+                        item = candidate
+                        break
+            if item is None:
                 return
             item["status"] = status
             item[f"{status}_at"] = time.time()
-            cache["current"] = item
+            cache["items"] = items
             self._auto_signup_save_cache(cache)
 
     def _apply_prepared_auto_signup(self, item: dict) -> None:
@@ -1154,6 +1218,7 @@ class GoPayCharger:
         self._auto_signup_activation_id = activation_id
         self._auto_signup_used_otps = [str(x) for x in used_otps if x]
         self._auto_signup_sms_finished = False
+        self.gopay_cfg["_auto_signup_lease_id"] = str(item.get("lease_id") or "")
         self.gopay_cfg["country_code"] = country_code
         self.gopay_cfg["phone_number"] = phone
         self.gopay_cfg["pin"] = pin
@@ -1882,6 +1947,7 @@ class GoPayCharger:
             prepared_item = {
                 "ok": True,
                 "status": "ready",
+                "lease_id": str(uuid.uuid4()),
                 "activation_id": activation_id,
                 "phone_acquired_at": phone_acquired_at or time.time(),
                 "phone_number": phone,

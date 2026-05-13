@@ -935,7 +935,7 @@ def _wait_gopay_prepare_thread(thread, card_cfg: dict | None, *, label: str = ""
     print(prefix + f"等待手机号预注册完成 timeout={int(timeout_s)}s")
     thread.join(timeout_s)
     if thread.is_alive():
-        print(prefix + "仍在后台执行，当前 register-only 先返回")
+        print(prefix + "仍在后台执行，当前任务继续")
 
 
 def _codex_oauth_client_id_from_card_cfg(cfg: dict) -> str:
@@ -1471,15 +1471,7 @@ def singlexn(card_config_path, count, delay=30, **kwargs):
                 cardw_path = _load_cardw_path_from_card_cfg(card_cfg, cardw_config_path)
                 if not cardw_path:
                     raise RegistrationError("缺 cardw_config_path")
-                if use_gopay:
-                    gopay_prepare = _start_gopay_prepare_process(
-                        card_config_path,
-                        card_cfg,
-                        log_label=f"singlexn-reg{i + 1}",
-                    )
                 r = register(cardw_path)
-                if use_gopay:
-                    _wait_gopay_prepare_thread(gopay_prepare, card_cfg, label=f"singlexn-reg{i + 1}")
                 r["batch_index"] = i
                 if r.get("status") == "ok":
                     ok_count += 1
@@ -1739,20 +1731,10 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
         print(f"\n[batch] === register-only × {count} 串行 ===")
         results = []
         ok_count = 0
-        card_cfg_for_register_only = _read_card_cfg(card_config_path)
         for i in range(count):
             print(f"\n{'#'*60}\n# 批次 {i+1}/{count}  (register-only)\n{'#'*60}")
             try:
-                gopay_prepare = None
-                if use_gopay:
-                    gopay_prepare = _start_gopay_prepare_process(
-                        card_config_path,
-                        card_cfg_for_register_only,
-                        log_label=f"batch-reg{i + 1}",
-                    )
                 r = register(cardw_path)
-                if use_gopay:
-                    _wait_gopay_prepare_thread(gopay_prepare, card_cfg_for_register_only, label=f"batch-reg{i + 1}")
                 r["batch_index"] = i
                 if r.get("status") == "ok":
                     ok_count += 1
@@ -2557,6 +2539,7 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
     temp_pay_card = None
     leased_gopay_account = None
     temp_gopay_card = None
+    gopay_prepare_thread = None
     try:
         proxy_pool = _build_proxy_pool_from_card_cfg(card_cfg or {})
         if proxy_pool and proxy_pool.proxies:
@@ -2595,6 +2578,13 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
                 _unclaim_pending_activation_account(account)
                 _append_result(record)
                 return {"status": "skipped", "email": email, "reason": reason}
+        if use_gopay and gopay_dynamic_signup:
+            gopay_prepare_thread = _start_gopay_prepare_process(
+                pay_card_config_path,
+                card_cfg or {},
+                log_label=log_label or "pay-only",
+            )
+            _wait_gopay_prepare_thread(gopay_prepare_thread, card_cfg or {}, label=log_label or "pay-only")
         _log_payment_exit_ip(pay_card_config_path, label="pay-only 支付")
         result = pay(
             pay_card_config_path,
@@ -5703,17 +5693,7 @@ def main():
             if not cardw_cfg:
                 cardw_cfg = cfg.get("fresh_checkout", {}).get("auth", {}).get(
                     "auto_register", {}).get("config_path", "CTF-reg/config.noproxy.json")
-            if args.gopay:
-                gopay_prepare = _start_gopay_prepare_process(
-                    args.config,
-                    cfg,
-                    log_label="register-only",
-                )
-            else:
-                gopay_prepare = None
             result = register(cardw_cfg)
-            if args.gopay:
-                _wait_gopay_prepare_thread(gopay_prepare, cfg, label="register-only")
             print(json.dumps(result, ensure_ascii=False, indent=2))
 
         elif args.pay_only:
