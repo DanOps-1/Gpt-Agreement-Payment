@@ -1822,7 +1822,7 @@ class GoPayCharger:
             raise GoPayError("gopay auto-signup requires auto_signup.pin or gopay.pin")
         name = str(auto.get("name") or self.gopay_cfg.get("auto_signup_name") or "SJC")
         email = str(auto.get("email") or self.gopay_cfg.get("auto_signup_email") or "")
-        max_phone_attempts = max(1, int(_float_cfg(auto, "max_phone_attempts", 10)))
+        max_phone_attempts = max(1, int(_float_cfg(auto, "max_phone_attempts", 50)))
         signup_otp_timeout = max(1.0, _float_cfg(auto, "signup_otp_timeout", 30.0))
         activation_id = ""
         phone_acquired_at = 0.0
