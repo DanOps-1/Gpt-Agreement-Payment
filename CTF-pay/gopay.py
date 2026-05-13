@@ -1201,12 +1201,14 @@ class GoPayCharger:
     ) -> dict:
         url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
         body_text = _json_dumps_compact(body)
+        body_for_signature = ""
         headers = self._gopay_signed_headers_for_url(
             "POST",
             url,
             body_text,
             extra_headers=extra_headers,
             strip_authorization=strip_authorization,
+            body_for_signature=body_for_signature,
         )
         r = self._request_ext(
             "POST",
@@ -1225,7 +1227,8 @@ class GoPayCharger:
         if r.status_code >= 400 and r.status_code not in allow_statuses:
             raise GoPayError(
                 f"{label} POST {path} failed "
-                f"status={r.status_code} content_type={content_type or '-'} body={raw_text[:600]!r}"
+                f"status={r.status_code} content_type={content_type or '-'} "
+                f"body_signature_source=empty+body-md5 body={raw_text[:600]!r}"
             )
         return {
             "status_code": r.status_code,
