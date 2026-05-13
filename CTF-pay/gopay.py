@@ -692,6 +692,25 @@ def _gopay_auto_signup_enabled(gopay_cfg: dict) -> bool:
     )
 
 
+def _gopay_has_auto_signup_config(gopay_cfg: dict) -> bool:
+    if not isinstance(gopay_cfg, dict):
+        return False
+    auto = gopay_cfg.get("auto_signup")
+    if isinstance(auto, dict):
+        return True
+    return any(
+        key in gopay_cfg
+        for key in (
+            "auto_register_gopay",
+            "dynamic_signup",
+            "auto_signup_smsbower_api_key",
+            "smsbower_api_key",
+            "auto_signup_pin",
+            "auto_signup_country_code",
+        )
+    )
+
+
 def _gopay_account_disabled(cfg: dict) -> bool:
     return _truthy_cfg(
         cfg.get("disabled")
@@ -828,7 +847,8 @@ def pick_gopay_account_config(
     log: Callable[[str], None] = print,
     rng: Optional[random.Random] = None,
 ) -> dict:
-    if _gopay_auto_signup_enabled(gopay_cfg):
+    accounts = normalize_gopay_accounts(gopay_cfg)
+    if _gopay_auto_signup_enabled(gopay_cfg) and not accounts:
         merged = {k: v for k, v in dict(gopay_cfg).items() if k != "accounts"}
         merged.setdefault("country_code", "62")
         merged.setdefault("phone_number", "")
@@ -841,7 +861,6 @@ def pick_gopay_account_config(
         log("[gopay] selected dynamic auto-signup account")
         return merged
 
-    accounts = normalize_gopay_accounts(gopay_cfg)
     if not accounts:
         raise GoPayError("gopay config missing usable account: need country_code / phone_number / pin")
 
@@ -5276,6 +5295,17 @@ def main():
     if not raw_gopay_cfg:
         print("[error] config has no 'gopay' block", file=sys.stderr)
         sys.exit(2)
+    if (
+        is_qr_payment_enabled(raw_gopay_cfg)
+        and not normalize_gopay_accounts(raw_gopay_cfg)
+        and _gopay_has_auto_signup_config(raw_gopay_cfg)
+    ):
+        auto = raw_gopay_cfg.get("auto_signup")
+        if isinstance(auto, dict):
+            auto.setdefault("enabled", True)
+        else:
+            raw_gopay_cfg["auto_signup"] = {"enabled": True}
+        print("[gopay] QR mode has no usable GoPay account; enabling auto-signup for runtime link")
     try:
         gopay_cfg = dict(raw_gopay_cfg) if is_qr_payment_enabled(raw_gopay_cfg) else pick_gopay_account_config(raw_gopay_cfg)
     except GoPayError as e:

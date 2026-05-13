@@ -1351,11 +1351,16 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
                 raise
             _pool_payment_result(
                 reg,
-                {"status": "error", "raw": {}, "error": str(e)[:200]},
+                {
+                    "status": "error",
+                    "raw": {},
+                    "error": str(e)[:500],
+                    "code": getattr(e, "code", "") or type(e).__name__,
+                },
                 card_cfg or {},
                 task_id=log_label,
                 email_domain=picked_domain,
-                reason=str(e)[:200],
+                reason=f"{getattr(e, 'code', '') or type(e).__name__}: {str(e)[:500]}",
             )
             _release_outlook_mail_account(reg.get("email", ""), "payment_error")
             if getattr(e, "code", "") == "gopay_account_unavailable":
@@ -2131,6 +2136,28 @@ def _pool_registration_failed(email: str, reason: str, *, task_id: str = "", rou
     )
 
 
+def _is_gopay_account_unavailable_failure(reason: str = "", pay_result: dict | None = None) -> bool:
+    text_parts = [str(reason or "")]
+    if isinstance(pay_result, dict):
+        for key in ("error", "message", "reason"):
+            value = pay_result.get(key)
+            if value:
+                text_parts.append(str(value))
+        raw = pay_result.get("raw")
+        if isinstance(raw, dict):
+            text_parts.append(json.dumps(raw, ensure_ascii=False, separators=(",", ":"))[:1200])
+        elif raw:
+            text_parts.append(str(raw))
+    text = "\n".join(text_parts).lower()
+    return (
+        "gopay_account_unavailable" in text
+        or "payment/process code=201" in text
+        or ("payment/process" in text and '"code":"201"' in text)
+        or ("payment-switch" in text and '"code":"201"' in text)
+        or ("payment-switch" in text and "code=201" in text)
+    )
+
+
 def _pool_payment_result(reg: dict, pay_result: dict, card_cfg: dict | None = None,
                          *, task_id: str = "", round_id: str = "", email_domain: str = "",
                          reason: str = "") -> None:
@@ -2157,7 +2184,7 @@ def _pool_payment_result(reg: dict, pay_result: dict, card_cfg: dict | None = No
         stage = "payment_succeeded_with_rt" if rt else "payment_succeeded_missing_rt"
         reason = reason or ("Plus activated and RT obtained" if rt else "Plus activated but RT missing")
     else:
-        if reason and "gopay" in reason.lower() and "code=201" in reason.lower():
+        if _is_gopay_account_unavailable_failure(reason, pay_result):
             to_status = "registration_failed"
         else:
             to_status = "email_unused"
@@ -2745,11 +2772,16 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         if email:
             _pool_payment_result(
                 account or {"email": email},
-                {"status": "error", "raw": {}, "error": str(e)[:200]},
+                {
+                    "status": "error",
+                    "raw": {},
+                    "error": str(e)[:500],
+                    "code": getattr(e, "code", "") or type(e).__name__,
+                },
                 card_cfg or {},
                 task_id=log_label,
                 email_domain=record.get("domain", ""),
-                reason=str(e)[:200],
+                reason=f"{getattr(e, 'code', '') or type(e).__name__}: {str(e)[:500]}",
             )
         if getattr(e, "code", "") == "gopay_account_unavailable" and account:
             record["account_removed"] = True
