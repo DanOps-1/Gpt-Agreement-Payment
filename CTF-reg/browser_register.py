@@ -274,6 +274,7 @@ def browser_register(cfg, mail_provider) -> dict:
             return False
 
     try:
+        logger.info("[browser-reg] 启动 Camoufox ...")
         with Camoufox(
             headless=not has_display,
             humanize=True,

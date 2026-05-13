@@ -770,16 +770,38 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
         out_lines = []
         try:
             deadline = time.time() + timeout
-            for line in proc.stdout:
-                line = line.rstrip("\n")
+            q: queue.Queue[str | None] = queue.Queue()
+
+            def _reader() -> None:
+                try:
+                    assert proc.stdout is not None
+                    for raw_line in proc.stdout:
+                        q.put(raw_line)
+                finally:
+                    q.put(None)
+
+            threading.Thread(target=_reader, name=f"register-reader-{log_label or attempt}", daemon=True).start()
+            stream_done = False
+            while True:
+                if time.time() > deadline:
+                    print(f"{reg_prefix} 注册子进程超时 {int(timeout)}s，终止 pid={proc.pid}")
+                    _terminate_process_tree(proc)
+                    return 124, result, out_lines
+                if proc.poll() is not None and stream_done:
+                    break
+                try:
+                    raw_line = q.get(timeout=1.0)
+                except queue.Empty:
+                    continue
+                if raw_line is None:
+                    stream_done = True
+                    continue
+                line = raw_line.rstrip("\n")
                 out_lines.append(line)
                 print(f"{child_prefix} {line}")
                 if line.startswith("LOCALAUTH_RESULT_JSON="):
                     payload = line.split("=", 1)[1]
                     result = json.loads(payload)
-                if time.time() > deadline:
-                    _terminate_process_tree(proc)
-                    return 124, result, out_lines
         finally:
             proc.wait()
         return int(proc.returncode or 0), result, out_lines
@@ -1091,7 +1113,7 @@ def _start_gopay_stock_worker(card_config_path: str, card_cfg: dict | None, *, w
                 shortage = max(0, min_stock - have)
                 spawn_n = min(shortage, max_prepare_workers - len(children))
                 if spawn_n > 0:
-                    print(prefix + f"restock ready={counts['ready']} preparing={counts['preparing']} running={len(children)} need={min_stock}")
+                    print(prefix + f"restock ready={counts['ready']} reserved={counts['reserved']} preparing={counts['preparing']} running={len(children)} need={min_stock}")
                 for _ in range(spawn_n):
                     seq += 1
                     proc = _spawn_one(seq)
