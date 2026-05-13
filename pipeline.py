@@ -60,6 +60,7 @@ DOMAIN_STATE_KEY = "email_domain_state"
 DAEMON_STATE_KEY = "daemon_state"
 SECRETS_KEY = "secrets"
 RUNTIME_DB_FILE = OUTPUT_DIR / "webui.db"
+GOPAY_STOCK_TTL_S = 20 * 60
 
 
 def _subprocess_tree_kwargs() -> dict:
@@ -908,6 +909,52 @@ def _gopay_prepare_parallel_enabled(card_cfg: dict | None) -> bool:
     return True
 
 
+def _gopay_stock_enabled(card_cfg: dict | None) -> bool:
+    if not _gopay_dynamic_signup_enabled(card_cfg):
+        return False
+    auto = _gopay_auto_signup_cfg(card_cfg)
+    return str(auto.get("stock_mode", True)).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _gopay_stock_cache_path(card_cfg: dict | None) -> Path:
+    gp = (card_cfg or {}).get("gopay") or {}
+    auto = _gopay_auto_signup_cfg(card_cfg)
+    explicit = str(auto.get("prepared_phone_cache") or gp.get("auto_signup_prepared_phone_cache") or "").strip()
+    if explicit:
+        return Path(explicit)
+    token_dir = str(gp.get("auto_login_token_dir") or gp.get("login_token_dir") or "").strip()
+    root = Path(token_dir) if token_dir else ROOT / "output" / "gopay_tokens"
+    service = str(auto.get("service") or "ni")
+    country = str(auto.get("country") or "6")
+    return root / f"prepared_gopay_{service}_{country}.json"
+
+
+def _gopay_stock_counts(card_cfg: dict | None) -> dict:
+    path = _gopay_stock_cache_path(card_cfg)
+    ttl = max(60.0, float(_gopay_auto_signup_cfg(card_cfg).get("stock_ttl_seconds") or GOPAY_STOCK_TTL_S))
+    now = time.time()
+    ready = reserved = preparing = 0
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+    except Exception:
+        items = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "")
+        acquired = float(item.get("phone_probe_ok_at") or item.get("ready_at") or item.get("phone_acquired_at") or 0)
+        expires_at = float(item.get("expires_at") or (acquired + ttl if acquired else 0))
+        fresh = expires_at > now
+        if status == "ready" and fresh:
+            ready += 1
+        elif status == "reserved" and fresh:
+            reserved += 1
+        elif status == "preparing":
+            preparing += 1
+    return {"ready": ready, "reserved": reserved, "preparing": preparing, "path": str(path)}
+
+
 def _start_gopay_prepare_process(card_config_path: str, card_cfg: dict | None, *, python: str = "", log_label: str = ""):
     if not _gopay_prepare_parallel_enabled(card_cfg):
         return None
@@ -937,6 +984,79 @@ def _start_gopay_prepare_process(card_config_path: str, card_cfg: dict | None, *
     thread = threading.Thread(target=_worker, name=f"gopay-prepare-{log_label or os.getpid()}", daemon=True)
     thread.start()
     return thread
+
+
+def _start_gopay_stock_worker(card_config_path: str, card_cfg: dict | None, *, workers: int = 1, python: str = "", label: str = ""):
+    if not _gopay_stock_enabled(card_cfg):
+        return None
+    workers = max(1, int(workers or 1))
+    auto = _gopay_auto_signup_cfg(card_cfg)
+    min_stock = max(workers, int(float(auto.get("min_stock") or 0)))
+    max_prepare_workers = max(1, int(float(auto.get("max_prepare_workers") or workers)))
+    interval = max(1.0, float(auto.get("stock_check_interval") or 2.0))
+    py = python or sys.executable
+    stop_event = threading.Event()
+    children: list[subprocess.Popen] = []
+    prefix = f"[gopay-stock:{label}] " if label else "[gopay-stock] "
+    print(prefix + f"start min_stock={min_stock} prepare_workers={max_prepare_workers}")
+
+    def _spawn_one(seq: int) -> subprocess.Popen:
+        cmd = [py, str(GOPAY_PY), "--config", str(Path(card_config_path).resolve()), "--prepare-auto-signup", "--json-result"]
+        return subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            **_subprocess_tree_kwargs(),
+        )
+
+    def _pipe_child(proc: subprocess.Popen, name: str) -> None:
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                print(prefix + f"[{name}] " + line.rstrip())
+            rc = proc.wait()
+            print(prefix + f"[{name}] exit={rc}")
+        except Exception as exc:
+            print(prefix + f"[{name}] failed: {type(exc).__name__}: {exc}")
+
+    def _worker():
+        seq = 0
+        try:
+            while not stop_event.is_set():
+                children[:] = [p for p in children if p.poll() is None]
+                counts = _gopay_stock_counts(card_cfg)
+                have = int(counts["ready"]) + int(counts["preparing"]) + len(children)
+                shortage = max(0, min_stock - have)
+                spawn_n = min(shortage, max_prepare_workers - len(children))
+                if spawn_n > 0:
+                    print(prefix + f"restock ready={counts['ready']} preparing={counts['preparing']} running={len(children)} need={min_stock}")
+                for _ in range(spawn_n):
+                    seq += 1
+                    proc = _spawn_one(seq)
+                    children.append(proc)
+                    threading.Thread(target=_pipe_child, args=(proc, f"p{seq}"), daemon=True).start()
+                stop_event.wait(interval)
+        finally:
+            for proc in children:
+                if proc.poll() is None:
+                    _terminate_process_tree(proc)
+            print(prefix + "stopped")
+
+    thread = threading.Thread(target=_worker, name=f"gopay-stock-{label or os.getpid()}", daemon=True)
+    thread._stop_event = stop_event  # type: ignore[attr-defined]
+    thread.start()
+    return thread
+
+
+def _stop_gopay_stock_worker(thread) -> None:
+    if thread is None:
+        return
+    ev = getattr(thread, "_stop_event", None)
+    if ev is not None:
+        ev.set()
+    thread.join(timeout=10)
 
 
 def _wait_gopay_prepare_thread(thread, card_cfg: dict | None, *, label: str = "") -> None:
@@ -1249,6 +1369,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
     leased_gopay_account = None
     temp_gopay_card = None
     gopay_prepare_thread = None
+    gopay_stock_thread = None
 
     ts = datetime.now(timezone.utc).isoformat()
     record = {"ts": ts, "registration": {}, "payment": {},
@@ -1257,11 +1378,19 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
 
     try:
         if use_gopay:
-            gopay_prepare_thread = _start_gopay_prepare_process(
-                effective_card,
-                card_cfg or {},
-                log_label=log_label or "pipeline",
-            )
+            if _gopay_stock_enabled(card_cfg or {}):
+                gopay_stock_thread = _start_gopay_stock_worker(
+                    effective_card,
+                    card_cfg or {},
+                    workers=1,
+                    label=log_label or "pipeline",
+                )
+            else:
+                gopay_prepare_thread = _start_gopay_prepare_process(
+                    effective_card,
+                    card_cfg or {},
+                    log_label=log_label or "pipeline",
+                )
 
         # Step 1: 注册
         print(f"\n{'='*60}")
@@ -1438,6 +1567,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
         print(f"\n[pipeline] {emoji} {reg.get('email', '?')} → {pay_status}  invite={perm}")
         return record
     finally:
+        _stop_gopay_stock_worker(gopay_stock_thread)
         if temp_cardw and os.path.exists(temp_cardw):
             try: os.unlink(temp_cardw)
             except Exception: pass
@@ -1739,6 +1869,14 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
             f"[GoPayPhonePool] accounts={len(gopay_account_pool.accounts)} "
             f"wait={gopay_account_pool.wait_interval:g}s timeout={gopay_account_pool.wait_timeout:g}s"
         )
+    gopay_stock_thread = None
+    if use_gopay and not is_register_only and _gopay_stock_enabled(card_cfg or {}):
+        gopay_stock_thread = _start_gopay_stock_worker(
+            card_config_path,
+            card_cfg or {},
+            workers=workers,
+            label="batch",
+        )
 
     # ── register-only batch：每次 register，串行（避免并行同 IP 触发风控）
     if is_register_only:
@@ -1847,7 +1985,6 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
     kwargs.setdefault("card_cfg", card_cfg)
     kwargs.setdefault("proxy_pool", proxy_pool)
     kwargs.setdefault("gopay_account_pool", gopay_account_pool)
-
     if workers > 1 and use_paypal and not use_gopay:
         # PayPal 模式：并行注册 → 串行支付（共用 PayPal 账号不能并行 2FA）
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -2878,6 +3015,57 @@ def _load_registered_accounts() -> list:
         return get_db().iter_registered_accounts()
     except Exception:
         return []
+
+
+def _load_plus_missing_rt_pool_accounts() -> list[dict]:
+    db = get_db()
+    accounts_by_id: dict[int, dict] = {}
+    accounts_by_email: dict[str, dict] = {}
+    try:
+        for acc in db.iter_registered_accounts():
+            aid = int(acc.get("id") or 0)
+            email = _norm_email(acc.get("email", ""))
+            if aid:
+                accounts_by_id[aid] = acc
+            if email and email not in accounts_by_email:
+                accounts_by_email[email] = acc
+    except Exception:
+        return []
+
+    try:
+        with db._conn() as c:
+            rows = c.execute(
+                """
+                SELECT id, email, chatgpt_email, source_registered_account_id
+                FROM account_pool_items
+                WHERE pool_status = 'plus_missing_rt'
+                ORDER BY updated_at DESC, id DESC
+                """
+            ).fetchall()
+    except Exception as exc:
+        print(f"[free-backfill] load plus_missing_rt pool failed: {exc}")
+        return []
+
+    selected: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        source_id = int(row["source_registered_account_id"] or 0)
+        acc = accounts_by_id.get(source_id) if source_id else None
+        if not acc:
+            for value in (row["chatgpt_email"], row["email"]):
+                email = _norm_email(value or "")
+                if email and email in accounts_by_email:
+                    acc = accounts_by_email[email]
+                    break
+        if not acc:
+            continue
+        email = _norm_email(acc.get("email", ""))
+        key = email or str(acc.get("id") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        selected.append(acc)
+    return selected
 
 
 def _find_latest_registered_account_for_email(email: str) -> dict:
@@ -5612,7 +5800,7 @@ def free_backfill_rt_loop(card_config_path, cardw_config_path=None, account_ids=
         os.environ["OAUTH_CODEX_CLIENT_ID"] = _client_id
         print(f"[free] 自动设 OAUTH_CODEX_CLIENT_ID = {_client_id}")
 
-    accounts = _load_registered_accounts()
+    accounts = _load_registered_accounts() if account_ids else _load_plus_missing_rt_pool_accounts()
     selected_ids = []
     if account_ids:
         for x in account_ids:

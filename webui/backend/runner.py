@@ -52,11 +52,27 @@ _OTP_RELAY_LOOKBACK_SECONDS = 15.0
 _RUN_GOPAY_AUTO_UNBIND_ENABLED = False
 
 
+def _log_channel(line: str) -> str:
+    text = str(line or "").lower()
+    if any(
+        marker in text
+        for marker in (
+            "[gopay",
+            "[sms]",
+            "gopay_otp_target",
+            "gopay_result_json",
+            "gopay_qr_",
+        )
+    ):
+        return "gopay"
+    return "account"
+
+
 def _append_log(line: str) -> None:
     global _seq_counter, _log_lines
     with _lock:
         _seq_counter += 1
-        _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line})
+        _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line, "channel": _log_channel(line)})
         if len(_log_lines) > _MAX_LOG_LINES:
             _log_lines = _log_lines[-_MAX_LOG_LINES:]
 
@@ -388,7 +404,7 @@ def _drain(proc: subprocess.Popen, run_id: int) -> None:
                 if run_id != _run_id or _proc is not proc:
                     continue
                 _seq_counter += 1
-                _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line})
+                _log_lines.append({"seq": _seq_counter, "ts": time.time(), "line": line, "channel": _log_channel(line)})
                 if len(_log_lines) > _MAX_LOG_LINES:
                     _log_lines = _log_lines[-_MAX_LOG_LINES:]
                 target_phone, target_country_code = _detect_gopay_otp_target(line)

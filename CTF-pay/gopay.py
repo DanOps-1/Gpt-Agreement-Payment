@@ -105,7 +105,7 @@ GOPAY_LOGIN_CLIENT_SECRET = "raOUumeMRBNifqvZRFjvsgTnjAlaA9"
 GOPAY_SIGNUP_BASIC_AUTH = "Basic YmI2NDg0MTMtYjYzNy00NDNhLThlYmYtMTc2Y2Y5YjVkYzMy"
 GOPAY_API_BASE_URL = "https://api.gojekapi.com"
 SMSBOWER_API_URL = "https://smsbower.page/stubs/handler_api.php"
-GOPAY_PREPARED_PHONE_TTL_S = 16 * 60
+GOPAY_PREPARED_PHONE_TTL_S = 20 * 60
 
 DEFAULT_TIMEOUT = 30
 DEFAULT_GOPAY_X_M1 = (
@@ -1080,7 +1080,14 @@ class GoPayCharger:
 
     def _auto_signup_phone_ttl(self) -> float:
         auto = self._auto_signup_cfg()
-        return max(60.0, _float_cfg(auto, "phone_ttl_seconds", GOPAY_PREPARED_PHONE_TTL_S))
+        return max(
+            60.0,
+            _float_cfg(
+                auto,
+                "stock_ttl_seconds",
+                _float_cfg(auto, "phone_ttl_seconds", GOPAY_PREPARED_PHONE_TTL_S),
+            ),
+        )
 
     def _auto_signup_cache_path(self) -> Path:
         auto = self._auto_signup_cfg()
@@ -1195,7 +1202,8 @@ class GoPayCharger:
             item.setdefault("lease_id", str(uuid.uuid4()))
             item["status"] = "ready"
             item["ready_at"] = time.time()
-            item["expires_at"] = float(item.get("phone_acquired_at") or time.time()) + self._auto_signup_phone_ttl()
+            ttl_start = float(item.get("phone_probe_ok_at") or item.get("phone_acquired_at") or time.time())
+            item["expires_at"] = ttl_start + self._auto_signup_phone_ttl()
             activation_id = str(item.get("activation_id") or "")
             phone = str(item.get("phone_number") or "")
             replaced = False
@@ -1818,6 +1826,7 @@ class GoPayCharger:
         signup_otp_timeout = max(1.0, _float_cfg(auto, "signup_otp_timeout", 30.0))
         activation_id = ""
         phone_acquired_at = 0.0
+        phone_probe_ok_at = 0.0
         first_otp = ""
         verification_id = ""
         otp_token = ""
@@ -1860,6 +1869,7 @@ class GoPayCharger:
                 probe_body = probe.get("body")
                 probe_error_code = _body_first_error_code(probe_body)
                 if _body_has_error_code(probe_body, "auth:error:user:not_found"):
+                    phone_probe_ok_at = time.time()
                     self.log("[gopay] 探测手机号: 未注册，开始 signup")
                     verification_id = str(auto.get("verification_id") or uuid.uuid4())
                     methods_resp = self._gopay_app_post(
@@ -2040,6 +2050,7 @@ class GoPayCharger:
                 "lease_id": str(uuid.uuid4()),
                 "activation_id": activation_id,
                 "phone_acquired_at": phone_acquired_at or time.time(),
+                "phone_probe_ok_at": phone_probe_ok_at or phone_acquired_at or time.time(),
                 "phone_number": phone,
                 "country_code": country_code,
                 "account_id": account_id,
