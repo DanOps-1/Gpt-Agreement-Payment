@@ -1474,12 +1474,17 @@ class GoPayCharger:
         name = str(auto.get("name") or self.gopay_cfg.get("auto_signup_name") or "SJC")
         email = str(auto.get("email") or self.gopay_cfg.get("auto_signup_email") or "")
         max_phone_attempts = max(1, int(_float_cfg(auto, "max_phone_attempts", 5)))
+        signup_otp_timeout = max(1.0, _float_cfg(auto, "signup_otp_timeout", 30.0))
         activation_id = ""
         first_otp = ""
+        verification_id = ""
+        otp_token = ""
         try:
             phone = ""
             raw_phone = ""
             probe = {}
+            methods_resp: dict = {}
+            initiate_resp: dict = {}
             for phone_attempt in range(1, max_phone_attempts + 1):
                 self.log(f"[sms] 请求手机号 ({phone_attempt}/{max_phone_attempts})")
                 activation_id, raw_phone, _raw = self._smsbower_get_number()
@@ -1511,6 +1516,62 @@ class GoPayCharger:
                 probe_error_code = _body_first_error_code(probe_body)
                 if _body_has_error_code(probe_body, "auth:error:user:not_found"):
                     self.log("[gopay] 探测手机号: 未注册，开始 signup")
+                    verification_id = str(auto.get("verification_id") or uuid.uuid4())
+                    methods_resp = self._gopay_app_post(
+                        "/cvs/v1/methods",
+                        {
+                            "country_code": f"+{country_code}",
+                            "email_address": None,
+                            "client_id": client_id,
+                            "phone_number": phone,
+                            "client_secret": client_secret,
+                            "flow": "signup",
+                            "device_verification_token_id": None,
+                        },
+                    )
+                    methods_body = methods_resp.get("body") if isinstance(methods_resp.get("body"), dict) else {}
+                    methods_data = methods_body.get("data") if isinstance(methods_body.get("data"), dict) else {}
+                    verification_id = str(methods_data.get("verification_id") or verification_id)
+                    initiate_resp = self._gopay_app_post(
+                        "/cvs/v1/initiate",
+                        {
+                            "verification_id": verification_id,
+                            "flow": "signup",
+                            "verification_method": "otp_sms",
+                            "country_code": f"+{country_code}",
+                            "email_address": None,
+                            "client_id": client_id,
+                            "phone_number": phone,
+                            "client_secret": client_secret,
+                            "is_multiple_method": None,
+                            "device_verification_token_id": None,
+                        },
+                    )
+                    initiate_body = initiate_resp.get("body") if isinstance(initiate_resp.get("body"), dict) else {}
+                    initiate_data = initiate_body.get("data") if isinstance(initiate_body.get("data"), dict) else {}
+                    otp_token = str(initiate_data.get("otp_token") or "")
+                    if not otp_token:
+                        raise GoPayError(f"gopay auto-signup initiate missing otp_token: {_log_preview(initiate_body, 500)}")
+                    self._smsbower_set_status(activation_id, 1)
+                    try:
+                        first_otp = self._smsbower_wait_code(
+                            activation_id,
+                            "注册验证码",
+                            resend_after_s=signup_otp_timeout + 1.0,
+                            max_resends=0,
+                        )
+                    except OTPCancelled as exc:
+                        self.log(
+                            "[sms] 注册验证码超时，释放手机号并重试 "
+                            f"phone=+{country_code}{phone} reason={str(exc)[:160]}"
+                        )
+                        self._smsbower_set_status(activation_id, 8)
+                        activation_id = ""
+                        self._auto_signup_activation_id = ""
+                        first_otp = ""
+                        otp_token = ""
+                        continue
+                    self._auto_signup_used_otps.append(first_otp)
                     break
                 if probe_error_code == "auth:error:ratelimited:device" or probe.get("status_code") == 429:
                     raise GoPayError(
@@ -1527,49 +1588,12 @@ class GoPayCharger:
                 self._auto_signup_activation_id = ""
             else:
                 raise GoPayError(
-                    "gopay auto-signup no unregistered phone after "
+                    "gopay auto-signup no usable phone after "
                     f"{max_phone_attempts} attempts: {_log_preview(probe.get('body') or probe.get('raw_text'), 500)}"
                 )
 
-            verification_id = str(auto.get("verification_id") or uuid.uuid4())
-            methods_resp = self._gopay_app_post(
-                "/cvs/v1/methods",
-                {
-                    "country_code": f"+{country_code}",
-                    "email_address": None,
-                    "client_id": client_id,
-                    "phone_number": phone,
-                    "client_secret": client_secret,
-                    "flow": "signup",
-                    "device_verification_token_id": None,
-                },
-            )
-            methods_body = methods_resp.get("body") if isinstance(methods_resp.get("body"), dict) else {}
-            methods_data = methods_body.get("data") if isinstance(methods_body.get("data"), dict) else {}
-            verification_id = str(methods_data.get("verification_id") or verification_id)
-            initiate_resp = self._gopay_app_post(
-                "/cvs/v1/initiate",
-                {
-                    "verification_id": verification_id,
-                    "flow": "signup",
-                    "verification_method": "otp_sms",
-                    "country_code": f"+{country_code}",
-                    "email_address": None,
-                    "client_id": client_id,
-                    "phone_number": phone,
-                    "client_secret": client_secret,
-                    "is_multiple_method": None,
-                    "device_verification_token_id": None,
-                },
-            )
-            initiate_body = initiate_resp.get("body") if isinstance(initiate_resp.get("body"), dict) else {}
-            initiate_data = initiate_body.get("data") if isinstance(initiate_body.get("data"), dict) else {}
-            otp_token = str(initiate_data.get("otp_token") or "")
-            if not otp_token:
-                raise GoPayError(f"gopay auto-signup initiate missing otp_token: {_log_preview(initiate_body, 500)}")
-            self._smsbower_set_status(activation_id, 1)
-            first_otp = self._smsbower_wait_code(activation_id, "注册验证码")
-            self._auto_signup_used_otps.append(first_otp)
+            if not first_otp or not otp_token:
+                raise GoPayError("gopay auto-signup registration OTP was not collected")
             verify_resp = self._gopay_app_post(
                 "/cvs/v1/verify",
                 {
