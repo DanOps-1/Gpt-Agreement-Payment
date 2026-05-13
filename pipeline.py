@@ -916,6 +916,54 @@ def _gopay_stock_enabled(card_cfg: dict | None) -> bool:
     return str(auto.get("stock_mode", True)).strip().lower() not in ("0", "false", "no", "off")
 
 
+def _gopay_stock_proxy_candidates(card_cfg: dict | None) -> list[str]:
+    cfg = card_cfg or {}
+    proxies_cfg = cfg.get("proxies") if isinstance(cfg.get("proxies"), dict) else {}
+    values = [
+        proxies_cfg.get("gopay_list"),
+        proxies_cfg.get("gopay_urls"),
+        proxies_cfg.get("gopay_url"),
+        proxies_cfg.get("payment_list"),
+        proxies_cfg.get("payment_urls"),
+        proxies_cfg.get("payment_url"),
+        proxies_cfg.get("list"),
+        cfg.get("proxy"),
+    ]
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        if isinstance(value, str):
+            parts = re.split(r"[\r\n,]+", value)
+        elif isinstance(value, (list, tuple, set)):
+            parts = list(value)
+        else:
+            parts = [value]
+        for part in parts:
+            proxy = _proxy_url_from_cfg_value(part)
+            if proxy and proxy not in seen:
+                seen.add(proxy)
+                out.append(proxy)
+    return out
+
+
+def _rewrite_card_with_gopay_stock_proxy(src_path: str, proxy_url: str, seq: int) -> str:
+    with open(src_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["proxy"] = proxy_url
+    proxies_cfg = data.setdefault("proxies", {})
+    if isinstance(proxies_cfg, dict):
+        proxies_cfg["gopay_list"] = [proxy_url]
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", prefix=f"gopay_stock_px_{seq}_",
+        dir=str(CARD_DIR), delete=False,
+    )
+    json.dump(data, tmp, ensure_ascii=False, indent=2)
+    tmp.close()
+    return tmp.name
+
+
 def _gopay_stock_cache_path(card_cfg: dict | None) -> Path:
     gp = (card_cfg or {}).get("gopay") or {}
     auto = _gopay_auto_signup_cfg(card_cfg)
@@ -994,14 +1042,26 @@ def _start_gopay_stock_worker(card_config_path: str, card_cfg: dict | None, *, w
     min_stock = max(workers, int(float(auto.get("min_stock") or 0)))
     max_prepare_workers = 1
     interval = max(1.0, float(auto.get("stock_check_interval") or 2.0))
+    proxy_rotate_every = max(1, int(float(auto.get("proxy_rotate_every") or 2)))
+    stock_proxies = _gopay_stock_proxy_candidates(card_cfg)
     py = python or sys.executable
     stop_event = threading.Event()
     children: list[subprocess.Popen] = []
+    temp_configs: list[str] = []
+    current_proxy = ""
     prefix = f"[gopay-stock:{label}] " if label else "[gopay-stock] "
-    print(prefix + f"start min_stock={min_stock} prepare_workers={max_prepare_workers}")
+    print(prefix + f"start min_stock={min_stock} prepare_workers={max_prepare_workers} proxy_rotate_every={proxy_rotate_every}")
 
     def _spawn_one(seq: int) -> subprocess.Popen:
-        cmd = [py, str(GOPAY_PY), "--config", str(Path(card_config_path).resolve()), "--prepare-auto-signup", "--json-result"]
+        nonlocal current_proxy
+        config_for_child = str(Path(card_config_path).resolve())
+        if stock_proxies:
+            proxy_index = ((seq - 1) // proxy_rotate_every) % len(stock_proxies)
+            current_proxy = stock_proxies[proxy_index]
+            config_for_child = _rewrite_card_with_gopay_stock_proxy(card_config_path, current_proxy, seq)
+            temp_configs.append(config_for_child)
+            print(prefix + f"prepare proxy seq={seq} index={proxy_index} proxy={current_proxy}")
+        cmd = [py, str(GOPAY_PY), "--config", config_for_child, "--prepare-auto-signup", "--json-result"]
         return subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -1042,6 +1102,11 @@ def _start_gopay_stock_worker(card_config_path: str, card_cfg: dict | None, *, w
             for proc in children:
                 if proc.poll() is None:
                     _terminate_process_tree(proc)
+            for tmp_path in temp_configs:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
             print(prefix + "stopped")
 
     thread = threading.Thread(target=_worker, name=f"gopay-stock-{label or os.getpid()}", daemon=True)
@@ -1310,7 +1375,8 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
              use_gopay=False, gopay_otp_file=None,
              timeout_reg=300, timeout_pay=600,
              pool=None, team_client=None, card_cfg=None, proxy_pool=None,
-             push_server=False, log_label="", gopay_account_pool=None):
+             push_server=False, log_label="", gopay_account_pool=None,
+             gopay_stock_managed=False):
     """全链路: 注册 → 支付 → (可选) gpt-team 导入探测 → 更新域池
     proxy_pool 非空时从 pool 挑代理，同时覆盖 CTF-reg + CTF-pay 两个 config 的 proxy 字段"""
     card_config_path = str(Path(card_config_path).resolve())
@@ -1378,13 +1444,15 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
 
     try:
         if use_gopay:
-            if _gopay_stock_enabled(card_cfg or {}):
+            if _gopay_stock_enabled(card_cfg or {}) and not gopay_stock_managed:
                 gopay_stock_thread = _start_gopay_stock_worker(
                     effective_card,
                     card_cfg or {},
                     workers=1,
                     label=log_label or "pipeline",
                 )
+            elif _gopay_stock_enabled(card_cfg or {}) and gopay_stock_managed:
+                print(f"[gopay-stock:{log_label or 'pipeline'}] managed by batch stock worker")
             else:
                 gopay_prepare_thread = _start_gopay_prepare_process(
                     effective_card,
@@ -1910,6 +1978,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
                     label=f"batch-{i + 1}",
                 )
         print(f"\n[batch] register-only 完成: {ok_count}/{count} 成功")
+        _stop_gopay_stock_worker(gopay_stock_thread)
         return results
 
     # ── pay-only batch：每次 pay_only（复用未付账号），串行
@@ -1937,6 +2006,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
                         results[int(r.get("batch_index", 0))] = r
             ok_count = sum(1 for r in results if r and r.get("status") == "succeeded")
             print(f"\n[batch] pay-only parallel 完成: {ok_count}/{count} 成功")
+            _stop_gopay_stock_worker(gopay_stock_thread)
             return results
 
         print(f"\n[batch] === pay-only × {count} 串行 ===")
@@ -1963,6 +2033,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
             if i < count - 1 and delay > 0:
                 time.sleep(delay)
         print(f"\n[batch] pay-only 完成: {ok_count}/{count} 成功")
+        _stop_gopay_stock_worker(gopay_stock_thread)
         return results
     ts_cfg = card_cfg.get("team_system") or {}
     cd_h = int(ts_cfg.get("domain_cooldown_hours", 24))
@@ -1985,6 +2056,8 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
     kwargs.setdefault("card_cfg", card_cfg)
     kwargs.setdefault("proxy_pool", proxy_pool)
     kwargs.setdefault("gopay_account_pool", gopay_account_pool)
+    if gopay_stock_thread is not None:
+        kwargs["gopay_stock_managed"] = True
     if workers > 1 and use_paypal and not use_gopay:
         # PayPal 模式：并行注册 → 串行支付（共用 PayPal 账号不能并行 2FA）
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -2150,6 +2223,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
         print(f"\n[DomainPool] 最终状态:")
         for d, st, lr in pool.summary():
             print(f"   - {d:40s} status={st:8s} last={lr}")
+    _stop_gopay_stock_worker(gopay_stock_thread)
     return results
 
 
