@@ -757,42 +757,55 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
     cmd = [python, "-c", script, auth_bundle_dir, cardw_config_path]
     print(f"{reg_prefix} 注册新账号 (config={os.path.basename(cardw_config_path)}) ...")
 
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, env=env, cwd=str(CARDW_DIR),
-        **_subprocess_tree_kwargs(),
-    )
+    def _run_register_child(attempt: int) -> tuple[int, dict | None, list[str]]:
+        if attempt > 1:
+            print(f"{reg_prefix} 15s 未拿到 chatgpt.com session，重试注册 {attempt}/2 ...")
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, env=env, cwd=str(CARDW_DIR),
+            **_subprocess_tree_kwargs(),
+        )
+        result = None
+        out_lines = []
+        try:
+            deadline = time.time() + timeout
+            for line in proc.stdout:
+                line = line.rstrip("\n")
+                out_lines.append(line)
+                print(f"{child_prefix} {line}")
+                if line.startswith("LOCALAUTH_RESULT_JSON="):
+                    payload = line.split("=", 1)[1]
+                    result = json.loads(payload)
+                if time.time() > deadline:
+                    _terminate_process_tree(proc)
+                    return 124, result, out_lines
+        finally:
+            proc.wait()
+        return int(proc.returncode or 0), result, out_lines
 
-    result_json = None
-    lines = []
-    try:
-        deadline = time.time() + timeout
-        for line in proc.stdout:
-            line = line.rstrip("\n")
-            lines.append(line)
-            print(f"{child_prefix} {line}")
-            if line.startswith("LOCALAUTH_RESULT_JSON="):
-                payload = line.split("=", 1)[1]
-                result_json = json.loads(payload)
-            if time.time() > deadline:
-                _terminate_process_tree(proc)
-                failed_email = _extract_registered_email_from_logs(lines)
-                if failed_email:
-                    should_fail, fail_reason = _should_fail_outlook_mail_on_registration_error(lines)
-                    if should_fail:
-                        _mark_outlook_mail_account_failed(failed_email, fail_reason or "registration_timeout")
-                    else:
-                        _release_outlook_mail_account(failed_email, "registration_timeout")
-                    _pool_registration_failed(
-                        failed_email,
-                        fail_reason or "registration_timeout",
-                        task_id=log_label,
-                    )
-                raise RegistrationError("注册超时")
-    finally:
-        proc.wait()
+    rc, result_json, lines = _run_register_child(1)
+    if rc != 0 and result_json is None and _is_registration_session_timeout_retryable(lines):
+        failed_email = _extract_registered_email_from_logs(lines)
+        if failed_email:
+            _release_outlook_mail_account(failed_email, "registration_session_timeout_retry")
+        rc, result_json, lines = _run_register_child(2)
 
-    if proc.returncode != 0 and result_json is None:
+    if rc == 124:
+        failed_email = _extract_registered_email_from_logs(lines)
+        if failed_email:
+            should_fail, fail_reason = _should_fail_outlook_mail_on_registration_error(lines)
+            if should_fail:
+                _mark_outlook_mail_account_failed(failed_email, fail_reason or "registration_timeout")
+            else:
+                _release_outlook_mail_account(failed_email, "registration_timeout")
+            _pool_registration_failed(
+                failed_email,
+                fail_reason or "registration_timeout",
+                task_id=log_label,
+            )
+        raise RegistrationError("注册超时")
+
+    if rc != 0 and result_json is None:
         last_lines = "\n".join(lines[-5:])
         failed_email = _extract_registered_email_from_logs(lines)
         if failed_email:
@@ -806,7 +819,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
                 fail_reason or "registration_failed",
                 task_id=log_label,
             )
-        raise RegistrationError(f"注册失败 (exit={proc.returncode}): {last_lines}")
+        raise RegistrationError(f"注册失败 (exit={rc}): {last_lines}")
 
     if result_json is None:
         failed_email = _extract_registered_email_from_logs(lines)
@@ -2325,6 +2338,16 @@ def _extract_registered_email_from_logs(lines) -> str:
         if m:
             return _norm_email(m.group(1))
     return ""
+
+
+def _is_registration_session_timeout_retryable(lines) -> bool:
+    text = "\n".join(str(x or "") for x in (lines or [])[-80:])
+    low = text.lower()
+    return (
+        "chatgpt.com session" in low
+        and "15s" in low
+        and "email-verification" in low
+    )
 
 
 def _norm_email(value: str) -> str:

@@ -21,27 +21,31 @@
           <span>状态检测</span>
           <small>Plus / Free / RT</small>
         </button>
+        <div class="pool-filter-list" aria-label="账号池筛选">
+          <button :class="{ active: filter.status === 'all' }" type="button" @click="setStatus('all')">
+            <span>全部账号</span>
+            <strong>{{ poolTotalCount }}</strong>
+          </button>
+          <button
+            v-for="status in statuses"
+            :key="status.key"
+            :class="{ active: filter.status === status.key }"
+            type="button"
+            @click="setStatus(status.key)"
+          >
+            <span>{{ status.label }}</span>
+            <strong>{{ counts[status.key] || 0 }}</strong>
+          </button>
+        </div>
       </aside>
       <main class="pool-main">
-    <section class="stats-grid">
-      <button
-        v-for="status in statuses"
-        :key="status.key"
-        :class="['stat-card', { active: filter.status === status.key }]"
-        type="button"
-        @click="setStatus(status.key)"
-      >
-        <span>{{ status.label }}</span>
-        <strong>{{ counts[status.key] || 0 }}</strong>
-      </button>
-    </section>
-
-    <section v-if="activeTab === 'accounts'" class="toolbar">
-      <div class="tabs">
-        <button :class="{ active: filter.status === 'all' }" type="button" @click="setStatus('all')">全部</button>
-        <button v-for="status in statuses" :key="status.key" :class="{ active: filter.status === status.key }" type="button" @click="setStatus(status.key)">
-          {{ status.label }}
-        </button>
+    <section v-if="activeTab === 'accounts'" class="toolbar workspace-bar">
+      <div class="workspace-title">
+        <div>
+          <p class="eyebrow">Pool Workspace</p>
+          <h2>{{ currentStatusLabel }}</h2>
+        </div>
+        <span>{{ pageStart }} - {{ pageEnd }} / {{ total }}，已选 {{ selectedIds.length }} 个</span>
       </div>
       <div class="rotation-row">
         <label class="switch-line">
@@ -74,32 +78,45 @@
       <textarea v-model="importText" rows="6" placeholder="name@example.com----password----client_id----mail_refresh_token" />
     </section>
 
-    <section class="bulk-bar">
-      <label class="select-all">
-        <input type="checkbox" :checked="pageAllSelected" @change="togglePageSelect" />
-        <span>本页 {{ selectedPageCount }} / {{ items.length }}</span>
-      </label>
-      <select v-model="moveTarget">
-        <option value="">移动到...</option>
-        <option v-for="status in moveStatuses" :key="status.key" :value="status.key">{{ status.label }}</option>
-      </select>
-      <input v-model="moveReason" placeholder="移动原因" />
-      <button class="btn ghost" type="button" :disabled="!selectedIds.length || !moveTarget || moving" @click="moveSelected">批量移动</button>
-      <label class="worker-field">
-        <span>线程</span>
-        <input v-model.number="retryWorkers" type="number" min="1" max="8" />
-      </label>
-      <button v-if="filter.status === 'in_progress'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('registration')">重新注册执行</button>
-      <button v-if="filter.status === 'registered_pending_plus'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('payment')">重新支付执行</button>
-      <button class="btn ghost" type="button" :disabled="claiming" @click="claimPreview">领取未激活邮箱</button>
-      <select v-model="downloadTarget">
-        <option value="cpa">下载 CPA</option>
-        <option value="sub2api">下载 sub2api</option>
-      </select>
-      <button class="btn ghost" type="button" :disabled="!selectedIds.length || downloading" @click="downloadSelected">批量下载</button>
-      <span class="bulk-info">已选 {{ selectedIds.length }} 个</span>
+    <section class="bulk-bar action-strip">
+      <div class="action-group selection-group">
+        <label class="select-all">
+          <input type="checkbox" :checked="pageAllSelected" @change="togglePageSelect" />
+          <span>本页 {{ selectedPageCount }} / {{ items.length }}</span>
+        </label>
+        <span class="bulk-info">已选 {{ selectedIds.length }} 个</span>
+      </div>
+      <div class="action-group">
+        <select v-model="moveTarget">
+          <option value="">移动到...</option>
+          <option v-for="status in moveStatuses" :key="status.key" :value="status.key">{{ status.label }}</option>
+        </select>
+        <input v-model="moveReason" placeholder="移动原因" />
+        <button class="btn ghost" type="button" :disabled="!selectedIds.length || !moveTarget || moving" @click="moveSelected">批量移动</button>
+      </div>
+      <div class="action-group">
+        <label class="worker-field">
+          <span>线程</span>
+          <input v-model.number="retryWorkers" type="number" min="1" max="8" />
+        </label>
+        <button v-if="filter.status === 'in_progress'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('registration')">重新注册执行</button>
+        <button v-if="filter.status === 'registered_pending_plus'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('payment')">重新支付执行</button>
+        <button class="btn ghost" type="button" :disabled="claiming" @click="claimPreview">领取未激活邮箱</button>
+      </div>
+      <div class="action-group">
+        <select v-model="downloadTarget">
+          <option value="cpa">下载 CPA</option>
+          <option value="sub2api">下载 sub2api</option>
+        </select>
+        <button class="btn ghost" type="button" :disabled="!selectedIds.length || downloading" @click="downloadSelected">批量下载</button>
+      </div>
     </section>
 
+    <details class="tool-panel">
+      <summary>
+        <span>上传到渠道</span>
+        <small>CPA / sub2api / 服务器，队列每组 10 个</small>
+      </summary>
     <section class="upload-panel">
       <div class="upload-targets">
         <label><input v-model="uploadTargets" type="checkbox" value="cpa" /> CPA</label>
@@ -113,6 +130,7 @@
         队列上传
       </button>
     </section>
+    </details>
 
     <section v-if="uploadResult" class="result-panel">
       <div v-for="(target, name) in uploadResult.targets" :key="String(name)">
@@ -121,9 +139,9 @@
       </div>
     </section>
 
-    <section class="danger-panel">
+    <details class="danger-panel">
+      <summary>按池子删除</summary>
       <div class="delete-targets">
-        <strong>按池子删除</strong>
         <label v-for="status in deletableStatuses" :key="status.key">
           <input v-model="deleteStatuses" type="checkbox" :value="status.key" />
           {{ status.label }} ({{ counts[status.key] || 0 }})
@@ -133,7 +151,7 @@
         删除所选池子账号
       </button>
       <span class="muted">删除后会同步清理该池子的流转记录</span>
-    </section>
+    </details>
 
     <section class="table-shell">
       <table>
@@ -141,12 +159,9 @@
           <tr>
             <th class="check-col"></th>
             <th>邮箱</th>
-            <th>池子</th>
-            <th>Plan</th>
-            <th>RT</th>
-            <th>账号标识</th>
-            <th>任务</th>
-            <th>最近状态</th>
+            <th>账号状态</th>
+            <th>账号信息</th>
+            <th>任务进度</th>
             <th>Codex</th>
             <th>更新</th>
           </tr>
@@ -160,23 +175,22 @@
               <div class="strong">{{ item.primary_email || item.email }}</div>
               <div class="muted">{{ item.email_source || 'manual' }} · #{{ item.id }}</div>
             </td>
-            <td><span :class="['pill', statusClass(item.pool_status)]">{{ item.status_label }}</span></td>
-            <td>{{ item.plan_type || '-' }}</td>
             <td>
-              <span :class="['pill', item.has_refresh_token ? 'ok' : 'muted-pill']">
-                {{ item.has_refresh_token ? '有 RT' : '无 RT' }}
-              </span>
+              <div class="cell-stack">
+                <span :class="['pill', statusClass(item.pool_status)]">{{ item.status_label }}</span>
+                <span>{{ item.plan_type || '-' }}</span>
+                <span :class="['pill', item.has_refresh_token ? 'ok' : 'muted-pill']">
+                  {{ item.has_refresh_token ? '有 RT' : '无 RT' }}
+                </span>
+              </div>
             </td>
             <td>
               <div>{{ item.account_id || item.team_account_id || '-' }}</div>
               <div class="muted">{{ item.payment_session_id || item.device_id || '' }}</div>
             </td>
             <td>
-              <div>{{ item.round_id || '-' }}</div>
-              <div class="muted">{{ item.task_id || '' }}</div>
-            </td>
-            <td>
-              <div>{{ item.last_stage || '-' }}</div>
+              <div>{{ item.last_stage || item.round_id || '-' }}</div>
+              <div class="muted">{{ item.task_id || item.round_id || '' }}</div>
               <div class="error-text">{{ item.last_error || '' }}</div>
             </td>
             <td>
@@ -397,6 +411,11 @@ const deletableStatuses = computed(() =>
 );
 const selectedIds = computed(() => Array.from(selected.value));
 const checkSelectedIds = computed(() => Array.from(checkSelected.value));
+const poolTotalCount = computed(() =>
+  statuses.value.reduce((sum, status) => sum + Number(counts.value[status.key] || 0), 0)
+    + Number(counts.value.quarantined || 0)
+);
+const currentStatusLabel = computed(() => filter.value.status === "all" ? "全部账号" : statusLabel(filter.value.status));
 const pageAllSelected = computed(() => items.value.length > 0 && items.value.every(item => selected.value.has(item.id)));
 const selectedPageCount = computed(() => items.value.filter(item => selected.value.has(item.id)).length);
 const pageStart = computed(() => total.value ? filter.value.offset + 1 : 0);
@@ -892,7 +911,7 @@ function formatTime(value: number | string) {
 .pool-page {
   min-height: 100vh;
   padding: 24px;
-  background: #f7faf9;
+  background: #f5f8f7;
   color: #17211d;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -902,6 +921,8 @@ function formatTime(value: number | string) {
 .import-panel,
 .bulk-bar,
 .upload-panel,
+.tool-panel,
+.danger-panel,
 .result-panel,
 .table-shell,
 .pager {
@@ -912,7 +933,7 @@ function formatTime(value: number | string) {
   max-width: 1480px;
   margin: 18px auto 0;
   display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -926,9 +947,11 @@ function formatTime(value: number | string) {
   align-self: start;
   display: grid;
   gap: 8px;
+  align-content: start;
 }
 
-.side-tabs button {
+.side-tabs button,
+.pool-filter-list button {
   border: 1px solid #d4e3de;
   background: #fff;
   color: #25423a;
@@ -938,14 +961,17 @@ function formatTime(value: number | string) {
   cursor: pointer;
 }
 
-.side-tabs button.active {
+.side-tabs button.active,
+.pool-filter-list button.active {
   border-color: #0f6b57;
   background: #e7f5f0;
   box-shadow: 0 0 0 3px rgba(15, 107, 87, .1);
 }
 
 .side-tabs span,
-.side-tabs small {
+.side-tabs small,
+.pool-filter-list span,
+.pool-filter-list strong {
   display: block;
 }
 
@@ -956,6 +982,31 @@ function formatTime(value: number | string) {
 .side-tabs small {
   margin-top: 4px;
   color: #668078;
+}
+
+.pool-filter-list {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #dce9e5;
+  display: grid;
+  gap: 8px;
+}
+
+.pool-filter-list button {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.pool-filter-list span {
+  min-width: 0;
+  font-weight: 800;
+}
+
+.pool-filter-list strong {
+  font-size: 20px;
 }
 
 .pool-header {
@@ -989,8 +1040,8 @@ h1 {
 .search-row,
 .rotation-row,
 .bulk-bar,
-.tabs,
-.panel-head {
+.panel-head,
+.action-group {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -998,7 +1049,6 @@ h1 {
 }
 
 .btn,
-.tabs button,
 .icon-btn {
   border: 1px solid #bfd4cb;
   background: #0f6b57;
@@ -1012,7 +1062,6 @@ h1 {
 }
 
 .btn.ghost,
-.tabs button,
 .icon-btn {
   background: #fff;
   color: #1f3a33;
@@ -1023,48 +1072,11 @@ h1 {
   cursor: not-allowed;
 }
 
-.tabs button.active {
-  background: #dff1eb;
-  border-color: #71a696;
-}
-
-.stats-grid {
-  margin: 0 0 14px;
-  display: grid;
-  grid-template-columns: repeat(6, minmax(140px, 1fr));
-  gap: 12px;
-}
-
-.stat-card {
-  text-align: left;
-  border: 1px solid #d4e3de;
-  background: #fff;
-  padding: 16px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.stat-card.active {
-  border-color: #0f6b57;
-  box-shadow: 0 0 0 3px rgba(15, 107, 87, .12);
-}
-
-.stat-card span {
-  display: block;
-  color: #61776f;
-  font-weight: 700;
-  font-size: 13px;
-}
-
-.stat-card strong {
-  display: block;
-  margin-top: 8px;
-  font-size: 30px;
-}
-
 .toolbar,
 .import-panel,
 .bulk-bar,
+.tool-panel,
+.danger-panel,
 .upload-panel,
 .result-panel,
 .table-shell,
@@ -1078,6 +1090,30 @@ h1 {
   padding: 14px;
   display: grid;
   gap: 12px;
+}
+
+.workspace-bar {
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: end;
+}
+
+.workspace-title {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.workspace-title h2 {
+  font-size: 22px;
+}
+
+.workspace-title > span {
+  color: #668078;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .search-row input,
@@ -1097,6 +1133,10 @@ h1 {
 
 .search-row input {
   min-width: 260px;
+}
+
+.workspace-bar .search-row {
+  justify-content: flex-end;
 }
 
 .rotation-row {
@@ -1154,6 +1194,19 @@ h1 {
   padding: 12px 14px;
 }
 
+.action-strip {
+  justify-content: space-between;
+  align-items: stretch;
+}
+
+.action-group {
+  padding: 4px 0;
+}
+
+.selection-group {
+  min-width: 150px;
+}
+
 .upload-panel,
 .result-panel {
   padding: 12px 14px;
@@ -1163,17 +1216,39 @@ h1 {
   flex-wrap: wrap;
 }
 
+.tool-panel,
 .danger-panel {
-  max-width: 1400px;
-  margin: 0 auto 14px;
   padding: 12px 14px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  border: 1px solid #f0c4c0;
+}
+
+.tool-panel summary,
+.danger-panel summary {
+  cursor: pointer;
+  font-weight: 800;
+  color: #25423a;
+}
+
+.tool-panel summary small {
+  margin-left: 10px;
+  color: #668078;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tool-panel .upload-panel {
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.danger-panel {
+  border-color: #f0c4c0;
   background: #fffafa;
-  border-radius: 8px;
+}
+
+.danger-panel[open] {
+  display: grid;
+  gap: 12px;
 }
 
 .delete-targets {
@@ -1333,6 +1408,9 @@ th {
   background: #f1f7f5;
   font-size: 12px;
   text-transform: uppercase;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 tbody tr {
@@ -1389,6 +1467,13 @@ tbody tr:hover {
 }
 
 .usage-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cell-stack {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1541,9 +1626,6 @@ dd {
   }
   .side-tabs {
     position: static;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .detail-grid {

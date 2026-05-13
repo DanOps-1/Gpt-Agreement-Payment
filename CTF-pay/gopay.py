@@ -246,6 +246,19 @@ def _proxy_list_from_cfg(cfg: Optional[dict], primary_proxy: Optional[str] = Non
     return out
 
 
+def _looks_like_waf_block(status_code: int, content_type: str, body: str) -> bool:
+    text = str(body or "")
+    return (
+        int(status_code or 0) == 403
+        and "html" in str(content_type or "").lower()
+        and (
+            "WAF Block Page" in text
+            or "submitWafFeedback" in text
+            or "domain-config-1256704386" in text
+        )
+    )
+
+
 def _json_dumps_compact(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
@@ -1311,6 +1324,19 @@ class GoPayCharger:
             self.ext.proxies = {"http": proxy, "https": proxy} if proxy else {"http": "", "https": ""}
         except Exception:
             pass
+        self._ext_exit_ip_cache = None
+
+    def _switch_proxy_once(self, reason: str = "") -> bool:
+        if len(self.proxy_pool) <= 1:
+            return False
+        self.proxy_index = (int(self.proxy_index or 0) + 1) % len(self.proxy_pool)
+        proxy = self.proxy_pool[self.proxy_index]
+        self._apply_proxy(proxy)
+        self.log(
+            f"[gopay] switch proxy once"
+            f"{' after ' + reason if reason else ''}: index={self.proxy_index} proxy={proxy}"
+        )
+        return True
 
     def _log_ext_exit_ip(self, label: str) -> None:
         proxy = ""
@@ -1507,27 +1533,31 @@ class GoPayCharger:
         url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
         body_text = _json_dumps_compact(body)
         body_for_signature = ""
-        headers = self._gopay_signed_headers_for_url(
-            "POST",
-            url,
-            body_text,
-            extra_headers=extra_headers,
-            strip_authorization=strip_authorization,
-            body_for_signature=body_for_signature,
-        )
-        if self.auto_signup_enabled and path in (
-            "/goto-auth/login/methods",
-            "/cvs/v1/methods",
-            "/cvs/v1/initiate",
-            "/cvs/v1/verify",
-            "/goto-auth/token",
-            "/v7/customers/signup",
-        ):
-            self.log(
-                f"[gopay] signed {path} "
-                f"x-uniqueid={_header_value(headers, 'x-uniqueid') or '-'} "
-                "body_signature_source=empty+body-md5"
+        def _signed_headers() -> dict[str, str]:
+            headers = self._gopay_signed_headers_for_url(
+                "POST",
+                url,
+                body_text,
+                extra_headers=extra_headers,
+                strip_authorization=strip_authorization,
+                body_for_signature=body_for_signature,
             )
+            if self.auto_signup_enabled and path in (
+                "/goto-auth/login/methods",
+                "/cvs/v1/methods",
+                "/cvs/v1/initiate",
+                "/cvs/v1/verify",
+                "/goto-auth/token",
+                "/v7/customers/signup",
+            ):
+                self.log(
+                    f"[gopay] signed {path} "
+                    f"x-uniqueid={_header_value(headers, 'x-uniqueid') or '-'} "
+                    "body_signature_source=empty+body-md5"
+                )
+            return headers
+
+        headers = _signed_headers()
         r = self._request_ext(
             "POST",
             url,
@@ -1538,6 +1568,22 @@ class GoPayCharger:
         )
         raw_text = getattr(r, "text", "") or ""
         content_type = str((getattr(r, "headers", {}) or {}).get("content-type") or "")
+        if (
+            _looks_like_waf_block(r.status_code, content_type, raw_text)
+            and self._switch_proxy_once(f"WAF 403 {path}")
+        ):
+            self.log(f"[gopay] WAF 403 at {path}; retrying once with switched proxy")
+            headers = _signed_headers()
+            r = self._request_ext(
+                "POST",
+                url,
+                data=body_text,
+                headers=headers,
+                timeout=DEFAULT_TIMEOUT,
+                retry_label=f"{label} {path} waf-retry",
+            )
+            raw_text = getattr(r, "text", "") or ""
+            content_type = str((getattr(r, "headers", {}) or {}).get("content-type") or "")
         try:
             data = r.json() if "json" in content_type.lower() and raw_text else {}
         except Exception:
