@@ -2629,6 +2629,12 @@ def _is_registration_session_timeout_retryable(lines) -> bool:
     low = text.lower()
     if "启动 camoufox" in text or "camoufox" in low:
         return True
+    if (
+        "page.wait_for_selector" in low
+        and "timeout 30000ms exceeded" in low
+        and ('input[type="email"]' in low or 'input[name="email"]' in low)
+    ):
+        return True
     return "chatgpt.com session" in low and "15s" in low and "email-verification" in low
 
 

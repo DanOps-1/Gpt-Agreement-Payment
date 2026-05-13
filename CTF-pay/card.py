@@ -1109,6 +1109,13 @@ def _extract_payment_method_types(payload: dict) -> list[str]:
 
     return ["card"]
 
+
+def _log_payment_method_types(label: str, types: list[str] | None) -> None:
+    if not types:
+        _log(f"      {label}: payment_method_types=?")
+        return
+    _log(f"      {label}: payment_method_types={','.join(types)}")
+
 def _build_browser_fingerprint(locale_profile: dict) -> dict:
     """构建 RecordBrowserInfo 的完整设备指纹 payload"""
     sw = locale_profile["screen_w"]
@@ -2992,6 +2999,7 @@ def init_checkout(session: requests.Session, session_id: str, pk: str, locale_pr
                 "return_url": init_data.get("return_url") or "",
                 "stripe_hosted_url": init_data.get("stripe_hosted_url") or "",
             }
+            _log_payment_method_types("[init]", ctx["payment_method_types"])
             return init_data, version, ctx
         if resp.status_code == 400 and "beta" in resp.text.lower():
             _log(f"      版本 {version[:20]}... 不支持 beta, 尝试下一个 ...")
@@ -3101,6 +3109,7 @@ def fetch_elements_session(
                 element_payment_types.append(spec["type"])
         if element_payment_types:
             ctx["payment_method_types"] = element_payment_types
+            _log_payment_method_types("[elements]", element_payment_types)
         return data
     else:
         _log(f"      [elements] 请求失败 [{resp.status_code}], 继续使用本地生成的 ID")
@@ -8579,8 +8588,19 @@ def run(
         elements_resp = fetch_elements_session(
             http, pk, session_id, init_ctx, stripe_ver=stripe_ver, locale_profile=locale_profile
         )
+    if use_gopay and "gopay" not in (init_ctx.get("payment_method_types") or []):
+        pricing = init_ctx.get("pricing") or {}
+        fresh_raw = fresh_info.get("raw") if isinstance(fresh_info, dict) else {}
+        billing = ((fresh_raw or {}).get("billing_details") or {}) if isinstance(fresh_raw, dict) else {}
+        raise RuntimeError(
+            "GoPay is not available on this checkout session: "
+            f"payment_method_types={init_ctx.get('payment_method_types') or []}, "
+            f"currency={pricing.get('currency') or init_ctx.get('currency') or '?'}, "
+            f"due={pricing.get('due')}, "
+            f"billing_country={billing.get('country') or '?'}"
+        )
 
-   
+
     _log("[2d/6] 查询 Link 消费者 ...")
     with _http_session_stage_proxy(http, stage_proxy_cfg, "link_lookup"):
         lookup_consumer(
