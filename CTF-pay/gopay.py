@@ -333,7 +333,7 @@ def _default_qris_headers(gopay_cfg: dict) -> dict[str, str]:
         "x-location": str(gopay_cfg.get("x_location") or "23.1868994,113.4191515"),
         "x-location-accuracy": str(gopay_cfg.get("x_location_accuracy") or "0.019999999552965164"),
         "custom_location": str(gopay_cfg.get("custom_location") or ""),
-        "x-uniqueid": str(gopay_cfg.get("x_uniqueid") or ""),
+        "x-uniqueid": str(gopay_cfg.get("x_uniqueid") or gopay_cfg.get("x-uniqueid") or ""),
         "x-phonemake": str(gopay_cfg.get("x_phonemake") or ""),
         "x-phonemodel": str(gopay_cfg.get("x_phonemodel") or ""),
         "x-deviceos": device_os,
@@ -1136,6 +1136,12 @@ class GoPayCharger:
             self.gopay_cfg.get("auto_login_headers"),
             extra_headers,
         )
+        runtime_unique_id = str(self.gopay_cfg.get("x_uniqueid") or self.gopay_cfg.get("x-uniqueid") or "").strip()
+        if runtime_unique_id:
+            for name in list(headers):
+                if name.lower() == "x-uniqueid":
+                    headers.pop(name, None)
+            headers["x-uniqueid"] = runtime_unique_id
         parsed = urlsplit(url)
         path = parsed.path or "/"
         if parsed.query:
@@ -1210,6 +1216,19 @@ class GoPayCharger:
             strip_authorization=strip_authorization,
             body_for_signature=body_for_signature,
         )
+        if self.auto_signup_enabled and path in (
+            "/goto-auth/login/methods",
+            "/cvs/v1/methods",
+            "/cvs/v1/initiate",
+            "/cvs/v1/verify",
+            "/goto-auth/token",
+            "/v7/customers/signup",
+        ):
+            self.log(
+                f"[gopay] signed {path} "
+                f"x-uniqueid={_header_value(headers, 'x-uniqueid') or '-'} "
+                "body_signature_source=empty+body-md5"
+            )
         r = self._request_ext(
             "POST",
             url,
