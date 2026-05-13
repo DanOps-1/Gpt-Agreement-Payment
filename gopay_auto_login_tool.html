@@ -1,0 +1,2013 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GoPay Auto Login Tool</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d8dee8;
+      --accent: #0f6ddf;
+      --accent-soft: #e8f1ff;
+      --ok: #087443;
+      --warn: #9a5b00;
+      --bad: #b42318;
+      --code: #111827;
+      --code-bg: #f1f4f8;
+      --shadow: 0 10px 28px rgba(25, 36, 56, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      line-height: 1.45;
+    }
+
+    main {
+      width: min(1440px, calc(100% - 28px));
+      margin: 0 auto;
+      padding: 24px 0 32px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-end;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.2;
+    }
+
+    .sub {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(360px, 0.9fr) minmax(520px, 1.25fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    section, .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    section {
+      padding: 16px;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+    }
+
+    h3 {
+      margin: 16px 0 8px;
+      font-size: 14px;
+      color: #24364d;
+    }
+
+    label {
+      display: block;
+      margin: 10px 0 5px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      font-size: 13px;
+      padding: 9px 10px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 88px;
+      resize: vertical;
+      font-family: Consolas, "Courier New", monospace;
+      line-height: 1.45;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .row3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    button {
+      border: 1px solid #0c59b8;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 13px;
+      padding: 9px 12px;
+    }
+
+    button.secondary {
+      background: #fff;
+      color: var(--accent);
+    }
+
+    button.ghost {
+      border-color: var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+    }
+
+    .step {
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .step-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      border-radius: 999px;
+      background: var(--code-bg);
+      color: var(--muted);
+      font-size: 12px;
+      padding: 2px 8px;
+      white-space: nowrap;
+    }
+
+    .tag.ok { color: var(--ok); background: #eaf8f0; }
+    .tag.bad { color: var(--bad); background: #fff1f0; }
+    .tag.warn { color: var(--warn); background: #fff7e6; }
+
+    pre {
+      margin: 8px 0 0;
+      max-height: 280px;
+      overflow: auto;
+      background: var(--code-bg);
+      color: var(--code);
+      border: 1px solid #dfe5ef;
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .state {
+      display: grid;
+      gap: 7px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      font-size: 13px;
+    }
+
+    .state div {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr);
+      gap: 10px;
+    }
+
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+      overflow-wrap: anywhere;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 12px;
+      margin: 8px 0 0;
+    }
+
+    .flow-line {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .flow-note {
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fbfcfe;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .flow-log {
+      display: grid;
+      gap: 6px;
+      max-height: 190px;
+      overflow: auto;
+      margin: 10px 0 14px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+
+    .flow-log-item {
+      display: grid;
+      grid-template-columns: 84px 1fr auto;
+      gap: 8px;
+      align-items: center;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font-size: 12px;
+    }
+
+    .flow-tag {
+      font-family: Consolas, "Liberation Mono", monospace;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .flow-time {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .flow-log-item.ok .flow-tag { color: var(--ok); }
+    .flow-log-item.bad .flow-tag { color: var(--bad); }
+    .flow-log-item.warn .flow-tag { color: #b45309; }
+
+    .handoff {
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      font-size: 12px;
+    }
+
+    .handoff summary {
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .handoff ol {
+      margin: 8px 0 0;
+      padding-left: 20px;
+    }
+
+    .handoff li {
+      margin: 5px 0;
+      line-height: 1.45;
+    }
+
+    .flow-locked {
+      opacity: 0.48;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, 0.42);
+    }
+
+    .modal {
+      width: min(420px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 18px 48px rgba(20, 35, 55, 0.22);
+      padding: 18px;
+    }
+
+    .modal h2 {
+      margin-bottom: 8px;
+    }
+
+    .modal p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .log-list {
+      display: grid;
+      gap: 6px;
+      max-height: 220px;
+      overflow: auto;
+      margin: 12px 0;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+
+    .log-item {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) 70px;
+      gap: 8px;
+      align-items: center;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      text-align: left;
+      padding: 8px 10px;
+      font-weight: 400;
+    }
+
+    .log-item.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    .log-path {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+    }
+
+    .log-status {
+      justify-self: end;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .log-status.ok { color: var(--ok); }
+    .log-status.bad { color: var(--bad); }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .tabs button {
+      padding: 7px 10px;
+    }
+
+    .hidden, .auto-field { display: none; }
+
+    @media (max-width: 980px) {
+      header, .grid { display: block; }
+      section { margin-bottom: 14px; }
+      .row, .row3 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>GoPay Auto Login Tool</h1>
+      <p class="sub">独立 HTML 调试页：从 /goto-auth/login/methods 开始，按旧自动录入手机号流程生成签名请求。</p>
+    </div>
+    <div class="actions">
+      <button class="ghost" id="loadSampleBtn" type="button">填入示例 headers</button>
+      <button class="secondary" id="saveBtn" type="button">保存到浏览器</button>
+      <button class="ghost" id="clearBtn" type="button">清空状态</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <section>
+      <h2>输入</h2>
+      <div class="row auto-field">
+        <div>
+          <label>区号</label>
+          <input id="countryCode" value="62" placeholder="62" />
+        </div>
+        <div>
+          <label>手机号</label>
+          <input id="phone" placeholder="81234567890" />
+        </div>
+      </div>
+
+      <h3>一键注册配置</h3>
+      <div class="row3">
+        <div><label>SMSBower API key</label><input id="smsApiKey" placeholder="api_key" /></div>
+        <div><label>SMSBower service</label><input id="smsService" value="ni" placeholder="ni" /></div>
+        <div><label>SMSBower country</label><input id="smsCountry" value="6" placeholder="6" /></div>
+      </div>
+      <div class="row3">
+        <div><label>SMSBower max price</label><input id="smsMaxPrice" placeholder="可选" /></div>
+        <div><label>OTP 轮询秒数</label><input id="otpPollSeconds" value="180" /></div>
+        <div><label>自动生成 PIN</label><input id="autoPinValue" value="102511" placeholder="6位支付码" /></div>
+      </div>
+      <div class="row">
+        <div>
+          <label>姓名</label>
+          <input id="profileName" value="SJC" placeholder="注册姓名" />
+        </div>
+        <div>
+          <label>邮箱</label>
+          <input id="profileEmail" placeholder="可留空" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>client_id</label>
+          <input id="clientId" value="gopay:consumer:app" />
+        </div>
+        <div>
+          <label>client_secret</label>
+          <input id="clientSecret" value="raOUumeMRBNifqvZRFjvsgTnjAlaA9" />
+        </div>
+      </div>
+
+      <label class="auto-field">Signup Authorization</label>
+      <input class="auto-field" id="signupAuth" value="Basic YmI2NDg0MTMtYjYzNy00NDNhLThlYmYtMTc2Y2Y5YjVkYzMy" />
+
+      <div class="row auto-field">
+        <div>
+          <label>token grant_type</label>
+          <input id="tokenGrantType" value="refresh_token" />
+        </div>
+        <div>
+          <label>token endpoint</label>
+          <input id="tokenEndpoint" value="/goto-auth/token" />
+        </div>
+      </div>
+
+      <div class="row auto-field">
+        <div>
+          <label>login flow</label>
+          <input id="loginFlow" value="login_1fa" />
+        </div>
+        <div>
+          <label>verification_method</label>
+          <input id="loginMethod" value="otp_sms" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="auto-field">
+          <label>verification_id</label>
+          <input id="verificationId" placeholder="留空自动生成 UUID" />
+        </div>
+        <div>
+          <label>HMAC key</label>
+          <input id="hmacKey" value="4&amp;G6DbV&amp;j8QZs~{)(Ila_w_|v@aqJq]E-;*(J9PanZ8sm01kTi{X&lt;iG``]d7P&amp;L" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>x-uniqueid</label>
+          <input id="uniqueId" value="b2826067c2473a07" />
+        </div>
+        <div class="actions">
+          <button class="ghost" id="randomUniqueIdBtn" type="button">随机 x-uniqueid</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>nonce marker hex</label>
+          <input id="nonceMarker" placeholder="可选，32位hex" />
+        </div>
+        <div>
+          <label>x-e1 body 模式</label>
+          <select id="bodySignMode">
+            <option value="empty-md5">有 body: canonical 留空 + MD5 body</option>
+            <option value="raw">直接签 body 原文</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>发送模式</label>
+          <select id="sendMode">
+            <option value="fetch">浏览器 fetch</option>
+            <option value="curl">只生成 curl</option>
+          </select>
+        </div>
+      </div>
+
+      <label>APP / 登录 headers JSON</label>
+      <textarea id="baseHeaders" spellcheck="false" placeholder='{"authorization":"Bearer token"}'></textarea>
+      <p class="note">x-uniqueid 和 x-m1 会按上方字段自动写入 headers；如果 headers JSON 里已有同名字段，会被自动生成值覆盖。</p>
+
+      <h3>x-m1 设备参数</h3>
+      <div class="row3">
+        <div><label>设备序列/启动种子</label><input id="xm1DeviceSeed" value="1778075659812-8392149532688774801" /></div>
+        <div><label>构建/版本码</label><input id="xm1BuildCode" value="127991" /></div>
+        <div><label>品牌硬件</label><input id="xm1BrandSpec" value="HONOR|3200|2" /></div>
+      </div>
+      <div class="row3">
+        <div><label>MAC</label><input id="xm1Mac" value="9e:ae:ec:82:81:36" /></div>
+        <div><label>WiFi SSID</label><input id="xm1Wifi" value="Belkin_368182ecae9e" /></div>
+        <div><label>屏幕</label><input id="xm1Screen" value="1440x2560" /></div>
+      </div>
+      <div class="row3">
+        <div><label>定位 providers</label><input id="xm1Providers" value="passive,network,fused,gps" /></div>
+        <div><label>SIM/网络状态</label><input id="xm1NetworkState" value="1" /></div>
+        <div><label>随机 nonce</label><input id="xm1Nonce" value="L7aWh4ZekbetUfzTxvluacSeH+NujKh7VUwQSZ+QRT4=" /></div>
+      </div>
+      <div class="row">
+        <div><label>设备摘要</label><input id="xm1DeviceHash" value="f7920f96c692be5c2e7d7907ca6d9b2a" /></div>
+        <div><label>安装 UUID</label><input id="xm1InstallId" value="b334400e-b2f2-4295-890e-403984c34fd5" /></div>
+      </div>
+      <div class="actions">
+        <button class="ghost" id="generateXm1Btn" type="button">生成 x-m1</button>
+      </div>
+      <pre id="xm1Out"></pre>
+
+      <h3 class="auto-field">验证码 / 支付码</h3>
+      <div class="row3 auto-field">
+        <div><label>注册验证码 OTP</label><input id="otp" placeholder="短信或 WhatsApp 一次性验证码" /></div>
+        <div><label>支付码设置验证码 OTP</label><input id="pinOtp" placeholder="设置支付码前的二次验证码" /></div>
+        <div><label>最终支付码 PIN</label><input id="pin" placeholder="要设置的 GoPay 支付码" /></div>
+      </div>
+      <div class="row auto-field">
+        <div><label>支付码验证 flow</label><input id="pinFlow" value="goto_pin_wa_sms" /></div>
+        <div><label>支付码验证码 method</label><input id="pinMethod" value="otp_sms" /></div>
+      </div>
+      <div class="row auto-field">
+        <div><label>支付码 setup client_id</label><input id="pinClientId" placeholder="通常留空" /></div>
+        <div><label>支付码 challenge_id</label><input id="pinChallengeId" placeholder="通常留空" /></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="hidden">
+        <h2>流程</h2>
+        <div class="state" id="stateBox"></div>
+        <div class="actions"><button class="ghost" id="runLoginMethodsBtn" type="button">可选: login/methods 探测</button></div>
+        <div class="flow-note" id="flowHint"></div>
+      </div>
+      <details class="handoff" open>
+        <summary>流程说明 / 交接给新项目</summary>
+        <ol>
+          <li><strong>一键入口</strong>: 点击“一键注册 + token + 设置支付码”，入口函数是 <span class="mono">runOneClick()</span>。</li>
+          <li><strong>SMSBower</strong>: <span class="mono">smsGetNumber()</span> 使用 <span class="mono">getNumberV2</span> 获取号码，默认 service=<span class="mono">ni</span>、country=<span class="mono">6</span>；<span class="mono">smsWaitCode()</span> 轮询验证码。</li>
+          <li><strong>注册探测</strong>: <span class="mono">runFirstStage()</span> 先请求 <span class="mono">/goto-auth/login/methods</span>，只有响应错误码 <span class="mono">auth:error:user:not_found</span> 才切换 <span class="mono">flow=signup</span> 继续。</li>
+          <li><strong>发送注册 OTP</strong>: <span class="mono">runSendOtp()</span> 串行执行 <span class="mono">/cvs/v1/methods</span> 和 <span class="mono">/cvs/v1/initiate</span>，保存 <span class="mono">verification_id</span> 与 <span class="mono">otp_token</span>。</li>
+          <li><strong>验证注册 OTP</strong>: <span class="mono">runVerify()</span> 请求 <span class="mono">/cvs/v1/verify</span>，拿到 <span class="mono">verification_token</span>。</li>
+          <li><strong>设置用户 + token</strong>: <span class="mono">runAccountList()</span> 调 <span class="mono">/v7/customers/signup</span> 设置昵称并拿 signup token，随后自动执行 <span class="mono">runToken()</span> 用 <span class="mono">/goto-auth/token</span> 换最终 <span class="mono">access_token</span>。</li>
+          <li><strong>设置支付码</strong>: <span class="mono">runPinMethods()</span>、<span class="mono">runPinInitiate()</span>、<span class="mono">runPinVerify()</span>、<span class="mono">runPinSetup()</span> 分别完成支付码验证码 methods、发码、验码、最终 PIN 设置。</li>
+          <li><strong>签名和日志</strong>: 所有 GoPay POST 统一走 <span class="mono">signedPost()</span>，里面生成 <span class="mono">x-m1</span>、<span class="mono">x-e1</span>、<span class="mono">x-e2</span>；请求明细写入“请求日志”，业务进度写入“流程日志”。</li>
+        </ol>
+      </details>
+      <h3>流程日志</h3>
+      <div id="flowLogList" class="flow-log"></div>
+      <div class="actions">
+        <button id="runOneClickBtn" type="button">一键注册 + token + 设置支付码</button>
+        <button id="runFirstStageBtn" type="button">1. 探测手机号</button>
+        <button id="runSendOtpBtn" type="button">2. 发注册验证码</button>
+        <button id="runVerifyBtn" type="button">3. 验证注册 OTP</button>
+        <button id="runAccountListBtn" type="button">4. 设置用户信息 + token</button>
+        <button id="runTokenBtn" type="button">手动重试 token</button>
+        <button class="secondary" id="runAllBtn" type="button">顺序执行到 token</button>
+      </div>
+      <div class="actions">
+        <button class="ghost" id="unlockPinFlowBtn" type="button">开始设置支付码</button>
+        <button class="ghost" id="runPinMethodsBtn" type="button">支付码 1. methods</button>
+        <button class="ghost" id="runPinInitiateBtn" type="button">支付码 2. 发验证码</button>
+        <button class="ghost" id="runPinVerifyBtn" type="button">支付码 3. 验证 OTP</button>
+        <button class="ghost" id="runPinSetupBtn" type="button">支付码 4. 设置 PIN</button>
+      </div>
+      <h3>请求日志</h3>
+      <div id="requestLogList" class="log-list"></div>
+      <div class="tabs">
+        <button class="ghost" data-tab="request" type="button">请求</button>
+        <button class="ghost" data-tab="curl" type="button">curl</button>
+        <button class="ghost" data-tab="response" type="button">响应</button>
+      </div>
+      <pre id="requestOut"></pre>
+      <pre id="curlOut" class="hidden"></pre>
+      <pre id="responseOut" class="hidden"></pre>
+    </section>
+  </div>
+</main>
+
+  <div id="otpModal" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2>输入注册验证码 OTP</h2>
+      <p>initiate 已返回 otp_token。填写短信或 WhatsApp 一次性验证码后，会保存到左侧注册验证码输入框，再手动点击 verify。</p>
+      <label>注册验证码 OTP</label>
+    <input id="otpModalInput" placeholder="验证码" />
+    <div class="actions">
+      <button id="otpModalSubmit" type="button">保存 OTP</button>
+      <button class="ghost" id="otpModalCancel" type="button">停在 initiate</button>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  "use strict";
+
+  /*
+   * Handoff overview
+   * ----------------
+   * This file is a standalone GoPay signup/token/PIN debug tool.
+   *
+   * Main one-click path:
+   * 1. runOneClick()
+   * 2. smsGetNumber() -> SMSBower getNumberV2; fills countryCode/phone.
+   * 3. runFirstStage()
+   *    - POST /goto-auth/login/methods.
+   *    - Continue only when auth:error:user:not_found is returned.
+   *    - Switch loginFlow from login_1fa to signup.
+   * 4. runSendOtp()
+   *    - runMethods(): POST /cvs/v1/methods; saves state.verificationId.
+   *    - runInitiate(): POST /cvs/v1/initiate; saves state.otpToken.
+   *    - smsWaitCode("注册验证码") polls SMSBower.
+   * 5. runVerify()
+   *    - POST /cvs/v1/verify; saves state.verificationToken.
+   * 6. runAccountList()
+   *    - POST /v7/customers/signup with verification-token header.
+   *    - Saves signup access/refresh token and account id.
+   *    - Calls runToken() immediately.
+   * 7. runToken()
+   *    - POST /goto-auth/token; saves final state.accessToken/state.refreshToken.
+   * 8. PIN setup:
+   *    - runPinMethods(): POST /cvs/v1/methods with final Bearer token.
+   *    - runPinInitiate(): POST /cvs/v1/initiate.
+   *    - smsWaitCode("支付码设置验证码") polls SMSBower again.
+   *    - runPinVerify(): POST /cvs/v1/verify; saves state.pinVerificationToken.
+   *    - runPinSetup(): POST customer.gopayapi.com/api/v2/users/pins/setup/tokens.
+   *
+   * Signing/logging:
+   * - All GoPay POST requests go through signedPost().
+   * - signedHeaders() merges default headers, baseHeaders, extraHeaders and creates
+   *   x-uniqueid, x-m1, x-e2, x-e1.
+   * - requestLogs stores raw HTTP request/response/curl data for the request log.
+   * - flowLogs stores user-facing business progress such as [sms] 请求手机号.
+   */
+
+  const ACCOUNTS_BASE = "https://accounts.goto-products.com";
+  const GOJEK_API_BASE = "https://api.gojekapi.com";
+  const CUSTOMER_BASE = "https://customer.gopayapi.com";
+  const DEFAULT_X_E2 = "ED9A2B38749FBDE9ACA61D6A685B7";
+  const ZERO_SEGMENT = "0".repeat(32);
+  const storageKey = "gopay_auto_login_tool_state_v1";
+  const requestLogs = [];
+  const flowLogs = [];
+  let selectedLogIndex = -1;
+
+  const state = {
+    flowStep: 0,
+    loginMethods: null,
+    methods: null,
+    verificationId: "",
+    otpToken: "",
+    verificationToken: "",
+    accountList: [],
+    accountId: "",
+    oneFaToken: "",
+    signupAccessToken: "",
+    signupRefreshToken: "",
+    accessToken: "",
+    refreshToken: "",
+    pinFlowUnlocked: false,
+    pinVerificationId: "",
+    pinOtpToken: "",
+    pinVerificationToken: "",
+    pinSetupToken: "",
+    smsActivationId: "",
+    smsNumber: "",
+    smsUsedOtps: [],
+  };
+
+  const $ = (id) => document.getElementById(id);
+
+  function uuid4() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0"));
+    return `${hex.slice(0,4).join("")}-${hex.slice(4,6).join("")}-${hex.slice(6,8).join("")}-${hex.slice(8,10).join("")}-${hex.slice(10).join("")}`;
+  }
+
+  function randomHex(byteCount) {
+    const bytes = crypto.getRandomValues(new Uint8Array(byteCount));
+    return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  function randomUniqueId() {
+    return randomHex(8);
+  }
+
+  function isHex(value) {
+    return /^[0-9a-f]+$/.test(value);
+  }
+
+  function newNonce(marker) {
+    marker = String(marker || "").trim().toLowerCase();
+    if (marker) {
+      if (marker.length !== 32 || !isHex(marker)) throw new Error("nonce marker 蹇呴』鏄?32 浣嶅皬鍐?hex");
+      return randomHex(32) + ZERO_SEGMENT + marker + randomHex(16);
+    }
+    return randomHex(80);
+  }
+
+  async function sha256Hex(text, key) {
+    const enc = new TextEncoder();
+    const cryptoKey = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(key),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const sig = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(text));
+    return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function md5Hex(text) {
+    if (window.md5) return window.md5(text);
+    return await md5Fallback(text);
+  }
+
+  function md5Fallback(input) {
+    function add32(a, b) { return (a + b) & 0xffffffff; }
+    function cmn(q, a, b, x, s, t) { return add32(((add32(add32(a, q), add32(x, t)) << s) | (add32(add32(a, q), add32(x, t)) >>> (32 - s))), b); }
+    function ff(a, b, c, d, x, s, t) { return cmn((b & c) | (~b & d), a, b, x, s, t); }
+    function gg(a, b, c, d, x, s, t) { return cmn((b & d) | (c & ~d), a, b, x, s, t); }
+    function hh(a, b, c, d, x, s, t) { return cmn(b ^ c ^ d, a, b, x, s, t); }
+    function ii(a, b, c, d, x, s, t) { return cmn(c ^ (b | ~d), a, b, x, s, t); }
+    function md5cycle(x, k) {
+      let [a, b, c, d] = x;
+      a = ff(a, b, c, d, k[0], 7, -680876936); d = ff(d, a, b, c, k[1], 12, -389564586);
+      c = ff(c, d, a, b, k[2], 17, 606105819); b = ff(b, c, d, a, k[3], 22, -1044525330);
+      a = ff(a, b, c, d, k[4], 7, -176418897); d = ff(d, a, b, c, k[5], 12, 1200080426);
+      c = ff(c, d, a, b, k[6], 17, -1473231341); b = ff(b, c, d, a, k[7], 22, -45705983);
+      a = ff(a, b, c, d, k[8], 7, 1770035416); d = ff(d, a, b, c, k[9], 12, -1958414417);
+      c = ff(c, d, a, b, k[10], 17, -42063); b = ff(b, c, d, a, k[11], 22, -1990404162);
+      a = ff(a, b, c, d, k[12], 7, 1804603682); d = ff(d, a, b, c, k[13], 12, -40341101);
+      c = ff(c, d, a, b, k[14], 17, -1502002290); b = ff(b, c, d, a, k[15], 22, 1236535329);
+      a = gg(a, b, c, d, k[1], 5, -165796510); d = gg(d, a, b, c, k[6], 9, -1069501632);
+      c = gg(c, d, a, b, k[11], 14, 643717713); b = gg(b, c, d, a, k[0], 20, -373897302);
+      a = gg(a, b, c, d, k[5], 5, -701558691); d = gg(d, a, b, c, k[10], 9, 38016083);
+      c = gg(c, d, a, b, k[15], 14, -660478335); b = gg(b, c, d, a, k[4], 20, -405537848);
+      a = gg(a, b, c, d, k[9], 5, 568446438); d = gg(d, a, b, c, k[14], 9, -1019803690);
+      c = gg(c, d, a, b, k[3], 14, -187363961); b = gg(b, c, d, a, k[8], 20, 1163531501);
+      a = gg(a, b, c, d, k[13], 5, -1444681467); d = gg(d, a, b, c, k[2], 9, -51403784);
+      c = gg(c, d, a, b, k[7], 14, 1735328473); b = gg(b, c, d, a, k[12], 20, -1926607734);
+      a = hh(a, b, c, d, k[5], 4, -378558); d = hh(d, a, b, c, k[8], 11, -2022574463);
+      c = hh(c, d, a, b, k[11], 16, 1839030562); b = hh(b, c, d, a, k[14], 23, -35309556);
+      a = hh(a, b, c, d, k[1], 4, -1530992060); d = hh(d, a, b, c, k[4], 11, 1272893353);
+      c = hh(c, d, a, b, k[7], 16, -155497632); b = hh(b, c, d, a, k[10], 23, -1094730640);
+      a = hh(a, b, c, d, k[13], 4, 681279174); d = hh(d, a, b, c, k[0], 11, -358537222);
+      c = hh(c, d, a, b, k[3], 16, -722521979); b = hh(b, c, d, a, k[6], 23, 76029189);
+      a = hh(a, b, c, d, k[9], 4, -640364487); d = hh(d, a, b, c, k[12], 11, -421815835);
+      c = hh(c, d, a, b, k[15], 16, 530742520); b = hh(b, c, d, a, k[2], 23, -995338651);
+      a = ii(a, b, c, d, k[0], 6, -198630844); d = ii(d, a, b, c, k[7], 10, 1126891415);
+      c = ii(c, d, a, b, k[14], 15, -1416354905); b = ii(b, c, d, a, k[5], 21, -57434055);
+      a = ii(a, b, c, d, k[12], 6, 1700485571); d = ii(d, a, b, c, k[3], 10, -1894986606);
+      c = ii(c, d, a, b, k[10], 15, -1051523); b = ii(b, c, d, a, k[1], 21, -2054922799);
+      a = ii(a, b, c, d, k[8], 6, 1873313359); d = ii(d, a, b, c, k[15], 10, -30611744);
+      c = ii(c, d, a, b, k[6], 15, -1560198380); b = ii(b, c, d, a, k[13], 21, 1309151649);
+      a = ii(a, b, c, d, k[4], 6, -145523070); d = ii(d, a, b, c, k[11], 10, -1120210379);
+      c = ii(c, d, a, b, k[2], 15, 718787259); b = ii(b, c, d, a, k[9], 21, -343485551);
+      x[0] = add32(a, x[0]); x[1] = add32(b, x[1]); x[2] = add32(c, x[2]); x[3] = add32(d, x[3]);
+    }
+    function md5blk(s) {
+      const md5blks = [];
+      for (let i = 0; i < 64; i += 4) md5blks[i >> 2] = s.charCodeAt(i) + (s.charCodeAt(i + 1) << 8) + (s.charCodeAt(i + 2) << 16) + (s.charCodeAt(i + 3) << 24);
+      return md5blks;
+    }
+    function md51(s) {
+      const txt = unescape(encodeURIComponent(s));
+      let n = txt.length;
+      const state = [1732584193, -271733879, -1732584194, 271733878];
+      let i;
+      for (i = 64; i <= n; i += 64) md5cycle(state, md5blk(txt.substring(i - 64, i)));
+      let tail = Array(16).fill(0);
+      const rest = txt.substring(i - 64);
+      for (i = 0; i < rest.length; i++) tail[i >> 2] |= rest.charCodeAt(i) << ((i % 4) << 3);
+      tail[i >> 2] |= 0x80 << ((i % 4) << 3);
+      if (i > 55) { md5cycle(state, tail); tail = Array(16).fill(0); }
+      tail[14] = n * 8;
+      md5cycle(state, tail);
+      return state;
+    }
+    function rhex(n) {
+      let s = "";
+      for (let j = 0; j < 4; j++) s += ((n >> (j * 8 + 4)) & 0x0f).toString(16) + ((n >> (j * 8)) & 0x0f).toString(16);
+      return s;
+    }
+    return md51(input).map(rhex).join("");
+  }
+
+  function compactJson(value) {
+    return JSON.stringify(value);
+  }
+
+  function parseJsonInput(id, fallback = {}) {
+    const raw = $(id).value.trim();
+    if (!raw) return fallback;
+    try {
+      return JSON.parse(raw);
+    } catch (err) {
+      throw new Error(`${id} JSON 瑙ｆ瀽澶辫触: ${err.message}`);
+    }
+  }
+
+  function defaultHeaders() {
+    return {
+      "accept-encoding": "gzip",
+      "country-code": "ID",
+      "gojek-country-code": "ID",
+      "gojek-service-area": "1",
+      "x-appversion": "2.8.0",
+      "x-help-version": "2.8.0",
+      "x-location": "23.1868994,113.4191515",
+      "x-location-accuracy": "0.019999999552965164",
+      "custom_location": "",
+      "x-uniqueid": "",
+      "x-phonemake": "",
+      "x-phonemodel": "",
+      "x-deviceos": "Android, 12",
+      "x-user-type": "customer",
+      "x-appid": "com.gojek.gopay",
+      "gojek-timezone": "Asia/Jakarta",
+      "x-apptype": "GOPAY",
+      "x-user-locale": "en_ID",
+      "accept-language": "en-ID",
+      "x-platform": "Android",
+      "user-agent": "GoPay/2.8.0 (com.gojek.gopay; build:280; Android, 12)",
+      "content-type": "application/json",
+      "x-authsdk-version": "1.0.0",
+      "x-cvsdk-version": "1.0.0",
+      "x-devicetoken": "cemQ0_WeQYuoyshCd8Seza:APA91bEMnYyv6mvLkZsMmVWOUg7bvIG2cM7faBEOU-ZF5c_AXqkJxrBtvaJH26tUm4GtnH425bfy__5mdLVDnbBbkDAIcgoup07Q_I-DZQHezQVRNljq7Tg",
+      "authorization": "Bearer "
+    };
+  }
+
+  function buildXm1() {
+    const fields = [
+      ["3", $("xm1DeviceSeed").value.trim()],
+      ["4", $("xm1BuildCode").value.trim()],
+      ["5", $("xm1BrandSpec").value.trim()],
+      ["6", $("xm1Mac").value.trim()],
+      ["7", $("xm1Wifi").value.trim()],
+      ["8", $("xm1Screen").value.trim()],
+      ["9", $("xm1Providers").value.trim()],
+      ["10", $("xm1NetworkState").value.trim()],
+      ["11", $("xm1Nonce").value.trim()],
+      ["15", $("xm1DeviceHash").value.trim()],
+      ["16", $("xm1InstallId").value.trim()],
+    ];
+    const missing = fields.filter(([, value]) => !value).map(([tag]) => tag);
+    if (missing.length) throw new Error(`x-m1 鍙傛暟缂哄け: ${missing.join(", ")}`);
+    return fields.map(([tag, value]) => `${tag}:${value}`).join(",");
+  }
+
+  function refreshXm1Output() {
+    try {
+      $("xm1Out").textContent = buildXm1();
+    } catch (err) {
+      $("xm1Out").textContent = err.message || String(err);
+    }
+  }
+
+  function lowerHeaders(headers) {
+    const out = {};
+    for (const [k, v] of Object.entries(headers || {})) out[String(k).toLowerCase()] = String(v);
+    return out;
+  }
+
+  function getHeader(headers, name) {
+    const lower = name.toLowerCase();
+    for (const [k, v] of Object.entries(headers)) if (k.toLowerCase() === lower) return v;
+    return "";
+  }
+
+  function bearerToken(value) {
+    return String(value || "").startsWith("Bearer ") ? String(value).slice(7) : String(value || "");
+  }
+
+  function waitForOtpModal(defaultValue = "") {
+    return new Promise((resolve, reject) => {
+      const modal = $("otpModal");
+      const input = $("otpModalInput");
+      const submit = $("otpModalSubmit");
+      const cancel = $("otpModalCancel");
+      input.value = defaultValue || "";
+      modal.classList.remove("hidden");
+      input.focus();
+
+      const cleanup = () => {
+        modal.classList.add("hidden");
+        submit.removeEventListener("click", onSubmit);
+        cancel.removeEventListener("click", onCancel);
+        input.removeEventListener("keydown", onKeydown);
+      };
+      const onSubmit = () => {
+        const value = input.value.trim();
+        if (!value) return;
+        cleanup();
+        resolve(value);
+      };
+      const onCancel = () => {
+        cleanup();
+        reject(new Error("OTP input cancelled"));
+      };
+      const onKeydown = (event) => {
+        if (event.key === "Enter") onSubmit();
+        if (event.key === "Escape") onCancel();
+      };
+      submit.addEventListener("click", onSubmit);
+      cancel.addEventListener("click", onCancel);
+      input.addEventListener("keydown", onKeydown);
+    });
+  }
+
+  async function signedHeaders(method, url, bodyText, extraHeaders = {}, stripAuthorization = true) {
+    const headers = { ...defaultHeaders(), ...parseJsonInput("baseHeaders", {}), ...extraHeaders };
+    headers["x-uniqueid"] = $("uniqueId").value.trim() || randomUniqueId();
+    $("uniqueId").value = headers["x-uniqueid"];
+    headers["x-m1"] = buildXm1();
+    headers["x-request-id"] = uuid4();
+    headers["transaction-id"] = uuid4();
+    const parsed = new URL(url);
+    const path = parsed.pathname + parsed.search;
+    const host = parsed.host;
+    let hasAuth = false;
+    for (const [k, v] of Object.entries(headers)) {
+      if (k.toLowerCase() === "authorization" && String(v || "").trim()) hasAuth = true;
+    }
+    const sendAuth = !(stripAuthorization || !hasAuth);
+    if (!sendAuth) {
+      for (const k of Object.keys(headers)) if (k.toLowerCase() === "authorization") delete headers[k];
+      headers.authorization = "Bearer ";
+    }
+    headers.host = host;
+    if (!("x-e2" in lowerHeaders(headers))) headers["x-e2"] = DEFAULT_X_E2;
+
+    const h = lowerHeaders(headers);
+    const required = ["x-apptype", "x-phonemodel", "authorization", "x-uniqueid", "x-deviceos", "x-appversion", "x-m1", "x-appid", "x-phonemake", "x-platform"];
+    const missing = required.filter((name) => !h[name]);
+    if (missing.length) throw new Error(`绛惧悕 headers 缂哄け: ${missing.join(", ")}`);
+
+    const timestamp = Date.now();
+    const nonce = newNonce($("nonceMarker").value);
+    const hasBody = Boolean(bodyText);
+    const useEmptyBodySignature = hasBody && $("bodySignMode").value === "empty-md5" && ["POST", "PUT", "PATCH"].includes(method.toUpperCase());
+    const bodyForCanonical = useEmptyBodySignature ? "" : bodyText;
+    const bodyMd5 = await md5Hex(bodyText);
+    const bodySignatureSource = useEmptyBodySignature ? "empty+body-md5" : "body";
+    const canonical = [
+      `${h["x-apptype"]};${h["x-phonemodel"]}:${bearerToken(h.authorization)};${h["x-uniqueid"]}:${bodyForCanonical};${bodyMd5}:${host}${path};${method.toUpperCase()}:${timestamp};${h["x-deviceos"]}:${h["x-appversion"]};${h["x-m1"]}:${h["x-appid"]};${nonce}:${h["x-phonemake"]};${h["x-platform"]}`
+    ][0];
+    const digest = await sha256Hex(canonical, $("hmacKey").value);
+    headers["x-e1"] = `${digest}:${nonce}:D:${timestamp}`;
+    if (!sendAuth) {
+      for (const k of Object.keys(headers)) if (k.toLowerCase() === "authorization") delete headers[k];
+    }
+    return { headers, canonical, host, path, bodyMd5, bodyForCanonical, bodySignatureSource };
+  }
+
+  function quoteShell(value) {
+    return `'${String(value).replace(/'/g, "'\\''")}'`;
+  }
+
+  function makeCurl(method, url, headers, bodyText) {
+    const parts = ["curl", "-i", "-X", method.toUpperCase(), quoteShell(url)];
+    for (const [k, v] of Object.entries(headers)) {
+      if (k.toLowerCase() === "host") continue;
+      parts.push("-H", quoteShell(`${k}: ${v}`));
+    }
+    if (bodyText) parts.push("--data-raw", quoteShell(bodyText));
+    return parts.join(" ");
+  }
+
+  function makeSmsUrl(action, params = {}) {
+    const url = new URL("https://smsbower.page/stubs/handler_api.php");
+    url.searchParams.set("api_key", $("smsApiKey").value.trim());
+    url.searchParams.set("action", action);
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null && String(value) !== "") url.searchParams.set(key, String(value));
+    }
+    return url.toString();
+  }
+
+  async function smsGet(action, params = {}) {
+    if (!$("smsApiKey").value.trim()) throw new Error("请先填写 SMSBower API key");
+    const url = makeSmsUrl(action, params);
+    const curl = makeCurl("GET", url, {}, "");
+    const requestDetail = { method: "GET", url, host: new URL(url).host, path: new URL(url).pathname + new URL(url).search, body: null, headers: {} };
+    if ($("sendMode").value === "curl") {
+      addRequestLog({ method: "GET", path: requestDetail.path, status: 0, request: requestDetail, curl, response: { status: 0, ok: false, body: null, raw: "curl only" } });
+      return "curl only";
+    }
+    const res = await fetch(url);
+    const raw = await res.text();
+    addRequestLog({ method: "GET", path: requestDetail.path, status: res.status, request: requestDetail, curl, response: { status: res.status, ok: res.ok, body: raw, raw } });
+    return raw.trim();
+  }
+
+  function parseSmsNumber(raw) {
+    const text = String(raw || "").trim();
+    try {
+      const data = JSON.parse(text);
+      const activationId = data.activationId || data.activation_id || data.id || data.tzid;
+      const phone = data.phoneNumber || data.phone_number || data.phone || data.number;
+      if (activationId && phone) return { activationId: String(activationId), phone: String(phone) };
+    } catch (_) {}
+    const parts = text.split(":");
+    if (parts[0] !== "ACCESS_NUMBER" || parts.length < 3) throw new Error(`SMSBower 获取号码失败: ${raw}`);
+    return { activationId: parts[1], phone: parts[2] };
+  }
+
+  function parseSmsCode(raw) {
+    const text = String(raw || "").trim();
+    if (text.startsWith("STATUS_OK:")) return text.slice("STATUS_OK:".length).trim();
+    return "";
+  }
+
+  function parseSmsCodes(raw) {
+    const code = parseSmsCode(raw);
+    if (code) return [code];
+    const text = String(raw || "");
+    const codes = [];
+    const re = /(?<!\d)(\d{4,8})(?!\d)/g;
+    let match;
+    while ((match = re.exec(text))) {
+      if (!codes.includes(match[1])) codes.push(match[1]);
+    }
+    return codes;
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function statusClass(status) {
+    if (status >= 200 && status < 400) return "ok";
+    if (status >= 400) return "bad";
+    return "";
+  }
+
+  function addRequestLog(entry) {
+    requestLogs.push(entry);
+    selectedLogIndex = requestLogs.length - 1;
+    renderRequestLogs();
+    showSelectedLog();
+  }
+
+  function addFlowLog(scope, message, status = "") {
+    flowLogs.push({
+      scope,
+      message,
+      status,
+      time: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+    });
+    renderFlowLogs();
+  }
+
+  function renderFlowLogs() {
+    const box = $("flowLogList");
+    if (!box) return;
+    if (!flowLogs.length) {
+      box.innerHTML = '<div class="note">暂无流程</div>';
+      return;
+    }
+    box.innerHTML = flowLogs.map((entry) => {
+      const cls = ["ok", "bad", "warn"].includes(entry.status) ? entry.status : "";
+      return (
+        `<div class="flow-log-item ${cls}">` +
+        `<span class="flow-tag">[${escapeHtml(entry.scope)}]</span>` +
+        `<span>${escapeHtml(entry.message)}</span>` +
+        `<span class="flow-time">${escapeHtml(entry.time)}</span>` +
+        `</div>`
+      );
+    }).join("");
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function renderRequestLogs() {
+    const box = $("requestLogList");
+    if (!requestLogs.length) {
+      box.innerHTML = '<div class="note">暂无请求</div>';
+      return;
+    }
+    box.innerHTML = requestLogs.map((entry, index) => {
+      const active = index === selectedLogIndex ? " active" : "";
+      const cls = statusClass(entry.status);
+      const status = entry.status ? String(entry.status) : "curl";
+      return (
+        `<button class="log-item${active}" type="button" data-log-index="${index}">` +
+        `<span>#${index + 1}</span>` +
+        `<span class="log-path">${escapeHtml(entry.method)} ${escapeHtml(entry.path)}</span>` +
+        `<span class="log-status ${cls}">${escapeHtml(status)}</span>` +
+        `</button>`
+      );
+    }).join("");
+    box.querySelectorAll("[data-log-index]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selectedLogIndex = Number(btn.getAttribute("data-log-index"));
+        renderRequestLogs();
+        showSelectedLog();
+      });
+    });
+  }
+
+  function showSelectedLog() {
+    const entry = requestLogs[selectedLogIndex];
+    if (!entry) {
+      $("requestOut").textContent = "";
+      $("curlOut").textContent = "";
+      $("responseOut").textContent = "";
+      return;
+    }
+    $("requestOut").textContent = JSON.stringify(entry.request, null, 2);
+    $("curlOut").textContent = entry.curl;
+    $("responseOut").textContent = JSON.stringify(entry.response, null, 2);
+  }
+
+  async function signedPost(base, path, body, options = {}) {
+    const url = base.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, "");
+    const bodyText = compactJson(body);
+    const {
+      headers,
+      canonical,
+      host,
+      path: signedPath,
+      bodyMd5,
+      bodyForCanonical,
+      bodySignatureSource,
+    } = await signedHeaders(
+      "POST",
+      url,
+      bodyText,
+      options.extraHeaders || {},
+      options.stripAuthorization !== false
+    );
+    const curl = makeCurl("POST", url, headers, bodyText);
+    const requestDetail = {
+      method: "POST",
+      url,
+      host,
+      path: signedPath,
+      body_signature_source: bodySignatureSource,
+      body_md5: bodyMd5,
+      body_for_canonical: bodyForCanonical,
+      body,
+      body_text: bodyText,
+      headers,
+      canonical,
+    };
+    if ($("sendMode").value === "curl") {
+      addRequestLog({
+        method: "POST",
+        path: signedPath,
+        status: 0,
+        request: requestDetail,
+        curl,
+        response: { status: 0, ok: false, body: null, raw: "curl only" },
+      });
+      return { status: 0, body: null, raw: "" };
+    }
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: bodyText,
+    });
+    const raw = await res.text();
+    let data = null;
+    try { data = raw ? JSON.parse(raw) : null; } catch (_) {}
+    addRequestLog({
+      method: "POST",
+      path: signedPath,
+      status: res.status,
+      request: requestDetail,
+      curl,
+      response: { status: res.status, ok: res.ok, body: data, raw },
+    });
+    return { status: res.status, body: data, raw };
+  }
+
+  function responseErrorMessage(res) {
+    const body = res && res.body;
+    if (!body) return (res && res.raw) || "";
+    if (body.message) return body.message;
+    if (body.error && (body.error.description || body.error.code)) {
+      return [body.error.code, body.error.description].filter(Boolean).join(": ");
+    }
+    if (Array.isArray(body.errors) && body.errors.length) {
+      return body.errors.map((item) => [item.code, item.message || item.message_title].filter(Boolean).join(": ")).join("; ");
+    }
+    return JSON.stringify(body);
+  }
+
+  function assertOkResponse(res, label) {
+    if (!res || res.status < 200 || res.status >= 300) {
+      throw new Error(`${label} 失败 status=${res ? res.status : "unknown"}: ${responseErrorMessage(res)}`);
+    }
+  }
+
+  function cfg() {
+    const country = $("countryCode").value.replace(/^\+/, "").trim() || "62";
+    const verificationId = $("verificationId").value.trim() || state.verificationId || uuid4();
+    $("verificationId").value = verificationId;
+    state.verificationId = verificationId;
+    return {
+      country,
+      phone: $("phone").value.replace(/\D/g, ""),
+      profileName: $("profileName").value.trim(),
+      profileEmail: $("profileEmail").value.trim(),
+      signupAuth: $("signupAuth").value.trim(),
+      tokenGrantType: $("tokenGrantType").value.trim() || "refresh_token",
+      tokenEndpoint: $("tokenEndpoint").value.trim() || "/goto-auth/token",
+      clientId: $("clientId").value.trim(),
+      clientSecret: $("clientSecret").value.trim(),
+      verificationId,
+      loginFlow: $("loginFlow").value.trim() || "login_1fa",
+      loginMethod: $("loginMethod").value.trim() || "otp_sms",
+    };
+  }
+
+  async function runLoginMethods() {
+    const c = cfg();
+    const res = await signedPost(ACCOUNTS_BASE, "/goto-auth/login/methods", {
+      phone_number: c.phone,
+      country_code: `+${c.country}`,
+      email: "",
+      device_verification_token_id: "",
+      client_id: c.clientId,
+      client_secret: c.clientSecret,
+    });
+    state.loginMethods = res.body;
+    renderState();
+    return res;
+  }
+
+  function responseHasErrorCode(res, code) {
+    const errors = res?.body?.errors;
+    return Array.isArray(errors) && errors.some((item) => String(item?.code || "") === code);
+  }
+
+  async function runMethods() {
+    requireFlow(1, "请先执行 1. 探测手机号，确认用户不存在后再发注册验证码");
+    const c = cfg();
+    const res = await signedPost(ACCOUNTS_BASE, "/cvs/v1/methods", {
+      country_code: `+${c.country}`,
+      email_address: null,
+      client_id: c.clientId,
+      phone_number: c.phone,
+      client_secret: c.clientSecret,
+      flow: c.loginFlow,
+      device_verification_token_id: null,
+    });
+    state.methods = res.body;
+    const data = res.body?.data || {};
+    state.verificationId = String(data.verification_id || state.verificationId || c.verificationId);
+    $("verificationId").value = state.verificationId;
+    advanceFlow(2);
+    renderState();
+    return res;
+  }
+
+  async function runInitiate() {
+    requireFlow(2, "请先执行 /cvs/v1/methods，收到响应后才能 initiate");
+    const c = cfg();
+    const res = await signedPost(ACCOUNTS_BASE, "/cvs/v1/initiate", {
+      verification_id: c.verificationId,
+      flow: c.loginFlow,
+      verification_method: c.loginMethod,
+      country_code: `+${c.country}`,
+      email_address: null,
+      client_id: c.clientId,
+      phone_number: c.phone,
+      client_secret: c.clientSecret,
+      is_multiple_method: null,
+      device_verification_token_id: null,
+    });
+    const data = res.body?.data || {};
+    if (data.otp_token) state.otpToken = String(data.otp_token);
+    advanceFlow(3);
+    renderState();
+    return res;
+  }
+
+  async function runVerify() {
+    requireFlow(3, "请先执行 /cvs/v1/initiate，并拿到 otp_token 后再 verify");
+    const c = cfg();
+    const otp = $("otp").value.trim();
+    if (!otp) throw new Error("请先填写注册验证码 OTP");
+    if (!state.otpToken) throw new Error("缺少 otp_token，请先执行 /cvs/v1/initiate");
+    const res = await signedPost(ACCOUNTS_BASE, "/cvs/v1/verify", {
+      client_id: c.clientId,
+      client_secret: c.clientSecret,
+      flow: c.loginFlow,
+      verification_method: c.loginMethod,
+      verification_id: c.verificationId,
+      data: { otp, otp_token: state.otpToken },
+    });
+    const data = res.body?.data || {};
+    if (data.verification_token) state.verificationToken = String(data.verification_token);
+    advanceFlow(4);
+    renderState();
+    return res;
+  }
+
+  async function runFirstStage() {
+    state.flowStep = 0;
+    state.verificationToken = "";
+    state.accountList = [];
+    state.accountId = "";
+    state.oneFaToken = "";
+    state.signupAccessToken = "";
+    state.signupRefreshToken = "";
+    state.accessToken = "";
+    state.refreshToken = "";
+    state.pinFlowUnlocked = false;
+    state.pinVerificationId = "";
+    state.pinOtpToken = "";
+    state.pinVerificationToken = "";
+    state.pinSetupToken = "";
+    const probe = await runLoginMethods();
+    if (responseHasErrorCode(probe, "auth:error:user:not_found")) {
+      $("loginFlow").value = "signup";
+      $("flowHint").textContent = "探测结果: 用户不存在，已自动切换 flow=signup，继续发起注册验证码。";
+    } else {
+      $("flowHint").textContent = "探测结果: 该手机号已注册过，未继续执行 signup/initiate。";
+      throw new Error("手机号已注册过；只有 auth:error:user:not_found 才会切换 flow=signup 继续。");
+    }
+    advanceFlow(1);
+    renderState();
+  }
+
+  async function runSendOtp() {
+    requireFlow(1, "请先执行 1. 探测手机号，确认用户不存在后再发注册验证码");
+    await runMethods();
+    await runInitiate();
+    $("otp").focus();
+  }
+
+  async function runAccountList() {
+    requireFlow(4, "请先执行 /cvs/v1/verify，并拿到 verification_token 后再设置用户信息");
+    const c = cfg();
+    if (!state.verificationToken) throw new Error("缺少 verification_token，请先执行 /cvs/v1/verify");
+    if (!c.profileName) throw new Error("请先填写姓名");
+    if (!c.signupAuth) throw new Error("请先填写 Signup Authorization");
+    const fullPhone = `+${c.country}${c.phone}`;
+    const res = await signedPost(GOJEK_API_BASE, "/v7/customers/signup", {
+      client_name: c.clientId,
+      client_secret: c.clientSecret,
+      data: {
+        name: c.profileName,
+        phone: fullPhone,
+        email: c.profileEmail,
+        signed_up_country: `+${c.country}`,
+        onboarding_partner: "gopay_consumer_app",
+      },
+    }, {
+      extraHeaders: {
+        authorization: c.signupAuth,
+        "verification-token": `Bearer ${state.verificationToken}`,
+      },
+      stripAuthorization: false,
+    });
+    const data = res.body?.data || {};
+    const newAccessToken = String(data.access_token || "");
+    const newRefreshToken = String(data.refresh_token || "");
+    if (!newAccessToken) {
+      throw new Error("设置用户信息未返回 signup access_token，不能继续第 4 步 token");
+    }
+    state.signupAccessToken = newAccessToken;
+    state.signupRefreshToken = newRefreshToken;
+    state.accessToken = "";
+    state.refreshToken = "";
+    state.accountId = String(data.resource_owner_id || data.customer?.id || state.accountId || "");
+    state.pinFlowUnlocked = false;
+    state.pinVerificationId = "";
+    state.pinOtpToken = "";
+    state.pinVerificationToken = "";
+    state.pinSetupToken = "";
+    advanceFlow(4);
+    renderState();
+    await runToken();
+    return res;
+  }
+
+  async function runToken() {
+    requireFlow(4, "请先完成设置用户信息，并拿到 signup access_token 后再获取最终 token");
+    const c = cfg();
+    if (!state.signupAccessToken) throw new Error("缺少 signup access_token，请先执行第 3 步设置用户信息");
+    if (!state.signupRefreshToken) throw new Error("缺少 signup refresh_token，请先执行第 3 步设置用户信息");
+    const res = await signedPost(ACCOUNTS_BASE, c.tokenEndpoint, {
+      grant_type: c.tokenGrantType,
+      account_id: state.accountId,
+      token: state.signupRefreshToken,
+      client_id: c.clientId,
+      client_secret: c.clientSecret,
+      refresh_token: state.signupRefreshToken,
+      ext_user_token: state.signupAccessToken,
+    }, {
+      extraHeaders: { authorization: `Bearer ${state.signupAccessToken}` },
+      stripAuthorization: false,
+    });
+    const data = res.body?.data || {};
+    const finalAccessToken = String(data.access_token || "");
+    const finalRefreshToken = String(data.refresh_token || "");
+    if (!finalAccessToken) throw new Error("第 4 步 token 未返回最终 access_token");
+    state.accessToken = finalAccessToken;
+    state.refreshToken = finalRefreshToken;
+    advanceFlow(5);
+    renderState();
+    return res;
+  }
+
+  async function runPinMethods() {
+    const c = cfg();
+    requireFlow(5, "请先完成设置用户信息并换取最终 access_token，再执行支付码 methods");
+    if (!state.pinFlowUnlocked) throw new Error("请先点击“开始设置支付码”，注册阶段不会自动进入支付码流程");
+    if (!state.accessToken) throw new Error("缺少最终 access_token，请先完成设置用户信息 + token");
+    const res = await signedPost(ACCOUNTS_BASE, "/cvs/v1/methods", {
+      country_code: null,
+      email_address: null,
+      client_id: c.clientId,
+      phone_number: null,
+      client_secret: c.clientSecret,
+      flow: $("pinFlow").value.trim() || "goto_pin_wa_sms",
+      device_verification_token_id: null,
+    }, { extraHeaders: { authorization: `Bearer ${state.accessToken}` }, stripAuthorization: false });
+    assertOkResponse(res, "支付码 methods");
+    const data = res.body?.data || {};
+    state.pinVerificationId = String(data.verification_id || "");
+    if (!state.pinVerificationId) {
+      throw new Error(`支付码 methods 未返回 verification_id: ${responseErrorMessage(res)}`);
+    }
+    state.pinOtpToken = "";
+    state.pinVerificationToken = "";
+    state.pinSetupToken = "";
+    renderState();
+    return res;
+  }
+
+  async function runPinInitiate() {
+    const c = cfg();
+    requireFlow(5, "请先完成设置用户信息并换取最终 access_token，再发起支付码设置验证码");
+    if (!state.accessToken) throw new Error("缺少最终 access_token，请先完成设置用户信息 + token");
+    if (!state.pinVerificationId) throw new Error("缺少支付码 verification_id，请先执行支付码 methods");
+    const res = await signedPost(ACCOUNTS_BASE, "/cvs/v1/initiate", {
+      verification_id: state.pinVerificationId,
+      flow: $("pinFlow").value.trim() || "goto_pin_wa_sms",
+      verification_method: $("pinMethod").value.trim() || "otp_sms",
+      country_code: null,
+      email_address: null,
+      client_id: c.clientId,
+      phone_number: null,
+      client_secret: c.clientSecret,
+      is_multiple_method: null,
+      device_verification_token_id: null,
+    }, { extraHeaders: { authorization: `Bearer ${state.accessToken}` }, stripAuthorization: false });
+    assertOkResponse(res, "支付码 initiate");
+    const data = res.body?.data || {};
+    state.pinOtpToken = String(data.otp_token || "");
+    if (!state.pinOtpToken) {
+      throw new Error(`支付码 initiate 未返回 otp_token: ${responseErrorMessage(res)}`);
+    }
+    renderState();
+    return res;
+  }
+
+  async function runPinVerify() {
+    const c = cfg();
+    const otp = $("pinOtp").value.trim();
+    if (!otp) throw new Error("请先填写支付码设置验证码 OTP");
+    if (!state.pinOtpToken || !state.pinVerificationId) throw new Error("缺少支付码设置 otp_token / verification_id");
+    const res = await signedPost(ACCOUNTS_BASE, "/cvs/v1/verify", {
+      client_id: c.clientId,
+      client_secret: c.clientSecret,
+      flow: $("pinFlow").value.trim() || "goto_pin_wa_sms",
+      verification_method: $("pinMethod").value.trim() || "otp_sms",
+      verification_id: state.pinVerificationId,
+      data: { otp, otp_token: state.pinOtpToken },
+    });
+    const data = res.body?.data || {};
+    state.pinVerificationToken = String(data.verification_token || "");
+    renderState();
+    return res;
+  }
+
+  async function runPinSetup() {
+    if (!state.accessToken) throw new Error("缺少最终 access_token");
+    if (!$("pin").value.trim()) throw new Error("请先填写最终支付码 PIN");
+    if (!state.pinVerificationToken) throw new Error("缺少支付码 verification_token");
+    const res = await signedPost(CUSTOMER_BASE, "/api/v2/users/pins/setup/tokens", {
+      client_id: $("pinClientId").value.trim(),
+      pin: $("pin").value.trim(),
+      challenge_id: $("pinChallengeId").value.trim(),
+    }, {
+      extraHeaders: {
+        authorization: `Bearer ${state.accessToken}`,
+        "verification-token": `Bearer ${state.pinVerificationToken}`,
+        "is-token-required": "false",
+      },
+      stripAuthorization: false,
+    });
+    const data = res.body?.data || {};
+    state.pinSetupToken = String(data.token || res.body?.token || "");
+    renderState();
+    return res;
+  }
+
+  async function runAll() {
+    await runFirstStage();
+    await runSendOtp();
+    await runVerify();
+    await runAccountList();
+  }
+
+  function setFlowHint(text) {
+    $("flowHint").textContent = text;
+  }
+
+  function normalizePhoneFromSms(rawPhone) {
+    const digits = String(rawPhone || "").replace(/\D/g, "");
+    const country = $("countryCode").value.replace(/^\+/, "").trim() || "62";
+    return digits.startsWith(country) ? digits.slice(country.length) : digits;
+  }
+
+  async function smsSetStatus(status) {
+    if (!state.smsActivationId) return "";
+    return await smsGet("setStatus", { id: state.smsActivationId, status });
+  }
+
+  async function smsGetNumber() {
+    const params = {
+      service: $("smsService").value.trim(),
+      country: $("smsCountry").value.trim(),
+      maxPrice: $("smsMaxPrice").value.trim(),
+    };
+    const raw = await smsGet("getNumberV2", params);
+    const parsed = parseSmsNumber(raw);
+    state.smsActivationId = parsed.activationId;
+    state.smsNumber = parsed.phone;
+    state.smsUsedOtps = [];
+    $("phone").value = normalizePhoneFromSms(parsed.phone);
+    renderState();
+    return parsed;
+  }
+
+  async function smsSnapshotExistingCodes() {
+    if (!state.smsActivationId) return [];
+    try {
+      const raw = await smsGet("getStatus", { id: state.smsActivationId });
+      const codes = parseSmsCodes(raw);
+      state.smsUsedOtps = Array.from(new Set([...(state.smsUsedOtps || []), ...codes]));
+      if (codes.length) addFlowLog("sms", `已过滤旧验证码 ${codes.join(",")}`, "warn");
+      return codes;
+    } catch (err) {
+      addFlowLog("sms", `旧验证码预读取失败: ${err && err.message ? err.message : err}`, "warn");
+      return [];
+    }
+  }
+
+  async function smsWaitCode(label, excludeCodes = []) {
+    const timeoutMs = Math.max(30, Number($("otpPollSeconds").value || 180)) * 1000;
+    const deadline = Date.now() + timeoutMs;
+    const excludes = new Set([...(state.smsUsedOtps || []), ...excludeCodes].filter(Boolean).map(String));
+    while (Date.now() < deadline) {
+      const raw = await smsGet("getStatus", { id: state.smsActivationId });
+      const code = parseSmsCode(raw);
+      if (code && !excludes.has(code)) {
+        state.smsUsedOtps = Array.from(new Set([...(state.smsUsedOtps || []), code]));
+        return code;
+      }
+      if (code && excludes.has(code)) {
+        setFlowHint(`${label}: 跳过旧验证码 ${code}`);
+      }
+      if (String(raw).startsWith("STATUS_CANCEL") || String(raw).startsWith("STATUS_FINISH")) {
+        throw new Error(`${label} 等待验证码失败: ${raw}`);
+      }
+      setFlowHint(`${label}: 等待验证码中 (${raw})`);
+      await sleep(5000);
+    }
+    throw new Error(`${label} 等待验证码超时`);
+  }
+
+  async function runOneClick() {
+    flowLogs.length = 0;
+    renderFlowLogs();
+    const uniqueId = randomUniqueId();
+    $("uniqueId").value = uniqueId;
+    state.smsUsedOtps = [];
+    addFlowLog("gopay", `刷新 x-uniqueid ${uniqueId}`);
+    try {
+      addFlowLog("sms", "请求手机号");
+      setFlowHint("一键流程: 获取 SMSBower 号码");
+      await smsGetNumber();
+      await smsSnapshotExistingCodes();
+      addFlowLog("sms", `已获取手机号 +${$("countryCode").value}${$("phone").value}`, "ok");
+
+      addFlowLog("gopay", "探测手机号");
+      setFlowHint("一键流程: 探测手机号");
+      await runFirstStage();
+      addFlowLog("gopay", "手机号未注册，切换 signup", "ok");
+
+      addFlowLog("gopay", "发送注册验证码");
+      setFlowHint("一键流程: 发送注册验证码");
+      await runSendOtp();
+      await smsSetStatus(1);
+      addFlowLog("sms", "等待注册验证码");
+      const registerOtp = await smsWaitCode("注册验证码");
+      $("otp").value = registerOtp;
+      addFlowLog("sms", "收到注册验证码", "ok");
+
+      addFlowLog("gopay", "验证注册验证码");
+      setFlowHint("一键流程: 验证注册 OTP");
+      await runVerify();
+      addFlowLog("gopay", "注册验证码验证完成", "ok");
+
+      addFlowLog("gopay", "设置昵称并换取 token");
+      setFlowHint("一键流程: 设置用户信息并换取 token");
+      await runAccountList();
+      addFlowLog("gopay", "昵称设置和 token 换取完成", "ok");
+
+      state.pinFlowUnlocked = true;
+      renderState();
+      const pinValue = $("autoPinValue").value.trim() || $("pin").value.trim();
+      if (!pinValue) throw new Error("请填写自动生成 PIN 或最终支付码 PIN");
+      $("pin").value = pinValue;
+
+      await smsSetStatus(3);
+      addFlowLog("gopay", "发送支付码设置验证码");
+      setFlowHint("一键流程: 发起支付码设置验证码");
+      await runPinMethods();
+      await runPinInitiate();
+      addFlowLog("sms", "等待支付码设置验证码");
+      const pinOtp = await smsWaitCode("支付码设置验证码");
+      $("pinOtp").value = pinOtp;
+      addFlowLog("sms", "收到支付码设置验证码", "ok");
+
+      addFlowLog("gopay", "验证支付码设置验证码");
+      setFlowHint("一键流程: 验证支付码设置 OTP");
+      await runPinVerify();
+      addFlowLog("gopay", "支付码设置验证码验证完成", "ok");
+
+      addFlowLog("gopay", "设置最终支付码 PIN");
+      setFlowHint("一键流程: 设置最终支付码 PIN");
+      await runPinSetup();
+      await smsSetStatus(6);
+      addFlowLog("done", "注册、token、支付码设置完成", "ok");
+      setFlowHint("一键流程完成：注册、token、支付码设置均已完成。");
+      saveLocal();
+    } catch (err) {
+      addFlowLog("error", err && err.message ? err.message : String(err), "bad");
+      if (state.smsActivationId) {
+        try {
+          await smsSetStatus(8);
+          addFlowLog("sms", "已取消当前号码", "warn");
+        } catch (_) {}
+      }
+      throw err;
+    }
+  }
+
+  function advanceFlow(step) {
+    state.flowStep = Math.max(Number(state.flowStep || 0), step);
+  }
+
+  function requireFlow(step, message) {
+    if (Number(state.flowStep || 0) < step) throw new Error(message);
+  }
+
+  function updateFlowButtons() {
+    const flowStep = Number(state.flowStep || 0);
+    const enabled = {
+      runOneClickBtn: true,
+      runFirstStageBtn: true,
+      runSendOtpBtn: flowStep >= 1,
+      runVerifyBtn: flowStep >= 3,
+      runAccountListBtn: flowStep >= 4 && Boolean(state.verificationToken),
+      runTokenBtn: flowStep >= 5 && Boolean(state.signupAccessToken),
+      unlockPinFlowBtn: flowStep >= 5 && Boolean(state.accessToken),
+      runPinMethodsBtn: flowStep >= 5 && Boolean(state.accessToken && state.pinFlowUnlocked),
+      runPinInitiateBtn: Boolean(state.pinFlowUnlocked && state.pinVerificationId),
+      runPinVerifyBtn: Boolean(state.pinFlowUnlocked && state.pinOtpToken),
+      runPinSetupBtn: Boolean(state.pinFlowUnlocked && state.pinVerificationToken && state.accessToken),
+    };
+    for (const [id, isEnabled] of Object.entries(enabled)) {
+      const btn = $(id);
+      if (!btn) continue;
+      btn.disabled = !isEnabled;
+      btn.classList.toggle("flow-locked", !isEnabled);
+    }
+    const hints = [
+      "Next: click 1. 探测手机号，只调用 /goto-auth/login/methods。",
+      "探测完成：用户不存在时可点击 2. 发注册验证码。",
+      "注册 methods completed: 正在等待 initiate。",
+      "Initiate completed: enter 注册验证码 OTP on the left, then click 3. verify.",
+      "Next: click 4. 设置用户信息 + token，signup 成功后会立即换取最终 token。",
+      "最终 token 获取完成。注册阶段已结束；如需支付码，请点击“开始设置支付码”。",
+    ];
+    $("flowHint").textContent = hints[Math.min(flowStep, hints.length - 1)];
+  }
+
+  function short(value) {
+    const text = String(value || "");
+    if (!text) return "-";
+    return text.length > 18 ? `${text.slice(0, 8)}...${text.slice(-8)}` : text;
+  }
+
+  function renderState() {
+    $("stateBox").innerHTML = [
+      ["flow_step", String(state.flowStep || 0)],
+      ["verification_id", state.verificationId || $("verificationId").value || "-"],
+      ["otp_token", short(state.otpToken)],
+      ["verification_token", short(state.verificationToken)],
+      ["account_id", state.accountId || "-"],
+      ["1fa_token", short(state.oneFaToken)],
+      ["signup_access_token", short(state.signupAccessToken)],
+      ["signup_refresh_token", short(state.signupRefreshToken)],
+      ["access_token", short(state.accessToken)],
+      ["refresh_token", short(state.refreshToken)],
+      ["pin_flow_unlocked", state.pinFlowUnlocked ? "yes" : "no"],
+      ["pin_verification_id", state.pinVerificationId || "-"],
+      ["pin_otp_token", short(state.pinOtpToken)],
+      ["pin_verification_token", short(state.pinVerificationToken)],
+      ["pin_setup_token", short(state.pinSetupToken)],
+      ["sms_activation_id", state.smsActivationId || "-"],
+      ["sms_number", state.smsNumber || "-"],
+    ].map(([k, v]) => `<div><strong>${k}</strong><span class="mono">${escapeHtml(v)}</span></div>`).join("");
+    updateFlowButtons();
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  }
+
+  async function guard(fn) {
+    try {
+      setBusy(true);
+      await fn();
+    } catch (err) {
+      $("responseOut").textContent = JSON.stringify({ error: err.message || String(err), stack: err.stack || "" }, null, 2);
+      showTab("response");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function setBusy(busy) {
+    if (busy) {
+      for (const btn of document.querySelectorAll("button")) btn.disabled = !btn.dataset.tab;
+      return;
+    }
+    for (const btn of document.querySelectorAll("button")) {
+      if (!btn.dataset.tab) btn.disabled = false;
+    }
+    updateFlowButtons();
+  }
+
+  function showTab(name) {
+    $("requestOut").classList.toggle("hidden", name !== "request");
+    $("curlOut").classList.toggle("hidden", name !== "curl");
+    $("responseOut").classList.toggle("hidden", name !== "response");
+  }
+
+  function saveLocal() {
+    const payload = {};
+    for (const id of ["countryCode", "phone", "profileName", "profileEmail", "smsApiKey", "smsService", "smsCountry", "smsMaxPrice", "otpPollSeconds", "autoPinValue", "signupAuth", "tokenGrantType", "tokenEndpoint", "clientId", "clientSecret", "loginFlow", "loginMethod", "verificationId", "uniqueId", "hmacKey", "nonceMarker", "bodySignMode", "sendMode", "baseHeaders", "xm1DeviceSeed", "xm1BuildCode", "xm1BrandSpec", "xm1Mac", "xm1Wifi", "xm1Screen", "xm1Providers", "xm1NetworkState", "xm1Nonce", "xm1DeviceHash", "xm1InstallId", "otp", "pinOtp", "pin", "pinFlow", "pinMethod", "pinClientId", "pinChallengeId"]) {
+      payload[id] = $(id).value;
+    }
+    payload.state = state;
+    localStorage.setItem(storageKey, JSON.stringify(payload));
+  }
+
+  function loadLocal() {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) {
+      ensureSmsDefaults();
+      return;
+    }
+    try {
+      const payload = JSON.parse(raw);
+      for (const [id, value] of Object.entries(payload)) {
+        if ($(id) && typeof value === "string") $(id).value = value;
+      }
+      if (payload.state && typeof payload.state === "object") Object.assign(state, payload.state);
+    } catch (_) {}
+    ensureSmsDefaults();
+  }
+
+  function ensureSmsDefaults() {
+    if (!$("smsService").value.trim()) $("smsService").value = "ni";
+    if (!$("smsCountry").value.trim()) $("smsCountry").value = "6";
+    if (!$("countryCode").value.trim()) $("countryCode").value = "62";
+  }
+
+  function fillSample() {
+    const headers = defaultHeaders();
+    headers["x-phonemake"] = "HONOR";
+    headers["x-phonemodel"] = "HONOR, BVL-AN20";
+    headers["x-deviceos"] = "Android, 12";
+    headers["x-appversion"] = "2.8.0";
+    headers["x-help-version"] = "2.8.0";
+    headers["user-agent"] = "GoPay/2.8.0 (com.gojek.gopay; build:2080; Android, 12)";
+    $("baseHeaders").value = JSON.stringify(headers, null, 2);
+    $("uniqueId").value = "b2826067c2473a07";
+    refreshXm1Output();
+  }
+
+  function clearState() {
+    for (const key of Object.keys(state)) {
+      if (Array.isArray(state[key])) state[key] = [];
+      else if (typeof state[key] === "boolean") state[key] = false;
+      else state[key] = "";
+    }
+    state.loginMethods = null;
+    state.methods = null;
+    state.flowStep = 0;
+    state.pinFlowUnlocked = false;
+    requestLogs.length = 0;
+    flowLogs.length = 0;
+    selectedLogIndex = -1;
+    $("otp").value = "";
+    $("pinOtp").value = "";
+    $("requestOut").textContent = "";
+    $("curlOut").textContent = "";
+    $("responseOut").textContent = "";
+    renderRequestLogs();
+    renderFlowLogs();
+    renderState();
+  }
+
+  function setText(selector, text) {
+    const el = document.querySelector(selector);
+    if (el) el.textContent = text;
+  }
+
+  function setPlaceholder(selector, text) {
+    const el = document.querySelector(selector);
+    if (el) el.setAttribute("placeholder", text);
+  }
+
+  function restoreChineseText() {
+    setText("header .sub", "独立 HTML 调试页：从 /goto-auth/login/methods 开始，按旧自动录入手机号流程生成签名请求。");
+    setText("#loadSampleBtn", "填入示例 headers");
+    setText("#saveBtn", "保存到浏览器");
+    setText("#clearBtn", "清空状态");
+    setText("section:first-of-type h2", "输入");
+    setText('label[for="countryCode"]', "区号");
+    const labels = document.querySelectorAll("label");
+    const labelMap = [
+      "区号", "手机号", "SMSBower API key", "SMSBower service", "SMSBower country", "SMSBower max price", "OTP 轮询秒数", "自动生成 PIN",
+      "姓名", "邮箱", "client_id", "client_secret", "Signup Authorization", "token grant_type", "token endpoint", "login flow", "verification_method",
+      "verification_id", "HMAC key", "x-uniqueid", "nonce marker hex", "x-e1 body 模式",
+      "发送模式", "APP / 登录 headers JSON", "设备序列/启动种子", "构建/版本码", "品牌硬件",
+      "MAC", "WiFi SSID", "屏幕", "定位 providers", "SIM/网络状态", "随机 nonce",
+      "设备摘要", "安装 UUID", "注册验证码 OTP", "支付码设置验证码 OTP", "最终支付码 PIN", "支付码验证 flow", "支付码验证码 method",
+      "支付码 setup client_id", "支付码 challenge_id", "注册验证码 OTP"
+    ];
+    labels.forEach((label, index) => {
+      if (labelMap[index]) label.textContent = labelMap[index];
+    });
+    setText("#randomUniqueIdBtn", "随机 x-uniqueid");
+    setText("#generateXm1Btn", "生成 x-m1");
+    setText("#runLoginMethodsBtn", "可选: login/methods 探测");
+    setText("#runOneClickBtn", "一键注册 + token + 设置支付码");
+    setText("#runFirstStageBtn", "1. 探测手机号");
+    setText("#runSendOtpBtn", "2. 发注册验证码");
+    setText("#runVerifyBtn", "3. 验证注册 OTP");
+    setText("#runAccountListBtn", "4. 设置用户信息 + token");
+    setText("#runTokenBtn", "手动重试 token");
+    setText("#runAllBtn", "顺序执行到 token");
+    setText('[data-tab="request"]', "请求");
+    setText('[data-tab="response"]', "响应");
+    setText("#unlockPinFlowBtn", "开始设置支付码");
+    setText("#runPinMethodsBtn", "支付码 1. methods");
+    setText("#runPinInitiateBtn", "支付码 2. 发验证码");
+    setText("#runPinVerifyBtn", "支付码 3. 验证 OTP");
+    setText("#runPinSetupBtn", "支付码 4. 设置 PIN");
+    setText("#otpModal h2", "输入注册验证码 OTP");
+    setText("#otpModal p", "initiate 已返回 otp_token。填写短信或 WhatsApp 一次性验证码后，会保存到左侧注册验证码输入框，再手动点击 verify。");
+    setText("#otpModalSubmit", "保存 OTP");
+    setText("#otpModalCancel", "停在 initiate");
+    setPlaceholder("#verificationId", "留空自动生成 UUID");
+    setPlaceholder("#nonceMarker", "可选，32位hex");
+    setPlaceholder("#otp", "短信或 WhatsApp 一次性验证码");
+    setPlaceholder("#pinOtp", "设置支付码前的二次验证码");
+    setPlaceholder("#pin", "要设置的 GoPay 支付码");
+    setPlaceholder("#pinClientId", "通常留空");
+    setPlaceholder("#pinChallengeId", "通常留空");
+    setPlaceholder("#otpModalInput", "验证码");
+    const note = document.querySelector("textarea#baseHeaders + .note");
+    if (note) note.textContent = "x-uniqueid 和 x-m1 会按上方字段自动写入 headers；如果 headers JSON 里已有同名字段，会被自动生成值覆盖。";
+    document.querySelectorAll("h3").forEach((h3) => {
+      if (h3.textContent.includes("x-m1")) h3.textContent = "x-m1 设备参数";
+      if (h3.textContent.includes("OTP") || h3.textContent.includes("PIN")) h3.textContent = "验证码 / 支付码";
+      if (h3.nextElementSibling && h3.nextElementSibling.id === "flowLogList") h3.textContent = "流程日志";
+      if (h3.nextElementSibling && h3.nextElementSibling.id === "requestLogList") h3.textContent = "请求日志";
+    });
+  }
+
+  $("loadSampleBtn").addEventListener("click", fillSample);
+  $("randomUniqueIdBtn").addEventListener("click", () => { $("uniqueId").value = randomUniqueId(); });
+  $("generateXm1Btn").addEventListener("click", refreshXm1Output);
+  for (const id of ["xm1DeviceSeed", "xm1BuildCode", "xm1BrandSpec", "xm1Mac", "xm1Wifi", "xm1Screen", "xm1Providers", "xm1NetworkState", "xm1Nonce", "xm1DeviceHash", "xm1InstallId"]) {
+    $(id).addEventListener("input", refreshXm1Output);
+  }
+  $("saveBtn").addEventListener("click", () => { saveLocal(); alert("宸蹭繚瀛樺埌娴忚鍣?localStorage"); });
+  $("clearBtn").addEventListener("click", clearState);
+  $("runLoginMethodsBtn").addEventListener("click", () => guard(runLoginMethods));
+  $("runOneClickBtn").addEventListener("click", () => guard(runOneClick));
+  $("runFirstStageBtn").addEventListener("click", () => guard(runFirstStage));
+  $("runSendOtpBtn").addEventListener("click", () => guard(runSendOtp));
+  $("runVerifyBtn").addEventListener("click", () => guard(runVerify));
+  $("runAccountListBtn").addEventListener("click", () => guard(runAccountList));
+  $("runTokenBtn").addEventListener("click", () => guard(runToken));
+  $("runAllBtn").addEventListener("click", () => guard(runAll));
+  $("unlockPinFlowBtn").addEventListener("click", () => {
+    state.pinFlowUnlocked = true;
+    renderState();
+  });
+  $("runPinMethodsBtn").addEventListener("click", () => guard(runPinMethods));
+  $("runPinInitiateBtn").addEventListener("click", () => guard(runPinInitiate));
+  $("runPinVerifyBtn").addEventListener("click", () => guard(runPinVerify));
+  $("runPinSetupBtn").addEventListener("click", () => guard(runPinSetup));
+  document.querySelectorAll("[data-tab]").forEach((btn) => btn.addEventListener("click", () => showTab(btn.dataset.tab)));
+
+  loadLocal();
+  restoreChineseText();
+  if (!$("baseHeaders").value.trim()) fillSample();
+  refreshXm1Output();
+  renderFlowLogs();
+  renderRequestLogs();
+  renderState();
+  showTab("request");
+})();
+</script>
+</body>
+</html>

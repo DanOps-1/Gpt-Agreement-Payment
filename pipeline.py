@@ -1205,7 +1205,14 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
         print(f"[pipeline] Step 2/2: Stripe 支付 ({reg.get('email', '?')})")
         print(f"{'='*60}")
         pay_card_path = effective_card
-        if use_gopay and gopay_account_pool is not None:
+        gp_cfg_for_pay = (card_cfg or {}).get("gopay") or {}
+        gp_auto_signup = gp_cfg_for_pay.get("auto_signup") if isinstance(gp_cfg_for_pay, dict) else None
+        gopay_dynamic_signup = (
+            bool(gp_auto_signup.get("enabled", True))
+            if isinstance(gp_auto_signup, dict)
+            else str(gp_auto_signup or gp_cfg_for_pay.get("auto_register_gopay") or "").strip().lower() in ("1", "true", "yes", "y", "on")
+        )
+        if use_gopay and gopay_account_pool is not None and not gopay_dynamic_signup:
             holder = log_label or reg.get("email") or "pipeline"
             try:
                 leased_gopay_account = gopay_account_pool.acquire(holder=holder)
@@ -2439,7 +2446,14 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
         print(f"[pay-only] payment proxy override failed, use config proxy: {e}")
     try:
         _refresh_proxy_before_payment(card_cfg or {})
-        if use_gopay and gopay_account_pool is not None:
+        gp_cfg_for_pay = (card_cfg or {}).get("gopay") or {}
+        gp_auto_signup = gp_cfg_for_pay.get("auto_signup") if isinstance(gp_cfg_for_pay, dict) else None
+        gopay_dynamic_signup = (
+            bool(gp_auto_signup.get("enabled", True))
+            if isinstance(gp_auto_signup, dict)
+            else str(gp_auto_signup or gp_cfg_for_pay.get("auto_register_gopay") or "").strip().lower() in ("1", "true", "yes", "y", "on")
+        )
+        if use_gopay and gopay_account_pool is not None and not gopay_dynamic_signup:
             holder = log_label or email or "pay-only"
             try:
                 leased_gopay_account = gopay_account_pool.acquire(holder=holder)
@@ -3925,10 +3939,16 @@ def _gopay_account_lease_key(account: dict) -> str:
 
 
 def _build_gopay_account_lease_pool(card_cfg: dict) -> GoPayAccountLeasePool | None:
+    gp = (card_cfg or {}).get("gopay") or {}
+    auto_signup = gp.get("auto_signup") if isinstance(gp, dict) else None
+    if isinstance(auto_signup, dict):
+        if auto_signup.get("enabled", True):
+            return None
+    elif str(auto_signup or gp.get("auto_register_gopay") or "").strip().lower() in ("1", "true", "yes", "y", "on"):
+        return None
     accounts = _gopay_accounts_from_card_cfg(card_cfg or {})
     if not accounts:
         return None
-    gp = (card_cfg or {}).get("gopay") or {}
     try:
         wait_interval = float(gp.get("phone_lock_wait_interval") or gp.get("account_lock_wait_interval") or 10.0)
     except (TypeError, ValueError):

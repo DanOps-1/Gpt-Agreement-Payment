@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GoPay x-e1 签名工具</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f4;
+      --panel: #ffffff;
+      --ink: #20242a;
+      --muted: #68717d;
+      --line: #d9ded6;
+      --accent: #0f766e;
+      --accent-strong: #0b5f59;
+      --danger: #b42318;
+      --soft: #eef5f3;
+      --code: #111827;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(1380px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 32px;
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .subtle {
+      margin: 4px 0 0;
+      color: var(--muted);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 10px 30px rgba(32, 36, 42, 0.06);
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    label {
+      color: #313842;
+      font-weight: 600;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      border: 1px solid #cbd3cc;
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      padding: 10px 11px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 350px;
+      resize: vertical;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0 14px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .check-row input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    button {
+      min-height: 38px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: var(--accent);
+      color: white;
+      font: inherit;
+      font-weight: 700;
+      padding: 8px 14px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: var(--accent-strong);
+    }
+
+    button.secondary {
+      background: #fff;
+      border-color: #bdc7c0;
+      color: #26323a;
+    }
+
+    button.secondary:hover {
+      background: #f1f4ef;
+    }
+
+    .result-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .status {
+      min-height: 22px;
+      margin-bottom: 10px;
+      color: var(--muted);
+    }
+
+    .status.error {
+      color: var(--danger);
+      font-weight: 700;
+    }
+
+    .result-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .result-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      background: var(--soft);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .result-head strong {
+      font-size: 14px;
+    }
+
+    .copy {
+      min-height: 30px;
+      padding: 5px 10px;
+      font-size: 12px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 12px;
+      min-height: 42px;
+      max-height: 320px;
+      overflow: auto;
+      color: var(--code);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 12.5px;
+      line-height: 1.45;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 920px) {
+      main {
+        width: min(100vw - 20px, 720px);
+        padding-top: 16px;
+      }
+
+      header,
+      .layout,
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+
+      header {
+        display: block;
+      }
+
+      textarea {
+        min-height: 280px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>GoPay x-e1 签名工具</h1>
+        <p class="subtle">粘贴 raw HTTP request，生成 x-e1、x-e2、签名后的 headers 和 canonical message。</p>
+      </div>
+      <button class="secondary" id="loadExample" type="button">填入示例</button>
+    </header>
+
+    <section class="layout">
+      <form class="panel" id="signForm">
+        <h2>输入</h2>
+        <div class="field">
+          <label for="rawRequest">Raw HTTP Request</label>
+          <textarea id="rawRequest" spellcheck="false" placeholder="PATCH /v3/payments/... HTTP/1.1&#10;Host: api.example.com&#10;Authorization: Bearer ...&#10;x-apptype: ...&#10;&#10;{...}"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="key">HMAC Key</label>
+          <input id="key" autocomplete="off">
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="mode">签名模式</label>
+            <select id="mode">
+              <option value="qris">qris：POST/PUT/PATCH 签空 body，MD5 raw body</option>
+              <option value="plain">plain：签 raw body</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="timestamp">timestamp-ms</label>
+            <input id="timestamp" inputmode="numeric" placeholder="留空使用当前时间">
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="nonce">nonce</label>
+            <input id="nonce" autocomplete="off" placeholder="160 位 hex，留空自动生成">
+          </div>
+          <div class="field">
+            <label for="nonceMarker">nonce-marker</label>
+            <input id="nonceMarker" autocomplete="off" placeholder="32 位 hex，nonce 留空时生效">
+          </div>
+        </div>
+
+        <label class="check-row">
+          <input id="showCanonical" type="checkbox" checked>
+          显示 canonical message
+        </label>
+
+        <div class="actions">
+          <button type="submit">生成签名</button>
+          <button class="secondary" id="clearAll" type="button">清空</button>
+        </div>
+        <p class="hint">所有计算都在当前浏览器内完成。</p>
+      </form>
+
+      <section class="panel">
+        <h2>输出</h2>
+        <div class="status" id="status">等待输入。</div>
+
+        <div class="result-grid">
+          <article class="result-card">
+            <div class="result-head">
+              <strong>x-e1</strong>
+              <button class="copy secondary" type="button" data-copy="xe1">复制</button>
+            </div>
+            <pre id="xe1"></pre>
+          </article>
+
+          <article class="result-card">
+            <div class="result-head">
+              <strong>x-e2</strong>
+              <button class="copy secondary" type="button" data-copy="xe2">复制</button>
+            </div>
+            <pre id="xe2"></pre>
+          </article>
+
+          <article class="result-card">
+            <div class="result-head">
+              <strong>signed headers</strong>
+              <button class="copy secondary" type="button" data-copy="headers">复制</button>
+            </div>
+            <pre id="headers"></pre>
+          </article>
+
+          <article class="result-card">
+            <div class="result-head">
+              <strong>JSON</strong>
+              <button class="copy secondary" type="button" data-copy="jsonOut">复制</button>
+            </div>
+            <pre id="jsonOut"></pre>
+          </article>
+
+          <article class="result-card" id="canonicalCard">
+            <div class="result-head">
+              <strong>canonical</strong>
+              <button class="copy secondary" type="button" data-copy="canonical">复制</button>
+            </div>
+            <pre id="canonical"></pre>
+          </article>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const DEFAULT_HMAC_KEY = "4&G6DbV&j8QZs~{)(Ila_w_|v@aqJq]E-;*(J9PanZ8sm01kTi{X<iG``]d7P&L";
+    const DEFAULT_X_E2 = "ED9A2B38749FBDE9ACA61D6A685B7";
+    const APP_NONCE_ZERO_SEGMENT = "0".repeat(32);
+
+    const $ = (id) => document.getElementById(id);
+
+    function isHex(value) {
+      return /^[0-9a-f]+$/.test(value);
+    }
+
+    function lowerHeaders(headers) {
+      const result = {};
+      Object.entries(headers).forEach(([key, value]) => {
+        result[String(key).toLowerCase()] = String(value);
+      });
+      return result;
+    }
+
+    function bearerToken(authorization) {
+      return authorization.startsWith("Bearer ") ? authorization.slice(7) : authorization;
+    }
+
+    function bytesToHex(bytes) {
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    function randomHex(byteLength) {
+      const bytes = new Uint8Array(byteLength);
+      crypto.getRandomValues(bytes);
+      return bytesToHex(bytes);
+    }
+
+    function nonceMarkerFromXE1(xe1) {
+      if (!xe1) return null;
+      const parts = String(xe1).split(":");
+      if (parts.length < 2) return null;
+      const nonceHex = parts[1].toLowerCase();
+      if (nonceHex.length !== 160 || !isHex(nonceHex)) return null;
+      if (nonceHex.slice(64, 96) !== APP_NONCE_ZERO_SEGMENT) return null;
+      const markerHex = nonceHex.slice(96, 128);
+      return markerHex.length === 32 && isHex(markerHex) ? markerHex : null;
+    }
+
+    function newNonceHex(markerHex) {
+      if (markerHex) {
+        const marker = markerHex.toLowerCase();
+        if (marker.length !== 32 || !isHex(marker)) {
+          throw new Error("nonce marker must be exactly 32 lowercase hex chars");
+        }
+        return randomHex(32) + APP_NONCE_ZERO_SEGMENT + marker + randomHex(16);
+      }
+      return randomHex(80);
+    }
+
+    function parseRawRequest(raw) {
+      const normalized = raw.replace(/\r\n/g, "\n");
+      const splitAt = normalized.indexOf("\n\n");
+      const head = splitAt >= 0 ? normalized.slice(0, splitAt) : normalized;
+      const body = splitAt >= 0 ? normalized.slice(splitAt + 2) : "";
+      const lines = head.split("\n").filter((line) => line.trim());
+      if (!lines.length) throw new Error("empty request");
+
+      const match = lines[0].trim().match(/^([A-Za-z]+)\s+(\S+)\s+HTTP\/\d(?:\.\d)?$/);
+      if (!match) throw new Error("first line must look like: PATCH /v3/payments/... HTTP/1.1");
+      const method = match[1].toUpperCase();
+      const target = match[2];
+
+      const headers = {};
+      let lastName = "";
+      lines.slice(1).forEach((line) => {
+        if (/^[ \t]/.test(line) && lastName) {
+          headers[lastName] += " " + line.trim();
+          return;
+        }
+        const colon = line.indexOf(":");
+        if (colon < 0) return;
+        lastName = line.slice(0, colon).trim();
+        headers[lastName] = line.slice(colon + 1).trim();
+      });
+
+      const lower = lowerHeaders(headers);
+      let parsed;
+      try {
+        parsed = target.includes("://") ? new URL(target) : new URL(target, "http://placeholder.local");
+      } catch {
+        throw new Error("invalid request target");
+      }
+      const host = target.includes("://") ? parsed.host : (lower.host || "");
+      if (!host) throw new Error("missing Host header");
+      const path = parsed.pathname + parsed.search || "/";
+      return { method, target, host, path, headers, body };
+    }
+
+    function qrisSignatureBody(method, body) {
+      if (body && ["POST", "PUT", "PATCH"].includes(method.toUpperCase())) {
+        return { bodyForSignature: "", bodyText: body, bodySource: "empty+body-md5" };
+      }
+      return { bodyForSignature: null, bodyText: null, bodySource: "body" };
+    }
+
+    function md5(input) {
+      const data = new TextEncoder().encode(input);
+      const bitLen = data.length * 8;
+      const paddedLength = (((data.length + 8) >>> 6) + 1) << 6;
+      const buffer = new Uint8Array(paddedLength);
+      buffer.set(data);
+      buffer[data.length] = 0x80;
+      const view = new DataView(buffer.buffer);
+      view.setUint32(paddedLength - 8, bitLen >>> 0, true);
+      view.setUint32(paddedLength - 4, Math.floor(bitLen / 0x100000000), true);
+
+      let a0 = 0x67452301;
+      let b0 = 0xefcdab89;
+      let c0 = 0x98badcfe;
+      let d0 = 0x10325476;
+      const s = [
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+        5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+        4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+        6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21
+      ];
+      const k = Array.from({ length: 64 }, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) >>> 0);
+      const leftRotate = (x, amount) => ((x << amount) | (x >>> (32 - amount))) >>> 0;
+
+      for (let offset = 0; offset < buffer.length; offset += 64) {
+        let a = a0;
+        let b = b0;
+        let c = c0;
+        let d = d0;
+        const m = Array.from({ length: 16 }, (_, i) => view.getUint32(offset + i * 4, true));
+
+        for (let i = 0; i < 64; i++) {
+          let f;
+          let g;
+          if (i < 16) {
+            f = (b & c) | (~b & d);
+            g = i;
+          } else if (i < 32) {
+            f = (d & b) | (~d & c);
+            g = (5 * i + 1) % 16;
+          } else if (i < 48) {
+            f = b ^ c ^ d;
+            g = (3 * i + 5) % 16;
+          } else {
+            f = c ^ (b | ~d);
+            g = (7 * i) % 16;
+          }
+          const temp = d;
+          d = c;
+          c = b;
+          b = (b + leftRotate((a + f + k[i] + m[g]) >>> 0, s[i])) >>> 0;
+          a = temp;
+        }
+        a0 = (a0 + a) >>> 0;
+        b0 = (b0 + b) >>> 0;
+        c0 = (c0 + c) >>> 0;
+        d0 = (d0 + d) >>> 0;
+      }
+
+      const out = new ArrayBuffer(16);
+      const outView = new DataView(out);
+      [a0, b0, c0, d0].forEach((word, index) => outView.setUint32(index * 4, word, true));
+      return bytesToHex(new Uint8Array(out));
+    }
+
+    async function hmacSha256Hex(key, message) {
+      const enc = new TextEncoder();
+      const cryptoKey = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(key),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+      const signature = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(message));
+      return bytesToHex(new Uint8Array(signature));
+    }
+
+    function canonicalMessage(headers, options) {
+      const h = lowerHeaders(headers);
+      const required = [
+        "x-apptype",
+        "x-phonemodel",
+        "x-uniqueid",
+        "x-deviceos",
+        "x-appversion",
+        "x-m1",
+        "x-appid",
+        "x-phonemake",
+        "x-platform"
+      ];
+      const missing = required.filter((name) => !h[name]);
+      if (missing.length) throw new Error("GoPay signed headers missing: " + missing.join(", "));
+
+      const bodyMd5Source = options.bodyText === null ? options.body : options.bodyText;
+      const bodyMd5 = md5(bodyMd5Source);
+      return [
+        `${h["x-apptype"]};`,
+        `${h["x-phonemodel"]}:${bearerToken(h.authorization || "")};`,
+        `${h["x-uniqueid"]}:${options.body};`,
+        `${bodyMd5}:${options.host}${options.path};`,
+        `${options.method.toUpperCase()}:${options.timestampMs};`,
+        `${h["x-deviceos"]}:${h["x-appversion"]};`,
+        `${h["x-m1"]}:${h["x-appid"]};`,
+        `${options.nonceHex}:${h["x-phonemake"]};`,
+        h["x-platform"]
+      ].join("");
+    }
+
+    async function signXE1(headers, options) {
+      const timestampMs = options.timestampMs ?? Date.now();
+      const nonceHex = options.nonceHex ? options.nonceHex.toLowerCase() : newNonceHex(options.nonceMarkerHex);
+      if (nonceHex.length !== 160 || !isHex(nonceHex)) {
+        throw new Error("nonce must be exactly 160 lowercase hex chars");
+      }
+      const canonical = canonicalMessage(headers, {
+        method: options.method,
+        host: options.host,
+        path: options.path,
+        body: options.bodyForSignature === null ? options.body : options.bodyForSignature,
+        bodyText: options.bodyText,
+        nonceHex,
+        timestampMs
+      });
+      const digest = await hmacSha256Hex(options.key, canonical);
+      return { xe1: `${digest}:${nonceHex}:D:${timestampMs}`, canonical };
+    }
+
+    async function signedHeaders(baselineHeaders, options) {
+      const headers = {};
+      let capturedXE1 = "";
+      Object.entries(baselineHeaders).forEach(([name, value]) => {
+        const lowerName = name.toLowerCase();
+        if (lowerName === "x-e1") capturedXE1 = String(value || "");
+        if (!["x-e1", "host", "content-length"].includes(lowerName)) {
+          headers[String(name)] = String(value);
+        }
+      });
+      headers.host = options.host;
+      if (!lowerHeaders(headers)["x-e2"]) headers["x-e2"] = DEFAULT_X_E2;
+
+      const signed = await signXE1(headers, {
+        ...options,
+        nonceMarkerHex: options.nonceMarkerHex || nonceMarkerFromXE1(capturedXE1)
+      });
+      headers["x-e1"] = signed.xe1;
+      if (options.body && !lowerHeaders(headers)["content-type"]) {
+        headers["content-type"] = "application/json";
+      }
+      return { headers, canonical: signed.canonical };
+    }
+
+    function headersToText(headers) {
+      return Object.keys(headers)
+        .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
+        .map((name) => `${name}: ${headers[name]}`)
+        .join("\n");
+    }
+
+    function setStatus(text, isError = false) {
+      $("status").textContent = text;
+      $("status").classList.toggle("error", isError);
+    }
+
+    function setOutput(result) {
+      $("xe1").textContent = result.x_e1;
+      $("xe2").textContent = result.x_e2 || "";
+      $("headers").textContent = headersToText(result.headers);
+      $("jsonOut").textContent = JSON.stringify(result, null, 2);
+      $("canonical").textContent = result.canonical || "";
+      $("canonicalCard").style.display = $("showCanonical").checked ? "" : "none";
+    }
+
+    async function generateSignature() {
+      const req = parseRawRequest($("rawRequest").value);
+      const mode = $("mode").value;
+      const qris = mode === "qris"
+        ? qrisSignatureBody(req.method, req.body)
+        : { bodyForSignature: null, bodyText: null, bodySource: "body" };
+      const timestampValue = $("timestamp").value.trim();
+      const timestampMs = timestampValue ? Number(timestampValue) : null;
+      if (timestampValue && !Number.isSafeInteger(timestampMs)) {
+        throw new Error("timestamp-ms must be an integer");
+      }
+
+      const nonceHex = $("nonce").value.trim() || null;
+      const nonceMarkerHex = $("nonceMarker").value.trim() || null;
+      const { headers, canonical } = await signedHeaders(req.headers, {
+        method: req.method,
+        host: req.host,
+        path: req.path,
+        body: req.body,
+        bodyForSignature: qris.bodyForSignature,
+        bodyText: qris.bodyText,
+        key: $("key").value,
+        nonceHex,
+        nonceMarkerHex,
+        timestampMs
+      });
+
+      return {
+        method: req.method,
+        host: req.host,
+        path: req.path,
+        body_signature_source: qris.bodySource,
+        x_e1: headers["x-e1"],
+        x_e2: headers["x-e2"],
+        headers,
+        canonical: $("showCanonical").checked ? canonical : null
+      };
+    }
+
+    $("signForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setStatus("正在生成...");
+      try {
+        const result = await generateSignature();
+        setOutput(result);
+        setStatus("已生成。");
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      }
+    });
+
+    $("showCanonical").addEventListener("change", () => {
+      $("canonicalCard").style.display = $("showCanonical").checked ? "" : "none";
+    });
+
+    document.querySelectorAll("[data-copy]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const target = $(button.dataset.copy);
+        await navigator.clipboard.writeText(target.textContent);
+        const old = button.textContent;
+        button.textContent = "已复制";
+        setTimeout(() => {
+          button.textContent = old;
+        }, 900);
+      });
+    });
+
+    $("clearAll").addEventListener("click", () => {
+      $("rawRequest").value = "";
+      $("timestamp").value = "";
+      $("nonce").value = "";
+      $("nonceMarker").value = "";
+      ["xe1", "xe2", "headers", "jsonOut", "canonical"].forEach((id) => $(id).textContent = "");
+      setStatus("等待输入。");
+    });
+
+    $("loadExample").addEventListener("click", () => {
+      $("rawRequest").value = [
+        "PATCH /v3/payments/example HTTP/1.1",
+        "Host: api.example.com",
+        "Authorization: Bearer token-value",
+        "x-apptype: android",
+        "x-phonemodel: Pixel 8",
+        "x-uniqueid: unique-id",
+        "x-deviceos: Android",
+        "x-appversion: 1.0.0",
+        "x-m1: m1-value",
+        "x-appid: app-id",
+        "x-phonemake: Google",
+        "x-platform: android",
+        "",
+        "{\"amount\":1000,\"currency\":\"IDR\"}"
+      ].join("\n");
+    });
+
+    $("key").value = DEFAULT_HMAC_KEY;
+  </script>
+</body>
+</html>

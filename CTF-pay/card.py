@@ -8278,12 +8278,13 @@ def run(
                 _sys.path.insert(0, str(here))
             import gopay as _gopay
             if not (
-                _gopay.is_qr_payment_enabled(gopay_cfg)
+                _gopay._gopay_auto_signup_enabled(gopay_cfg)
+                or _gopay.is_qr_payment_enabled(gopay_cfg)
                 or _gopay.normalize_gopay_accounts(gopay_cfg)
             ):
                 raise ValueError
         except ValueError:
-            raise ValueError("GoPay 模式需 cfg.gopay 提供 accounts[]，或 country_code / phone_number / pin；二维码支付可开启 qr_payment")
+            raise ValueError("GoPay 模式需 cfg.gopay 提供 accounts[]，或 country_code / phone_number / pin；二维码支付可开启 qr_payment；动态注册可开启 auto_signup.enabled")
 
     _FIRST_NAMES = [
         "JAMES", "JOHN", "ROBERT", "MICHAEL", "WILLIAM", "DAVID", "RICHARD", "JOSEPH",

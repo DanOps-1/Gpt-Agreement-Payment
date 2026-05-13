@@ -113,6 +113,9 @@ GOPAY_PIN_CLIENT_ID_LINK = "51b5f09a-3813-11ee-be56-0242ac120002-MGUPA"
 GOPAY_PIN_CLIENT_ID_CHARGE = "47180a8e-f56e-11ed-a05b-0242ac120003-GWC"
 GOPAY_LOGIN_CLIENT_ID = "gopay:consumer:app"
 GOPAY_LOGIN_CLIENT_SECRET = "raOUumeMRBNifqvZRFjvsgTnjAlaA9"
+GOPAY_SIGNUP_BASIC_AUTH = "Basic YmI2NDg0MTMtYjYzNy00NDNhLThlYmYtMTc2Y2Y5YjVkYzMy"
+GOPAY_API_BASE_URL = "https://api.gojekapi.com"
+SMSBOWER_API_URL = "https://smsbower.page/stubs/handler_api.php"
 
 DEFAULT_TIMEOUT = 30
 LINK_RETRY_LIMIT = 2  # 406 "account already linked" retry
@@ -461,6 +464,10 @@ def _json_for_log(value: Any) -> str:
         return str(value)
 
 
+def _random_unique_id() -> str:
+    return os.urandom(8).hex()
+
+
 def _qris_error_code(data: Any) -> str:
     if not isinstance(data, dict):
         return ""
@@ -470,6 +477,17 @@ def _qris_error_code(data: Any) -> str:
     errors = data.get("errors") if isinstance(data.get("errors"), list) else []
     first = errors[0] if errors and isinstance(errors[0], dict) else {}
     return str(first.get("code") or "")
+
+
+def _body_has_error_code(data: Any, code: str) -> bool:
+    if not isinstance(data, dict):
+        return False
+    wanted = str(code or "")
+    err = data.get("error") if isinstance(data.get("error"), dict) else {}
+    if str(err.get("code") or "") == wanted:
+        return True
+    errors = data.get("errors") if isinstance(data.get("errors"), list) else []
+    return any(isinstance(item, dict) and str(item.get("code") or "") == wanted for item in errors)
 
 
 def _iter_nested_dicts(value: Any, depth: int = 0) -> Any:
@@ -602,6 +620,19 @@ def _mask_phone(phone: str = "", country_code: str = "") -> str:
 
 def _has_gopay_account_fields(cfg: dict) -> bool:
     return all(str(cfg.get(k) or "").strip() for k in ("country_code", "phone_number", "pin"))
+
+
+def _gopay_auto_signup_enabled(gopay_cfg: dict) -> bool:
+    if not isinstance(gopay_cfg, dict):
+        return False
+    auto = gopay_cfg.get("auto_signup")
+    if isinstance(auto, dict):
+        return _truthy_cfg(auto.get("enabled", True))
+    return _truthy_cfg(
+        auto
+        or gopay_cfg.get("auto_register_gopay")
+        or gopay_cfg.get("dynamic_signup")
+    )
 
 
 def _gopay_account_disabled(cfg: dict) -> bool:
@@ -740,6 +771,19 @@ def pick_gopay_account_config(
     log: Callable[[str], None] = print,
     rng: Optional[random.Random] = None,
 ) -> dict:
+    if _gopay_auto_signup_enabled(gopay_cfg):
+        merged = {k: v for k, v in dict(gopay_cfg).items() if k != "accounts"}
+        merged.setdefault("country_code", "62")
+        merged.setdefault("phone_number", "")
+        auto = merged.get("auto_signup") if isinstance(merged.get("auto_signup"), dict) else {}
+        merged.setdefault("pin", str(auto.get("pin") or merged.get("auto_login_pin") or ""))
+        merged["_selected_account"] = True
+        merged["_selected_accounts_count"] = 0
+        merged["_selected_account_index"] = -1
+        merged["_selected_account_label"] = "auto-signup"
+        log("[gopay] selected dynamic auto-signup account")
+        return merged
+
     accounts = normalize_gopay_accounts(gopay_cfg)
     if not accounts:
         raise GoPayError("gopay config missing usable account: need country_code / phone_number / pin")
@@ -812,7 +856,8 @@ class GoPayCharger:
         self.phone = _phone_digits(gopay_cfg.get("phone_number") or "")
         self.pin = str(gopay_cfg.get("pin") or "")
         self.gopay_cfg = dict(gopay_cfg or {})
-        if not self.qr_payment and not (self.country_code and self.phone and self.pin):
+        self.auto_signup_enabled = _gopay_auto_signup_enabled(self.gopay_cfg)
+        if not self.qr_payment and not self.auto_signup_enabled and not (self.country_code and self.phone and self.pin):
             raise GoPayError("gopay config missing usable account: need country_code / phone_number / pin")
         self.midtrans_client_id = str(
             gopay_cfg.get("midtrans_client_id") or DEFAULT_MIDTRANS_CLIENT_ID
@@ -861,6 +906,9 @@ class GoPayCharger:
         )
         self.otp_provider = otp_provider
         self.log = log
+        self._auto_signup_activation_id = ""
+        self._auto_signup_used_otps: list[str] = []
+        self._auto_signup_sms_finished = False
         self.proxy_pool = _proxy_list_from_cfg(proxy_cfg, proxy)
         self.proxy_index = 0
         self._ext_exit_ip_cache: dict[str, str] | None = None
@@ -891,6 +939,8 @@ class GoPayCharger:
         if self.qr_pre_linking_mode == "disabled":
             return False
         has_link_account = bool(self.country_code and self.phone and self.pin)
+        if self.auto_signup_enabled:
+            return True
         if has_link_account:
             return True
         if self.qr_pre_linking_mode == "enabled":
@@ -899,6 +949,57 @@ class GoPayCharger:
             )
         self.log("[gopay-qr] pre-linking skipped: no GoPay account configured")
         return False
+
+    def _ensure_runtime_gopay_account(self) -> dict:
+        if not self.auto_signup_enabled:
+            return {"ok": False, "skipped": True, "reason": "disabled"}
+        if self.country_code and self.phone and self.pin and self.gopay_cfg.get("_auto_signup_completed"):
+            return {"ok": True, "skipped": True, "reason": "already_completed"}
+        unique_id = _random_unique_id()
+        self.gopay_cfg["x_uniqueid"] = unique_id
+        self.gopay_cfg["x-uniqueid"] = unique_id
+        self.log(f"[gopay] auto-signup x-uniqueid={unique_id}")
+        result = self._gopay_auto_signup_wallet()
+        self.gopay_cfg["_auto_signup_completed"] = True
+        return result
+
+    def _auto_signup_reactivate_sms(self, label: str) -> None:
+        if not self._auto_signup_activation_id:
+            raise GoPayError("auto-signup SMS activation is missing")
+        self.log(f"[sms] reactivate before {label}")
+        self._smsbower_set_status(self._auto_signup_activation_id, 3)
+
+    def _auto_signup_next_otp(self, label: str, *, exclude_codes: Any = None, reactivate: bool = True) -> str:
+        if not self._auto_signup_activation_id:
+            raise GoPayError("auto-signup SMS activation is missing")
+        if reactivate:
+            self._auto_signup_reactivate_sms(label)
+        excludes = list(self._auto_signup_used_otps)
+        if exclude_codes:
+            if isinstance(exclude_codes, (list, tuple, set)):
+                excludes.extend(str(x) for x in exclude_codes if x)
+            else:
+                excludes.append(str(exclude_codes))
+        otp = self._smsbower_wait_code(self._auto_signup_activation_id, label, exclude_codes=excludes)
+        self._auto_signup_used_otps.append(otp)
+        return otp
+
+    def _smsbower_current_codes(self, activation_id: str) -> list[str]:
+        if not activation_id:
+            return []
+        try:
+            text = self._smsbower_get("getStatus", {"id": activation_id})
+        except Exception as exc:
+            self.log(f"[sms] prefilter getStatus failed: {type(exc).__name__}: {str(exc)[:160]}")
+            return []
+        codes = []
+        for match in re.finditer(GOPAY_AUTO_LOGIN_OTP_REGEX, text or ""):
+            code = match.group(1) if match.groups() else match.group(0)
+            if code and code not in codes:
+                codes.append(code)
+        if codes:
+            self.log(f"[sms] prefilter existing otp ignored: {','.join(codes)}")
+        return codes
 
     def _apply_proxy(self, proxy: str) -> None:
         proxy = str(proxy or "").strip()
@@ -1201,6 +1302,289 @@ class GoPayCharger:
         )
         return provider()
 
+    def _auto_signup_cfg(self) -> dict:
+        raw = self.gopay_cfg.get("auto_signup")
+        if isinstance(raw, dict):
+            return dict(raw)
+        return {}
+
+    def _smsbower_get(self, action: str, params: dict | None = None) -> str:
+        auto = self._auto_signup_cfg()
+        api_key = str(
+            auto.get("smsbower_api_key")
+            or auto.get("api_key")
+            or self.gopay_cfg.get("smsbower_api_key")
+            or os.getenv("SMSBOWER_API_KEY")
+            or ""
+        ).strip()
+        if not api_key:
+            raise GoPayError("gopay auto-signup requires auto_signup.smsbower_api_key or SMSBOWER_API_KEY")
+        q = {"api_key": api_key, "action": action}
+        q.update(params or {})
+        url = str(auto.get("smsbower_url") or self.gopay_cfg.get("smsbower_url") or SMSBOWER_API_URL)
+        r = self._request_ext("GET", url, params=q, timeout=DEFAULT_TIMEOUT, retry_label=f"smsbower {action}")
+        text = str(getattr(r, "text", "") or "").strip()
+        self.log(f"[sms] {action} status={getattr(r, 'status_code', '-') } body={_log_preview(text, 180)}")
+        return text
+
+    def _smsbower_get_number(self) -> tuple[str, str, str]:
+        auto = self._auto_signup_cfg()
+        params = {
+            "service": str(auto.get("service") or "ni"),
+            "country": str(auto.get("country") or "6"),
+        }
+        max_price = str(auto.get("max_price") or "").strip()
+        if max_price:
+            params["maxPrice"] = max_price
+        text = self._smsbower_get("getNumberV2", params)
+        try:
+            data = json.loads(text)
+            activation_id = str(
+                data.get("activationId")
+                or data.get("activation_id")
+                or data.get("id")
+                or data.get("tzid")
+                or ""
+            )
+            phone = str(
+                data.get("phoneNumber")
+                or data.get("phone_number")
+                or data.get("phone")
+                or data.get("number")
+                or ""
+            )
+            if activation_id and phone:
+                return activation_id, phone, text
+        except Exception:
+            pass
+        parts = text.split(":")
+        if len(parts) >= 3 and parts[0] == "ACCESS_NUMBER":
+            return parts[1], parts[2], text
+        raise GoPayError(f"SMSBower getNumberV2 failed: {text}")
+
+    def _smsbower_set_status(self, activation_id: str, status: int) -> None:
+        if not activation_id:
+            return
+        try:
+            self._smsbower_get("setStatus", {"id": activation_id, "status": str(status)})
+        except Exception as exc:
+            self.log(f"[sms] setStatus {status} failed: {type(exc).__name__}: {str(exc)[:160]}")
+
+    def _smsbower_wait_code(self, activation_id: str, label: str, *, exclude_codes: Any = None) -> str:
+        auto = self._auto_signup_cfg()
+        timeout = _float_cfg(auto, "otp_timeout", _float_cfg(auto, "timeout", self.auto_login_otp_timeout))
+        interval = _float_cfg(auto, "otp_interval", _float_cfg(auto, "interval", max(5.0, self.auto_login_otp_interval)))
+        deadline = time.time() + max(30.0, timeout)
+        while time.time() < deadline:
+            text = self._smsbower_get("getStatus", {"id": activation_id})
+            code = _extract_otp_from_text(text, GOPAY_AUTO_LOGIN_OTP_REGEX, exclude_codes=exclude_codes)
+            if code:
+                self.log(f"[sms] {label} received")
+                return code
+            if text.startswith("STATUS_CANCEL") or text.startswith("STATUS_FINISH"):
+                raise OTPCancelled(f"{label} failed: {text}")
+            self.log(f"[sms] {label} waiting ({text})")
+            time.sleep(max(1.0, interval))
+        raise OTPCancelled(f"{label} timeout after {timeout}s")
+
+    def _normalize_signup_phone(self, raw_phone: str, country_code: str) -> str:
+        phone = _phone_digits(raw_phone)
+        cc = _phone_digits(country_code or "62")
+        if cc and phone.startswith(cc):
+            phone = phone[len(cc):]
+        return phone
+
+    def _gopay_auto_signup_wallet(self) -> dict:
+        if not self.auto_signup_enabled:
+            return {"ok": False, "skipped": True, "reason": "disabled"}
+        auto = self._auto_signup_cfg()
+        country_code = str(auto.get("country_code") or self.gopay_cfg.get("auto_signup_country_code") or "62").lstrip("+")
+        client_id = str(auto.get("client_id") or self.gopay_cfg.get("auto_login_client_id") or GOPAY_LOGIN_CLIENT_ID)
+        client_secret = str(auto.get("client_secret") or self.gopay_cfg.get("auto_login_client_secret") or GOPAY_LOGIN_CLIENT_SECRET)
+        pin = _phone_digits(auto.get("pin") or self.gopay_cfg.get("auto_login_pin") or self.pin)
+        if not pin:
+            raise GoPayError("gopay auto-signup requires auto_signup.pin or gopay.pin")
+        name = str(auto.get("name") or self.gopay_cfg.get("auto_signup_name") or "SJC")
+        email = str(auto.get("email") or self.gopay_cfg.get("auto_signup_email") or "")
+        activation_id = ""
+        first_otp = ""
+        try:
+            self.log("[sms] 请求手机号")
+            activation_id, raw_phone, _raw = self._smsbower_get_number()
+            self._auto_signup_activation_id = activation_id
+            self._auto_signup_used_otps = self._smsbower_current_codes(activation_id)
+            self._auto_signup_sms_finished = False
+            phone = self._normalize_signup_phone(raw_phone, country_code)
+            if not phone:
+                raise GoPayError(f"SMSBower returned empty phone: {raw_phone!r}")
+            self.log(f"[sms] 获取手机号 +{country_code}{phone}")
+
+            verification_id = str(auto.get("verification_id") or uuid.uuid4())
+            probe = self._gopay_app_post(
+                "/goto-auth/login/methods",
+                {
+                    "phone_number": phone,
+                    "country_code": f"+{country_code}",
+                    "email": "",
+                    "device_verification_token_id": "",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                },
+                allow_statuses=(400, 401),
+            )
+            if not _body_has_error_code(probe.get("body"), "auth:error:user:not_found"):
+                raise GoPayError(
+                    "gopay auto-signup phone is already registered or probe failed: "
+                    f"{_log_preview(probe.get('body') or probe.get('raw_text'), 500)}"
+                )
+            self.log("[gopay] 探测手机号: 未注册，开始 signup")
+
+            methods_resp = self._gopay_app_post(
+                "/cvs/v1/methods",
+                {
+                    "country_code": f"+{country_code}",
+                    "email_address": None,
+                    "client_id": client_id,
+                    "phone_number": phone,
+                    "client_secret": client_secret,
+                    "flow": "signup",
+                    "device_verification_token_id": None,
+                },
+            )
+            methods_body = methods_resp.get("body") if isinstance(methods_resp.get("body"), dict) else {}
+            methods_data = methods_body.get("data") if isinstance(methods_body.get("data"), dict) else {}
+            verification_id = str(methods_data.get("verification_id") or verification_id)
+            initiate_resp = self._gopay_app_post(
+                "/cvs/v1/initiate",
+                {
+                    "verification_id": verification_id,
+                    "flow": "signup",
+                    "verification_method": "otp_sms",
+                    "country_code": f"+{country_code}",
+                    "email_address": None,
+                    "client_id": client_id,
+                    "phone_number": phone,
+                    "client_secret": client_secret,
+                    "is_multiple_method": None,
+                    "device_verification_token_id": None,
+                },
+            )
+            initiate_body = initiate_resp.get("body") if isinstance(initiate_resp.get("body"), dict) else {}
+            initiate_data = initiate_body.get("data") if isinstance(initiate_body.get("data"), dict) else {}
+            otp_token = str(initiate_data.get("otp_token") or "")
+            if not otp_token:
+                raise GoPayError(f"gopay auto-signup initiate missing otp_token: {_log_preview(initiate_body, 500)}")
+            self._smsbower_set_status(activation_id, 1)
+            first_otp = self._smsbower_wait_code(activation_id, "注册验证码")
+            self._auto_signup_used_otps.append(first_otp)
+            verify_resp = self._gopay_app_post(
+                "/cvs/v1/verify",
+                {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "flow": "signup",
+                    "verification_method": "otp_sms",
+                    "verification_id": verification_id,
+                    "data": {"otp": first_otp, "otp_token": otp_token},
+                },
+            )
+            verify_body = verify_resp.get("body") if isinstance(verify_resp.get("body"), dict) else {}
+            verify_data = verify_body.get("data") if isinstance(verify_body.get("data"), dict) else {}
+            verification_token = str(verify_data.get("verification_token") or "")
+            if not verification_token:
+                raise GoPayError(f"gopay auto-signup verify missing verification_token: {_log_preview(verify_body, 500)}")
+
+            signup_resp = self._gopay_signed_json_post(
+                GOPAY_API_BASE_URL,
+                "/v7/customers/signup",
+                {
+                    "client_name": client_id,
+                    "client_secret": client_secret,
+                    "data": {
+                        "name": name,
+                        "phone": f"+{country_code}{phone}",
+                        "email": email,
+                        "signed_up_country": f"+{country_code}",
+                        "onboarding_partner": "gopay_consumer_app",
+                    },
+                },
+                label="gopay auto-signup",
+                extra_headers={
+                    "authorization": str(auto.get("signup_authorization") or GOPAY_SIGNUP_BASIC_AUTH),
+                    "verification-token": f"Bearer {verification_token}",
+                },
+                strip_authorization=False,
+            )
+            signup_body = signup_resp.get("body") if isinstance(signup_resp.get("body"), dict) else {}
+            signup_data = signup_body.get("data") if isinstance(signup_body.get("data"), dict) else {}
+            signup_access_token = str(signup_data.get("access_token") or "")
+            signup_refresh_token = str(signup_data.get("refresh_token") or "")
+            account_id = str(signup_data.get("resource_owner_id") or (signup_data.get("customer") or {}).get("id") or "")
+            if not signup_access_token or not signup_refresh_token:
+                raise GoPayError(f"gopay auto-signup signup missing token: {_log_preview(signup_body, 500)}")
+
+            token_resp = self._gopay_app_post(
+                "/goto-auth/token",
+                {
+                    "grant_type": str(auto.get("token_grant_type") or "refresh_token"),
+                    "account_id": account_id,
+                    "token": signup_refresh_token,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "refresh_token": signup_refresh_token,
+                    "ext_user_token": signup_access_token,
+                },
+                extra_headers={"authorization": f"Bearer {signup_access_token}"},
+                strip_authorization=False,
+            )
+            token_body = token_resp.get("body") if isinstance(token_resp.get("body"), dict) else {}
+            token_data = token_body.get("data") if isinstance(token_body.get("data"), dict) else {}
+            access_token = str(token_data.get("access_token") or "")
+            refresh_token = str(token_data.get("refresh_token") or "")
+            if not access_token:
+                raise GoPayError(f"gopay auto-signup token missing access_token: {_log_preview(token_body, 500)}")
+
+            pin_result = self._gopay_setup_pin_after_login(
+                phone=phone,
+                country_code=country_code,
+                access_token=access_token,
+                client_id=client_id,
+                client_secret=client_secret,
+                exclude_codes=(first_otp,),
+            )
+            if not pin_result or not pin_result.get("ok"):
+                raise GoPayError(f"gopay auto-signup pin setup did not complete: {pin_result}")
+            self.country_code = country_code
+            self.phone = phone
+            self.pin = pin
+            self.auto_login_pin = pin
+            self.gopay_cfg["country_code"] = country_code
+            self.gopay_cfg["phone_number"] = phone
+            self.gopay_cfg["pin"] = pin
+            token_path = self._gopay_save_login_tokens(
+                phone=phone,
+                country_code=country_code,
+                account_id=account_id,
+                token_body=token_body,
+                account_list=[],
+                verification_id=verification_id,
+                pin_setup_result=pin_result,
+            )
+            self.log(f"[gopay] auto-signup complete phone={_mask_phone(phone, country_code)} token_path={token_path}")
+            return {
+                "ok": True,
+                "phone_number": phone,
+                "country_code": country_code,
+                "account_id": account_id,
+                "token_path": token_path,
+                "pin_setup": pin_result,
+                "refresh_tail": refresh_token[-8:] if refresh_token else "",
+            }
+        except Exception:
+            if activation_id:
+                self._smsbower_set_status(activation_id, 8)
+            raise
+
     def _gopay_save_login_tokens(
         self,
         *,
@@ -1277,6 +1661,8 @@ class GoPayCharger:
         if not verification_id:
             raise GoPayError(f"gopay auto-login pin methods missing verification_id: {_log_preview(methods_body or methods_resp.get('raw_text'), 500)}")
 
+        if self.auto_signup_enabled and self._auto_signup_activation_id:
+            self._auto_signup_reactivate_sms("支付码设置验证码")
         initiate_resp = self._gopay_app_post(
             "/cvs/v1/initiate",
             {
@@ -1305,7 +1691,10 @@ class GoPayCharger:
             f"otp_token=yes phone={str((initiate_data.get('metadata') or {}).get('phone') or _mask_phone(phone, country_code))}"
         )
 
-        otp = self._poll_auto_login_otp(phone, country_code, exclude_codes=exclude_codes)
+        if self.auto_signup_enabled and self._auto_signup_activation_id:
+            otp = self._auto_signup_next_otp("支付码设置验证码", exclude_codes=exclude_codes, reactivate=False)
+        else:
+            otp = self._poll_auto_login_otp(phone, country_code, exclude_codes=exclude_codes)
         verify_resp = self._gopay_app_post(
             "/cvs/v1/verify",
             {
@@ -1333,6 +1722,7 @@ class GoPayCharger:
             extra_headers={
                 "authorization": f"Bearer {access_token}",
                 "verification-token": f"Bearer {verification_token}",
+                "is-token-required": "false",
             },
         )
         setup_body = setup_resp.get("body") if isinstance(setup_resp.get("body"), dict) else {}
@@ -3601,14 +3991,18 @@ class GoPayCharger:
         if not self._should_run_qr_pre_linking():
             return {"ok": False, "skipped": True, "reason": "disabled_or_missing_account"}
         self.log("[gopay-qr] pre-linking enabled; running GoPay linking before QR charge")
+        auto_signup_result = self._ensure_runtime_gopay_account()
         reference_id = self._midtrans_init_linking(snap_token)
         self._complete_linking(reference_id)
         self.log(f"[gopay-qr] pre-linking complete reference={reference_id}")
-        return {"ok": True, "reference_id": reference_id}
+        return {"ok": True, "reference_id": reference_id, "auto_signup": auto_signup_result}
 
     def _complete_linking(self, reference_id: str) -> str:
         self._gopay_validate_reference(reference_id)
-        if self.use_sms_otp:
+        if self.auto_signup_enabled and self._auto_signup_activation_id:
+            self._auto_signup_reactivate_sms("link 验证码")
+            self._gopay_resend_sms_otp(reference_id, allow_user_consent_fallback=False)
+        elif self.use_sms_otp:
             self._gopay_resend_sms_otp(reference_id)
         else:
             self._gopay_user_consent(reference_id)
@@ -3618,7 +4012,10 @@ class GoPayCharger:
             f"GOPAY_OTP_TARGET phone={self.phone} country_code={self.country_code}",
             flush=True,
         )
-        otp = self._poll_sms_otp(reference_id) if self.use_sms_otp else self.otp_provider()
+        if self.auto_signup_enabled and self._auto_signup_activation_id:
+            otp = self._auto_signup_next_otp("link 验证码", reactivate=False)
+        else:
+            otp = self._poll_sms_otp(reference_id) if self.use_sms_otp else self.otp_provider()
         if not otp:
             raise OTPCancelled("OTP not provided")
         challenge_id, client_id = self._gopay_validate_otp(reference_id, otp)
@@ -3631,16 +4028,27 @@ class GoPayCharger:
             raise GoPayError("stopped after link PIN page url for testing")
         pin_token = self._tokenize_pin(challenge_id, client_id)
         self._gopay_validate_pin(reference_id, pin_token)
+        if self.auto_signup_enabled and self._auto_signup_activation_id and not self._auto_signup_sms_finished:
+            self._smsbower_set_status(self._auto_signup_activation_id, 6)
+            self._auto_signup_sms_finished = True
         return reference_id
 
     def _run_midtrans_and_gopay(self, snap_token: str, cs_id: str) -> dict:
-        auto_login_result = self._gopay_auto_login_if_configured()
+        auto_signup_result = self._ensure_runtime_gopay_account()
+        auto_login_result = (
+            {"ok": False, "skipped": True, "reason": "auto_signup_enabled"}
+            if self.auto_signup_enabled
+            else self._gopay_auto_login_if_configured()
+        )
         self._midtrans_load_transaction(snap_token)
         reference_id = self._midtrans_init_linking(snap_token)
 
         # ── Linking: OTP + first PIN
         self._gopay_validate_reference(reference_id)
-        if self.use_sms_otp:
+        if self.auto_signup_enabled and self._auto_signup_activation_id:
+            self._auto_signup_reactivate_sms("link 验证码")
+            self._gopay_resend_sms_otp(reference_id, allow_user_consent_fallback=False)
+        elif self.use_sms_otp:
             self._gopay_resend_sms_otp(reference_id)
         else:
             self._gopay_user_consent(reference_id)
@@ -3650,7 +4058,10 @@ class GoPayCharger:
             f"GOPAY_OTP_TARGET phone={self.phone} country_code={self.country_code}",
             flush=True,
         )
-        otp = self._poll_sms_otp(reference_id) if self.use_sms_otp else self.otp_provider()
+        if self.auto_signup_enabled and self._auto_signup_activation_id:
+            otp = self._auto_signup_next_otp("link 验证码", reactivate=False)
+        else:
+            otp = self._poll_sms_otp(reference_id) if self.use_sms_otp else self.otp_provider()
         if not otp:
             raise OTPCancelled("OTP not provided")
         challenge_id, client_id = self._gopay_validate_otp(reference_id, otp)
@@ -3663,6 +4074,9 @@ class GoPayCharger:
             raise GoPayError("stopped after link PIN page url for testing")
         pin_token = self._tokenize_pin(challenge_id, client_id)
         self._gopay_validate_pin(reference_id, pin_token)
+        if self.auto_signup_enabled and self._auto_signup_activation_id and not self._auto_signup_sms_finished:
+            self._smsbower_set_status(self._auto_signup_activation_id, 6)
+            self._auto_signup_sms_finished = True
 
         # ── Charge: second PIN
         charge_ref = self._midtrans_create_charge(snap_token)
@@ -3673,10 +4087,14 @@ class GoPayCharger:
 
         if cs_id:
             result = self._chatgpt_verify(cs_id)
+            if auto_signup_result and not auto_signup_result.get("skipped"):
+                result["auto_signup"] = auto_signup_result
             if auto_login_result and not auto_login_result.get("skipped"):
                 result["auto_login"] = auto_login_result
             return result
         result = {"state": "succeeded", "snap_token": snap_token, "charge_ref": charge_ref}
+        if auto_signup_result and not auto_signup_result.get("skipped"):
+            result["auto_signup"] = auto_signup_result
         if auto_login_result and not auto_login_result.get("skipped"):
             result["auto_login"] = auto_login_result
         return result

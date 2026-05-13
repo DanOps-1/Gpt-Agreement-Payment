@@ -18,6 +18,19 @@
         "pin": "YOUR_6_DIGIT_GOPAY_PIN"
       }
     ],
+    "auto_signup": {
+      "_comment": "启用后放弃预置手机号池：注册 ChatGPT 完成后、Midtrans link 前，自动从 SMSBower 取号，注册 GoPay，换 token，设置支付码，再用新号进入 link 流程。",
+      "enabled": false,
+      "smsbower_api_key": "YOUR_SMSBOWER_API_KEY",
+      "service": "ni",
+      "country": "6",
+      "country_code": "62",
+      "pin": "YOUR_6_DIGIT_GOPAY_PIN",
+      "name": "SJC",
+      "email": "",
+      "otp_timeout": 180,
+      "otp_interval": 5
+    },
     "otp": {
       "source": "auto",
       "timeout": 300,
