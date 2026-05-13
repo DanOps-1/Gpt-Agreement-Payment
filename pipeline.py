@@ -2077,9 +2077,13 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
     if team_client:
         print(f"[Team] 端点: {ts_cfg.get('base_url')}  user={ts_cfg.get('username')}")
     if proxy_pool.proxies:
-        print(f"[ProxyPool] 代理池大小={len(proxy_pool.proxies)}  rotation={proxy_pool.rotation}")
-        for p in proxy_pool.proxies:
-            print(f"   - {p}")
+        print(
+            f"[ProxyPool] 代理池大小={len(proxy_pool.proxies)} "
+            f"register={len(proxy_pool.register_proxies)} "
+            f"payment={len(proxy_pool.payment_proxies)} "
+            f"gopay={len(proxy_pool.gopay_proxies)} "
+            f"rotation={proxy_pool.rotation}"
+        )
     kwargs.setdefault("pool", pool)
     kwargs.setdefault("team_client", team_client)
     kwargs.setdefault("card_cfg", card_cfg)
