@@ -1019,13 +1019,16 @@ class GoPayCharger:
                 "token_path": str(cached.get("token_path") or ""),
                 "activation_id": str(cached.get("activation_id") or ""),
             }
+        result = self._gopay_auto_signup_wallet()
+        self.gopay_cfg["_auto_signup_completed"] = True
+        return result
+
+    def _auto_signup_rotate_unique_id(self) -> str:
         unique_id = _random_unique_id()
         self.gopay_cfg["x_uniqueid"] = unique_id
         self.gopay_cfg["x-uniqueid"] = unique_id
         self.log(f"[gopay] auto-signup x-uniqueid={unique_id}")
-        result = self._gopay_auto_signup_wallet()
-        self.gopay_cfg["_auto_signup_completed"] = True
-        return result
+        return unique_id
 
     def _auto_signup_cache_enabled(self) -> bool:
         auto = self._auto_signup_cfg()
@@ -1750,6 +1753,7 @@ class GoPayCharger:
             methods_resp: dict = {}
             initiate_resp: dict = {}
             for phone_attempt in range(1, max_phone_attempts + 1):
+                unique_id = self._auto_signup_rotate_unique_id()
                 self.log(f"[sms] 请求手机号 ({phone_attempt}/{max_phone_attempts})")
                 activation_id, raw_phone, _raw = self._smsbower_get_number()
                 phone_acquired_at = time.time()
@@ -1965,7 +1969,7 @@ class GoPayCharger:
                 "account_id": account_id,
                 "token_path": token_path,
                 "pin": pin,
-                "x_uniqueid": str(self.gopay_cfg.get("x_uniqueid") or self.gopay_cfg.get("x-uniqueid") or ""),
+                "x_uniqueid": unique_id or str(self.gopay_cfg.get("x_uniqueid") or self.gopay_cfg.get("x-uniqueid") or ""),
                 "used_otps": list(self._auto_signup_used_otps),
                 "pin_setup": pin_result,
                 "refresh_tail": refresh_token[-8:] if refresh_token else "",
