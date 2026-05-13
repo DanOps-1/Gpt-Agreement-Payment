@@ -865,6 +865,10 @@ class GoPayPINRejected(GoPayError):
     pass
 
 
+class GoPayOTPRejected(GoPayError):
+    pass
+
+
 # ──────────────────────────── core ────────────────────────────────
 
 
@@ -1288,6 +1292,13 @@ class GoPayCharger:
                 codes.append(code)
         if codes:
             self.log(f"[sms] prefilter existing otp ignored: {','.join(codes)}")
+        return codes
+
+    def _auto_signup_prefilter_current_otps(self) -> list[str]:
+        codes = self._smsbower_current_codes(self._auto_signup_activation_id)
+        for code in codes:
+            if code and code not in self._auto_signup_used_otps:
+                self._auto_signup_used_otps.append(code)
         return codes
 
     def _apply_proxy(self, proxy: str) -> None:
@@ -2757,6 +2768,7 @@ class GoPayCharger:
 
     def _trigger_link_otp(self, reference_id: str) -> None:
         if self.auto_signup_enabled and self._auto_signup_activation_id:
+            self._auto_signup_prefilter_current_otps()
             self._gopay_user_consent(reference_id)
             self._auto_signup_reactivate_sms("link 验证码")
             self._gopay_resend_sms_otp(reference_id, allow_user_consent_fallback=False)
@@ -2797,7 +2809,7 @@ class GoPayCharger:
         )
         return provider()
 
-    def _gopay_validate_otp(self, reference_id: str, otp: str) -> tuple[str, str]:
+    def _gopay_validate_otp(self, reference_id: str, otp: str, *, _attempt: int = 1) -> tuple[str, str]:
         """Returns (challenge_id, client_id) for PIN tokenization."""
         r = self.ext.post(
             "https://gwa.gopayapi.com/v1/linking/validate-otp",
@@ -2808,7 +2820,7 @@ class GoPayCharger:
         raw_text = getattr(r, "text", "") or ""
         content_type = str((getattr(r, "headers", {}) or {}).get("content-type") or "")
         if r.status_code >= 400:
-            raise GoPayError(
+            message = (
                 "validate-otp failed "
                 f"status={r.status_code} "
                 f"content_type={content_type or '-'} "
@@ -2816,6 +2828,27 @@ class GoPayCharger:
                 f"otp_suffix={str(otp or '')[-2:]} "
                 f"body={raw_text[:600]!r}"
             )
+            if (
+                "GoPay-1604" in raw_text
+                or "Kode OTP" in raw_text
+                or '"is_retryable":true' in raw_text.replace(" ", "")
+            ):
+                if self.auto_signup_enabled and self._auto_signup_activation_id and _attempt < 3:
+                    self.log(
+                        "[gopay] link OTP rejected; "
+                        f"resending SMS retry={_attempt + 1}/3 otp_suffix={str(otp or '')[-2:]}"
+                    )
+                    self._auto_signup_prefilter_current_otps()
+                    self._auto_signup_reactivate_sms("link OTP")
+                    self._gopay_resend_sms_otp(reference_id, allow_user_consent_fallback=False)
+                    next_otp = self._auto_signup_next_otp(
+                        "link OTP",
+                        reactivate=False,
+                        resend_callback=self._auto_signup_link_resend_callback(reference_id),
+                    )
+                    return self._gopay_validate_otp(reference_id, next_otp, _attempt=_attempt + 1)
+                raise GoPayOTPRejected(message)
+            raise GoPayError(message)
         data = r.json()
         if not data.get("success"):
             raise GoPayError(f"validate-otp failed: {data}")

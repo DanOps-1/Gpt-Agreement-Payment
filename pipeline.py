@@ -2177,6 +2177,45 @@ def _pool_rt_result(email: str, refresh_token: str, *, stage: str = "rt_obtained
     )
 
 
+def _persist_account_refresh_token(
+    email: str,
+    refresh_token: str,
+    *,
+    session_id: str = "",
+    stage: str = "rt_obtained",
+    reason: str = "RT obtained",
+    card_cfg: dict | None = None,
+) -> None:
+    email = _norm_email(email)
+    rt = str(refresh_token or "").strip()
+    if not email or not rt:
+        return
+    account = _find_latest_registered_account_for_email(email)
+    try:
+        if account.get("id"):
+            get_db().update_registered_account_refresh_token(int(account["id"]), rt)
+        get_db().add_card_result({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "status": "succeeded",
+            "chatgpt_email": email,
+            "email": email,
+            "session_id": session_id,
+            "channel": stage,
+            "error": reason[:500],
+            "refresh_token": rt,
+        })
+    except Exception as e:
+        print(f"[rt] {email} save refresh_token failed: {e}")
+    _pool_rt_result(
+        email,
+        rt,
+        stage=stage,
+        reason=reason,
+        session_id=session_id,
+        card_cfg=card_cfg,
+    )
+
+
 def _handle_already_paid_account(email: str, card_cfg: dict, account: dict | None,
                                  *, task_id: str = "", email_domain: str = "",
                                  reason: str = "User is already paid") -> tuple[bool, str]:
@@ -4562,6 +4601,14 @@ def _cpa_import_after_team(
         at = tok.get("access_token", "") or ""
         id_tok = tok.get("id_token", "") or at
         rt = tok.get("refresh_token", rt) or rt
+        if rt:
+            _persist_account_refresh_token(
+                email,
+                rt,
+                session_id=sid,
+                stage="cpa_refresh_exchange",
+                reason="CPA refresh exchange returned RT",
+            )
         if at:
             try:
                 p = at.split(".")[1]
@@ -4953,6 +5000,14 @@ def _sub2api_import_after_team(
             at = tok.get("access_token", "") or ""
             id_tok = tok.get("id_token", "") or at
             rt = tok.get("refresh_token", rt) or rt
+            if rt:
+                _persist_account_refresh_token(
+                    email,
+                    rt,
+                    session_id=sid,
+                    stage="sub2api_refresh_exchange",
+                    reason="sub2api refresh exchange returned RT",
+                )
             if at:
                 account_id = _oai_team_id_from_access_token(at)
         except Exception as e:
