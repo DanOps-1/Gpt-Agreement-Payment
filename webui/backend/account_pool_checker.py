@@ -25,14 +25,14 @@ _PAID_PLANS = {"plus", "pro", "team", "business", "enterprise", "chatgptplus", "
 def _pool_status_for_check(*, oauth_valid: bool, plan: str, usage_status: int, current_status: str) -> str:
     plan_key = str(plan or "").strip().lower().replace("_", "").replace("-", "")
     if not oauth_valid:
-        return "registration_failed"
+        return "plus_missing_rt" if current_status == "plus_with_rt" else "email_unused"
     if plan_key in _PAID_PLANS:
         return "plus_with_rt"
     if not plan_key and usage_status == 200:
         return "plus_with_rt"
     if plan_key == "free":
-        return "registered_pending_plus"
-    return current_status or "registered_pending_plus"
+        return "email_unused"
+    return current_status or "email_unused"
 
 
 def _summary_status(result: dict) -> str:
@@ -183,7 +183,7 @@ def inspect_pool_item(item: dict, *, timeout_s: float = 10.0) -> dict:
             "status": "invalid",
             "oauth_valid": False,
             "http_status": token_status,
-            "to_status": "registration_failed",
+            "to_status": "plus_missing_rt" if current_status == "plus_with_rt" else "email_unused",
             "message": str(token_data.get("error") or token_data.get("message") or token_text or f"token refresh http {token_status}")[:300],
         }
         _update_pool_item(item, result)

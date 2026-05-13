@@ -185,6 +185,8 @@ def _missing_gopay_auto_signup(gp: dict) -> list[str]:
 
 def _requires_registration(req: dict) -> bool:
     mode = _text(req.get("mode")) or "single"
+    if mode == "backfill_rt":
+        return False
     if mode == "free_register":
         return True
     return not bool(req.get("pay_only"))
@@ -196,7 +198,7 @@ def _requires_email_otp(req: dict) -> bool:
 
 def _payment_kind(req: dict) -> str:
     mode = _text(req.get("mode")) or "single"
-    if mode == "free_register" or bool(req.get("register_only")):
+    if mode in {"free_register", "backfill_rt"} or bool(req.get("register_only")):
         return "none"
     if bool(req.get("gopay")):
         return "gopay"
@@ -282,6 +284,8 @@ def _account_pool_mail_stats() -> dict:
             SELECT COUNT(*)
             FROM account_pool_items
             WHERE pool_status='email_unused'
+              AND (session_token = '' OR session_token IS NULL)
+              AND (access_token = '' OR access_token IS NULL)
               AND mail_client_id != ''
               AND mail_refresh_token != ''
             """
@@ -291,15 +295,16 @@ def _account_pool_mail_stats() -> dict:
         "total": int(total),
         "usable_unused": int(usable_unused),
         "email_unused": 0,
-        "in_progress": 0,
         "plus_with_rt": 0,
         "plus_missing_rt": 0,
-        "registered_pending_plus": 0,
         "registration_failed": 0,
         "quarantined": 0,
     }
     for row in rows:
-        stats[str(row["pool_status"])] = int(row["n"])
+        key = str(row["pool_status"] or "")
+        if key in {"in_progress", "registered_pending_plus"}:
+            key = "email_unused"
+        stats[key] = stats.get(key, 0) + int(row["n"])
     return stats
 
 
@@ -388,8 +393,7 @@ def _check_registration_config(checks: list[dict], req: dict, reg_cfg: dict) -> 
                         "规划池未激活池没有可运行邮箱",
                         missing=["account_pool_items.pool_status=email_unused 且 mail_client_id/mail_refresh_token 完整"],
                         details=(
-                            f"total={total} 未激活={unused} 任务中={stats.get('in_progress', 0)} "
-                            f"待激活={stats.get('registered_pending_plus', 0)} 失败={stats.get('registration_failed', 0)}"
+                            f"total={total} 未激活={unused} 失败={stats.get('registration_failed', 0)}"
                         ),
                         action="在规划池页面导入 Outlook 邮箱，格式：邮箱----密码----client_id----refresh_token",
                     )
@@ -665,7 +669,7 @@ def _check_team_system(checks: list[dict], req: dict, pay_cfg: dict) -> None:
 
 
 def _check_free_backfill_inventory(checks: list[dict], req: dict) -> None:
-    if _text(req.get("mode")) != "free_backfill_rt":
+    if _text(req.get("mode")) not in {"backfill_rt", "free_backfill_rt"}:
         return
     inv = build_accounts_inventory()
     counts = inv.get("counts") or {}
@@ -706,6 +710,7 @@ def build_config_health(req: dict | None = None) -> dict:
         _check_pay_only_inventory(checks, req, pay_cfg)
         _check_cpa(checks, req, pay_cfg)
         _check_team_system(checks, req, pay_cfg)
+        _check_free_backfill_inventory(checks, req)
 
     blocking = [c for c in checks if c.get("blocking") and c.get("status") == "fail"]
     return {

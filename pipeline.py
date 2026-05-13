@@ -1143,7 +1143,6 @@ def pay(card_config_path, session_token=None, access_token=None,
                 use_gopay
                 and "payment/process 400" in line
                 and re.search(r'"code"\s*:\s*"201"', line)
-                and "GOPAY_WALLET" in line
             ):
                 gopay_account_unavailable = True
             if time.time() > deadline:
@@ -2080,7 +2079,7 @@ def _pool_registration_success(reg: dict, *, task_id: str = "", round_id: str = 
         return
     _pool_update(
         email,
-        "registered_pending_plus",
+        "email_unused",
         "registration_success",
         "registered account waiting for Plus activation",
         payload={"email": email},
@@ -2107,10 +2106,25 @@ def _pool_registration_failed(email: str, reason: str, *, task_id: str = "", rou
         return
     _pool_update(
         email,
-        "registration_failed",
+        "email_unused",
         "registration_failed",
         reason,
         email=email,
+        chatgpt_email="",
+        account_password="",
+        session_token="",
+        access_token="",
+        id_token="",
+        device_id="",
+        csrf_token="",
+        cookie_header="",
+        refresh_token="",
+        account_id="",
+        team_account_id="",
+        payment_status="",
+        payment_channel="",
+        payment_session_id="",
+        reserved_at=0,
         task_id=task_id,
         round_id=round_id,
         email_domain=email_domain,
@@ -2143,7 +2157,10 @@ def _pool_payment_result(reg: dict, pay_result: dict, card_cfg: dict | None = No
         stage = "payment_succeeded_with_rt" if rt else "payment_succeeded_missing_rt"
         reason = reason or ("Plus activated and RT obtained" if rt else "Plus activated but RT missing")
     else:
-        to_status = "registered_pending_plus"
+        if reason and "gopay" in reason.lower() and "code=201" in reason.lower():
+            to_status = "registration_failed"
+        else:
+            to_status = "email_unused"
         stage = "payment_not_succeeded"
         reason = reason or f"payment_status={status}"
     _pool_update(
@@ -2460,9 +2477,9 @@ def _unclaim_pending_activation_account(account: dict | None) -> None:
                 c.execute(
                     """
                     UPDATE account_pool_items
-                    SET pool_status='registered_pending_plus',
+                    SET pool_status='email_unused',
                         reserved_at=0, updated_at=?
-                    WHERE id=? AND pool_status='in_progress'
+                    WHERE id=?
                     """,
                     (now, int(pool_item_id)),
                 )
@@ -2470,9 +2487,9 @@ def _unclaim_pending_activation_account(account: dict | None) -> None:
                 c.execute(
                     """
                     UPDATE account_pool_items
-                    SET pool_status='registered_pending_plus',
+                    SET pool_status='email_unused',
                         reserved_at=0, updated_at=?
-                    WHERE lower(email)=? AND pool_status='in_progress'
+                    WHERE lower(email)=?
                     """,
                     (now, email),
                 )
@@ -2485,10 +2502,10 @@ def _run_pool_rotation(card_config_path, *, use_paypal=False, use_gopay=False,
                        max_items: int | None = None, label: str = "rotation") -> list:
     pending = pending_activation_count()
     if pending <= 0:
-        print(f"[pool-rotation] 待激活池为空，跳过轮转")
+        print(f"[pool-rotation] 已注册未支付账号为空，跳过轮转")
         return []
     limit = pending if max_items is None else max(0, min(int(max_items), pending))
-    print(f"\n[pool-rotation] 开始处理待激活池：pending={pending} limit={limit}")
+    print(f"\n[pool-rotation] 开始处理已注册未支付账号：pending={pending} limit={limit}")
     results = []
     for i in range(limit):
         item = claim_pending_activation_account(
@@ -2496,14 +2513,14 @@ def _run_pool_rotation(card_config_path, *, use_paypal=False, use_gopay=False,
             round_id=label,
         )
         if not item:
-            print("[pool-rotation] 待激活池已清空")
+            print("[pool-rotation] 已注册未支付账号已清空")
             break
         account = _registered_account_from_pool_item(item)
         email = _norm_email(account.get("email"))
         if not email or not (account.get("session_token") or account.get("access_token")):
             _pool_update(
                 email or item.get("email", ""),
-                "registered_pending_plus",
+                "email_unused",
                 "rotation_skip_no_auth",
                 "missing session_token/access_token",
             )

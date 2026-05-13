@@ -358,6 +358,7 @@ const modes = [
   { value: "self_dealer", label: "self-dealer" },
   { value: "daemon", label: "daemon ∞" },
   { value: "free_register", label: "free_register — 免费号+rt+CPA" },
+  { value: "backfill_rt", label: "未检测池激活 - PLUS 补 RT" },
 ];
 
 import { useWizardStore } from "../stores/wizard";
@@ -551,6 +552,13 @@ function runPayload() {
   const payload: any = { ...form.value };
   if (payload.mode === "singlexn") {
     payload.count = Math.max(1, Number(payload.singlexn || 1));
+  }
+  if (payload.mode === "backfill_rt") {
+    payload.paypal = false;
+    payload.gopay = false;
+    payload.pay_only = false;
+    payload.register_only = false;
+    payload.push_server = false;
   }
   delete payload.singlexn;
   return payload;
@@ -1234,7 +1242,7 @@ async function submitOtp(_options?: Event) {
 }
 
 const isFreeMode = computed(() =>
-  form.value.mode === "free_register"
+  form.value.mode === "free_register" || form.value.mode === "backfill_rt"
 );
 
 watch(

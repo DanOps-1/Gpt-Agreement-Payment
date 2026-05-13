@@ -55,7 +55,7 @@
         <label class="interval-field">
           <span>每</span>
           <input v-model.number="rotation.interval" type="number" min="1" />
-          <span>次任务处理待激活池</span>
+          <span>次任务处理已注册未支付账号</span>
         </label>
         <button class="btn ghost" type="button" :disabled="savingRotation" @click="saveRotation">保存轮转</button>
       </div>
@@ -99,8 +99,8 @@
           <span>线程</span>
           <input v-model.number="retryWorkers" type="number" min="1" max="8" />
         </label>
-        <button v-if="filter.status === 'in_progress'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('registration')">重新注册执行</button>
-        <button v-if="filter.status === 'registered_pending_plus'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('payment')">重新支付执行</button>
+        <button v-if="filter.status === 'email_unused'" class="btn" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('registration')">重新注册执行</button>
+        <button v-if="filter.status === 'email_unused'" class="btn ghost" type="button" :disabled="!selectedIds.length || retryingAccounts" @click="retrySelected('payment')">重新支付执行</button>
         <button class="btn ghost" type="button" :disabled="claiming" @click="claimPreview">领取未激活邮箱</button>
       </div>
       <div class="action-group">
@@ -227,7 +227,7 @@
           <select v-model="checkStatusFilter" @change="refreshCheckCandidates">
             <option value="plus_with_rt">已激活池</option>
             <option value="plus_missing_rt">待检测池</option>
-            <option value="registered_pending_plus">待激活池</option>
+            <option value="email_unused">未激活池</option>
             <option value="all">全部</option>
           </select>
           <input v-model="checkQuery" placeholder="搜索邮箱 / account_id" @keydown.enter="refreshCheckCandidates" />
@@ -237,8 +237,8 @@
             <span>线程</span>
             <input v-model.number="retryWorkers" type="number" min="1" max="8" />
           </label>
-          <button v-if="checkStatusFilter === 'registered_pending_plus'" class="btn" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">重新支付执行</button>
-          <button v-if="checkStatusFilter === 'all'" class="btn ghost" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">重跑待激活</button>
+          <button v-if="checkStatusFilter === 'email_unused'" class="btn" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">重新支付执行</button>
+          <button v-if="checkStatusFilter === 'all'" class="btn ghost" type="button" :disabled="!checkSelectedIds.length || retryingAccounts" @click="retrySelected('payment', true)">重跑已注册未支付</button>
         </div>
       </div>
       <div class="check-summary">
@@ -370,10 +370,8 @@ const total = ref(0);
 const counts = ref<Record<string, number>>({});
 const statuses = ref<PoolStatus[]>([
   { key: "email_unused", label: "未激活池" },
-  { key: "in_progress", label: "任务中" },
   { key: "plus_with_rt", label: "已激活池" },
   { key: "plus_missing_rt", label: "待检测池" },
-  { key: "registered_pending_plus", label: "待激活池" },
   { key: "registration_failed", label: "失败池" },
 ]);
 const selected = ref<Set<number>>(new Set());
@@ -503,7 +501,7 @@ async function saveRotation() {
     });
     rotation.value.enabled = Boolean(r.data?.enabled);
     rotation.value.interval = Number(r.data?.interval || interval);
-    message.success(rotation.value.enabled ? `已开启轮转：每 ${rotation.value.interval} 次任务处理待激活池` : "已关闭任务轮转");
+    message.success(rotation.value.enabled ? `已开启轮转：每 ${rotation.value.interval} 次任务处理已注册未支付账号` : "已关闭任务轮转");
   } catch (e: any) {
     message.error(`保存轮转失败：${e?.response?.data?.detail || e?.message || e}`);
   } finally {
@@ -779,9 +777,9 @@ function nextPage() {
 }
 
 function statusClass(status: string) {
+  if (status === "email_unused") return "info";
   if (status === "plus_with_rt") return "ok";
   if (status === "plus_missing_rt") return "warn";
-  if (status === "registered_pending_plus") return "info";
   if (status === "registration_failed") return "danger";
   return "muted-pill";
 }

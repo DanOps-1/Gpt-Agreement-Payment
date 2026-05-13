@@ -29,12 +29,30 @@ POOL_STATUS_LABELS = {
 
 VISIBLE_POOL_STATUSES = [
     "email_unused",
-    "in_progress",
     "plus_with_rt",
     "plus_missing_rt",
-    "registered_pending_plus",
     "registration_failed",
 ]
+
+ACTIVE_EMAIL_UNUSED_STATUSES = {"email_unused", "registered_pending_plus", "in_progress"}
+
+
+def _canonical_status(status: Any) -> str:
+    status_text = _text(status)
+    if status_text in {"registered_pending_plus", "in_progress"}:
+        return "email_unused"
+    return status_text
+
+
+def _status_where_clause(status: str, params: list[Any]) -> str:
+    if status == "email_unused":
+        return "pool_status IN ('email_unused','registered_pending_plus','in_progress')"
+    params.append(status)
+    return "pool_status = ?"
+
+
+def _has_chatgpt_credentials(row: dict) -> bool:
+    return bool(_text(row.get("session_token")).strip() or _text(row.get("access_token")).strip())
 
 _ITEM_COLUMNS = [
     "id",
@@ -152,6 +170,8 @@ def _public_item(row: dict, *, reveal: bool = False) -> dict:
         item[f"has_{key}"] = bool(raw)
         if not reveal:
             item[key] = _mask(raw)
+    item["raw_pool_status"] = item.get("pool_status") or ""
+    item["pool_status"] = _canonical_status(item.get("pool_status"))
     item["status_label"] = POOL_STATUS_LABELS.get(item.get("pool_status"), item.get("pool_status") or "")
     item["primary_email"] = item.get("chatgpt_email") or item.get("email") or ""
     return item
@@ -315,8 +335,7 @@ def list_pool_items(*, status: str = "all", query: str = "", limit: int = 200,
     params: list[Any] = []
     where: list[str] = []
     if status and status != "all":
-        where.append("pool_status = ?")
-        params.append(status)
+        where.append(_status_where_clause(status, params))
     q = _text(query).strip().lower()
     if q:
         where.append("(lower(email) LIKE ? OR lower(chatgpt_email) LIKE ? OR lower(account_id) LIKE ?)")
@@ -343,7 +362,8 @@ def list_pool_items(*, status: str = "all", query: str = "", limit: int = 200,
         ).fetchall()
     counts = {key: 0 for key in [*VISIBLE_POOL_STATUSES, "quarantined"]}
     for row in counts_rows:
-        counts[str(row["pool_status"])] = int(row["n"])
+        key = _canonical_status(row["pool_status"])
+        counts[key] = counts.get(key, 0) + int(row["n"])
     return {
         "generated_at": _now_iso(),
         "statuses": [{"key": key, "label": POOL_STATUS_LABELS[key]} for key in VISIBLE_POOL_STATUSES],
@@ -444,6 +464,13 @@ def delete_items_by_status(statuses: list[str]) -> dict:
     ]
     if not allowed:
         return {"requested": requested, "deleted": 0, "statuses": [], "skipped": skipped}
+    expanded_allowed: list[str] = []
+    for status in allowed:
+        if status == "email_unused":
+            expanded_allowed.extend(["email_unused", "registered_pending_plus", "in_progress"])
+        else:
+            expanded_allowed.append(status)
+    allowed = list(dict.fromkeys(expanded_allowed))
     placeholders = ",".join("?" for _ in allowed)
     with get_db()._conn() as c:
         ids = [
@@ -470,21 +497,29 @@ def claim_unused_emails(limit: int, *, task_id: str = "", round_id: str = "") ->
             """
             SELECT id, pool_status FROM account_pool_items
             WHERE pool_status = 'email_unused'
+              AND (session_token = '' OR session_token IS NULL)
+              AND (access_token = '' OR access_token IS NULL)
+              AND (reserved_at = 0 OR reserved_at IS NULL OR reserved_at < ?)
             ORDER BY id ASC
             LIMIT ?
             """,
-            (limit,),
+            (now - 3600, limit),
         ).fetchall()
         for row in rows:
             c.execute(
                 """
                 UPDATE account_pool_items
-                SET pool_status='in_progress', task_id=?, round_id=?, reserved_at=?,
+                SET task_id=?, round_id=?, reserved_at=?,
                     attempt_count=attempt_count+1, last_stage='claimed', updated_at=?
                 WHERE id=? AND pool_status='email_unused'
+                  AND (session_token = '' OR session_token IS NULL)
+                  AND (access_token = '' OR access_token IS NULL)
+                  AND (reserved_at = 0 OR reserved_at IS NULL OR reserved_at < ?)
                 """,
-                (task_id, round_id, now, now, int(row["id"])),
+                (task_id, round_id, now, now, int(row["id"]), now - 3600),
             )
+            if c.rowcount <= 0:
+                continue
             updated = c.execute(
                 f"SELECT {', '.join(_ITEM_COLUMNS)} FROM account_pool_items WHERE id = ?",
                 (int(row["id"]),),
@@ -494,7 +529,7 @@ def claim_unused_emails(limit: int, *, task_id: str = "", round_id: str = "") ->
                     c,
                     int(row["id"]),
                     from_status=row["pool_status"],
-                    to_status="in_progress",
+                    to_status="email_unused",
                     stage="claimed",
                     reason="task claim",
                     task_id=task_id,
@@ -516,7 +551,8 @@ def transition_item_by_email(target_email: str, *, to_status: str, stage: str, r
     updates["last_stage"] = stage
     updates["last_error"] = reason[:500]
     updates["updated_at"] = now
-    if to_status == "registered_pending_plus":
+    to_status = _canonical_status(to_status)
+    if to_status == "email_unused" and any(_text(fields.get(key)).strip() for key in ("session_token", "access_token")):
         updates.setdefault("registered_at", now)
     if to_status in ("plus_missing_rt", "plus_with_rt"):
         updates.setdefault("activated_at", now)
@@ -589,7 +625,7 @@ def migrate_from_legacy_inventory() -> dict:
             elif paid:
                 pool_status = "plus_missing_rt"
             else:
-                pool_status = "registered_pending_plus"
+                pool_status = "email_unused"
             item = {
                 "email": email,
                 "email_password": outlook.get("password") or acc.get("password") or "",
@@ -634,7 +670,7 @@ def migrate_from_legacy_inventory() -> dict:
                 "mail_client_id": outlook.get("client_id") or "",
                 "mail_refresh_token": outlook.get("refresh_token") or "",
                 "email_source": "legacy_outlook_migration",
-                "pool_status": "registration_failed" if outlook.get("status") == "failed" else "email_unused",
+                "pool_status": "email_unused",
                 "last_error": outlook.get("last_error") or "",
                 "source_outlook_mail_id": int(outlook.get("id") or 0),
             }
@@ -663,7 +699,13 @@ def pending_activation_count() -> int:
     with get_db()._conn() as c:
         return int(
             c.execute(
-                "SELECT COUNT(*) FROM account_pool_items WHERE pool_status = 'registered_pending_plus'"
+                """
+                SELECT COUNT(*)
+                FROM account_pool_items
+                WHERE pool_status IN ('email_unused','registered_pending_plus','in_progress')
+                  AND (session_token != '' OR access_token != '')
+                  AND pool_status NOT IN ('plus_with_rt','plus_missing_rt','registration_failed','quarantined')
+                """
             ).fetchone()[0]
         )
 
@@ -679,13 +721,20 @@ def prepare_retry_items(ids: list[int], *, retry_type: str, task_id: str = "") -
     prepared = 0
     with get_db()._conn() as c:
         rows = c.execute(
-            f"SELECT id, pool_status, task_id, round_id FROM account_pool_items WHERE id IN ({placeholders})",
+            f"""
+            SELECT id, pool_status, task_id, round_id, session_token, access_token
+            FROM account_pool_items
+            WHERE id IN ({placeholders})
+            """,
             clean,
         ).fetchall()
         for row in rows:
             old_status = str(row["pool_status"] or "")
+            has_chatgpt_credentials = bool(row["session_token"] or row["access_token"])
             if retry_type == "registration":
-                if old_status != "in_progress":
+                if old_status not in ACTIVE_EMAIL_UNUSED_STATUSES:
+                    continue
+                if has_chatgpt_credentials:
                     continue
                 to_status = "email_unused"
                 stage = "retry_registration_reset"
@@ -694,21 +743,27 @@ def prepare_retry_items(ids: list[int], *, retry_type: str, task_id: str = "") -
                     """
                     UPDATE account_pool_items
                     SET pool_status=?, task_id=?, round_id='retry-registration',
-                        reserved_at=0, last_stage=?, last_error='', updated_at=?
+                        reserved_at=0, last_stage=?, last_error='',
+                        chatgpt_email='', account_password='', session_token='', access_token='',
+                        id_token='', device_id='', csrf_token='', cookie_header='', refresh_token='',
+                        account_id='', team_account_id='', payment_status='', payment_channel='',
+                        payment_session_id='', updated_at=?
                     WHERE id=?
                     """,
                     (to_status, task_id, stage, now, int(row["id"])),
                 )
             else:
-                if old_status != "registered_pending_plus":
+                if old_status not in ACTIVE_EMAIL_UNUSED_STATUSES:
                     continue
-                to_status = "registered_pending_plus"
+                if not has_chatgpt_credentials:
+                    continue
+                to_status = "email_unused"
                 stage = "retry_payment_queued"
                 reason = "retry payment from pool"
                 c.execute(
                     """
                     UPDATE account_pool_items
-                    SET task_id=?, round_id='retry-payment',
+                    SET pool_status='email_unused', task_id=?, round_id='retry-payment',
                         last_stage=?, last_error='', updated_at=?
                     WHERE id=?
                     """,
@@ -736,11 +791,14 @@ def claim_pending_activation_account(*, task_id: str = "", round_id: str = "") -
             f"""
             SELECT {', '.join(_ITEM_COLUMNS)}
             FROM account_pool_items
-            WHERE pool_status = 'registered_pending_plus'
+            WHERE pool_status IN ('email_unused','registered_pending_plus','in_progress')
               AND (session_token != '' OR access_token != '')
+              AND pool_status NOT IN ('plus_with_rt','plus_missing_rt','registration_failed','quarantined')
+              AND (reserved_at = 0 OR reserved_at IS NULL OR reserved_at < ?)
             ORDER BY updated_at ASC, id ASC
             LIMIT 1
-            """
+            """,
+            (now - 3600,),
         ).fetchone()
         if not row:
             c.execute("COMMIT")
@@ -748,18 +806,24 @@ def claim_pending_activation_account(*, task_id: str = "", round_id: str = "") -
         c.execute(
             """
             UPDATE account_pool_items
-            SET pool_status='in_progress', task_id=?, round_id=?,
+            SET pool_status='email_unused', task_id=?, round_id=?,
                 reserved_at=?, attempt_count=attempt_count+1,
                 last_stage='rotation_claimed', last_error='', updated_at=?
-            WHERE id=? AND pool_status='registered_pending_plus'
+            WHERE id=?
+              AND pool_status IN ('email_unused','registered_pending_plus','in_progress')
+              AND (session_token != '' OR access_token != '')
+              AND (reserved_at = 0 OR reserved_at IS NULL OR reserved_at < ?)
             """,
-            (task_id, round_id, now, now, int(row["id"])),
+            (task_id, round_id, now, now, int(row["id"]), now - 3600),
         )
+        if c.rowcount <= 0:
+            c.execute("COMMIT")
+            return {}
         _event(
             c,
             int(row["id"]),
-            from_status="registered_pending_plus",
-            to_status="in_progress",
+            from_status=row["pool_status"],
+            to_status="email_unused",
             stage="rotation_claimed",
             reason="rotation picked pending activation account",
             task_id=task_id,
