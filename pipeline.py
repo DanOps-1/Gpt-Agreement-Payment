@@ -827,7 +827,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
             if should_fail:
                 _mark_outlook_mail_account_failed(failed_email, fail_reason or "registration_timeout")
             else:
-                _release_outlook_mail_account(failed_email, "registration_timeout")
+                _mark_outlook_mail_account_failed(failed_email, "registration_timeout")
             _pool_registration_failed(
                 failed_email,
                 fail_reason or "registration_timeout",
@@ -843,7 +843,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
             if should_fail:
                 _mark_outlook_mail_account_failed(failed_email, fail_reason or "registration_failed")
             else:
-                _release_outlook_mail_account(failed_email, "registration_failed")
+                _mark_outlook_mail_account_failed(failed_email, "registration_failed")
             _pool_registration_failed(
                 failed_email,
                 fail_reason or "registration_failed",
@@ -858,7 +858,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
             if should_fail:
                 _mark_outlook_mail_account_failed(failed_email, fail_reason or "registration_no_credentials")
             else:
-                _release_outlook_mail_account(failed_email, "registration_no_credentials")
+                _mark_outlook_mail_account_failed(failed_email, "registration_no_credentials")
             _pool_registration_failed(
                 failed_email,
                 fail_reason or "registration_no_credentials",
@@ -1588,7 +1588,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
                 email_domain=picked_domain,
                 reason=f"{getattr(e, 'code', '') or type(e).__name__}: {str(e)[:500]}",
             )
-            _release_outlook_mail_account(reg.get("email", ""), "payment_error")
+            _mark_outlook_mail_account_failed(reg.get("email", ""), "payment_error")
             if getattr(e, "code", "") == "gopay_account_unavailable":
                 record["account_removed"] = True
                 _delete_registered_account_for_payment_failure(
@@ -1608,7 +1608,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
             email_domain=picked_domain,
         )
         if pay_status != "succeeded":
-            _release_outlook_mail_account(reg.get("email", ""), f"payment_state={pay_status}")
+            _mark_outlook_mail_account_failed(reg.get("email", ""), f"payment_state={pay_status}")
         if pay_status == "succeeded" and team_client:
             try:
                 probe_status = _team_probe_after_payment(
@@ -2351,7 +2351,7 @@ def _pool_registration_failed(email: str, reason: str, *, task_id: str = "", rou
         return
     _pool_update(
         email,
-        "email_unused",
+        "registration_failed",
         "registration_failed",
         reason,
         email=email,
@@ -2424,10 +2424,7 @@ def _pool_payment_result(reg: dict, pay_result: dict, card_cfg: dict | None = No
         stage = "payment_succeeded_with_rt" if rt else "payment_succeeded_missing_rt"
         reason = reason or ("Plus activated and RT obtained" if rt else "Plus activated but RT missing")
     else:
-        if _is_gopay_account_unavailable_failure(reason, pay_result):
-            to_status = "registration_failed"
-        else:
-            to_status = "email_unused"
+        to_status = "registration_failed"
         stage = "payment_not_succeeded"
         reason = reason or f"payment_status={status}"
     _pool_update(
@@ -2734,7 +2731,7 @@ def _release_pay_only_account_claim(account: dict | None) -> None:
         _PAY_ONLY_IN_FLIGHT_EMAILS.discard(email)
 
 
-def _unclaim_pending_activation_account(account: dict | None) -> None:
+def _fail_pending_activation_account(account: dict | None, reason: str) -> None:
     if not account:
         return
     email = _norm_email(account.get("email"))
@@ -2748,24 +2745,24 @@ def _unclaim_pending_activation_account(account: dict | None) -> None:
                 c.execute(
                     """
                     UPDATE account_pool_items
-                    SET pool_status='email_unused',
-                        reserved_at=0, updated_at=?
+                    SET pool_status='registration_failed',
+                        reserved_at=0, failed_at=?, updated_at=?, last_error=?
                     WHERE id=?
                     """,
-                    (now, int(pool_item_id)),
+                    (now, now, reason[:500], int(pool_item_id)),
                 )
             elif email:
                 c.execute(
                     """
                     UPDATE account_pool_items
-                    SET pool_status='email_unused',
-                        reserved_at=0, updated_at=?
+                    SET pool_status='registration_failed',
+                        reserved_at=0, failed_at=?, updated_at=?, last_error=?
                     WHERE lower(email)=?
                     """,
-                    (now, email),
+                    (now, now, reason[:500], email),
                 )
     except Exception as e:
-        print(f"[pool] release pending activation claim failed: {email or pool_item_id}: {e}")
+        print(f"[pool] fail pending activation claim failed: {email or pool_item_id}: {e}")
 
 
 def _run_pool_rotation(card_config_path, *, use_paypal=False, use_gopay=False,
@@ -2925,7 +2922,7 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False,
             except PaymentError as e:
                 reason = str(e)[:200]
                 record["payment"] = {"status": "skipped", "email": email, "reason": reason}
-                _unclaim_pending_activation_account(account)
+                _fail_pending_activation_account(account, reason or "payment_skipped")
                 _append_result(record)
                 return {"status": "skipped", "email": email, "reason": reason}
         if use_gopay and gopay_dynamic_signup:
