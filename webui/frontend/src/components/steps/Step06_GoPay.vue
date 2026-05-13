@@ -52,6 +52,94 @@
       </div>
     </div>
 
+    <div class="auto-signup-card">
+      <label class="qr-toggle">
+        <input v-model="form.auto_signup.enabled" type="checkbox" />
+        <span>
+          <strong>启用一键注册 GoPay</strong>
+          <small>运行时自动向 SMSBower 取号，完成注册、换 token、设置支付码，再进入 link 短信验证码流程。</small>
+        </span>
+      </label>
+
+      <div v-if="form.auto_signup.enabled" class="form-stack auto-signup-fields">
+        <TermField
+          v-model="form.auto_signup.smsbower_api_key"
+          label="SMSBower API Key"
+          type="password"
+          placeholder="handler_api.php 的 api_key"
+        />
+        <TermField
+          v-model="form.auto_signup.service"
+          label="SMSBower 服务"
+          placeholder="ni"
+        />
+        <TermField
+          v-model="form.auto_signup.country"
+          label="SMSBower 国家"
+          placeholder="6"
+        />
+        <TermField
+          v-model="form.auto_signup.country_code"
+          label="GoPay 区号"
+          placeholder="62"
+        />
+        <TermField
+          v-model="form.auto_signup.pin"
+          label="支付码"
+          type="password"
+          placeholder="6 位支付码"
+        />
+        <TermField
+          v-model="form.auto_signup.name"
+          label="昵称"
+          placeholder="SJC"
+        />
+        <TermField
+          v-model="form.auto_signup.email"
+          label="邮箱"
+          placeholder="可留空"
+        />
+        <TermField
+          v-model="form.auto_signup.max_price"
+          label="最高单价"
+          placeholder="可留空"
+        />
+        <TermField
+          v-model.number="form.auto_signup.otp_timeout"
+          label="验证码超时"
+          type="number"
+          placeholder="180"
+        />
+        <TermField
+          v-model.number="form.auto_signup.otp_interval"
+          label="轮询间隔"
+          type="number"
+          placeholder="5"
+        />
+        <TermField
+          v-model="form.auto_signup.smsbower_url"
+          label="SMSBower 地址"
+          placeholder="https://smsbower.page/stubs/handler_api.php"
+        />
+        <TermField
+          v-model="form.auto_signup.client_id"
+          label="client_id"
+          placeholder="gopay:consumer:app"
+        />
+        <TermField
+          v-model="form.auto_signup.client_secret"
+          label="client_secret"
+          type="password"
+          placeholder="GoPay client_secret"
+        />
+        <TermField
+          v-model="form.auto_signup.signup_authorization"
+          label="Signup Basic"
+          placeholder="Basic ..."
+        />
+      </div>
+    </div>
+
     <div class="form-stack otp-settings">
       <label class="qr-toggle">
         <input v-model="form.qr_payment" type="checkbox" />
@@ -241,10 +329,30 @@ type GoPayAccountForm = {
   auto_unbind_unlink_raw_request?: string;
 };
 
+type GoPayAutoSignupForm = {
+  enabled: boolean;
+  smsbower_api_key: string;
+  service: string;
+  country: string;
+  country_code: string;
+  pin: string;
+  name: string;
+  email: string;
+  max_price: string;
+  otp_timeout: number;
+  otp_interval: number;
+  smsbower_url: string;
+  client_id: string;
+  client_secret: string;
+  signup_authorization: string;
+  token_grant_type: string;
+};
+
 const store = useWizardStore();
 const message = useMessage();
 const init = store.answers.gopay ?? {};
 const initOtp = init.otp ?? {};
+const initAutoSignup = init.auto_signup ?? {};
 
 function newAccount(seed?: Partial<GoPayAccountForm>, index = 0): GoPayAccountForm {
   return {
@@ -305,8 +413,30 @@ function initialAccounts(): GoPayAccountForm[] {
   }, 0)];
 }
 
+function initialAutoSignup(): GoPayAutoSignupForm {
+  return {
+    enabled: Boolean(initAutoSignup.enabled),
+    smsbower_api_key: initAutoSignup.smsbower_api_key ?? initAutoSignup.api_key ?? "",
+    service: initAutoSignup.service ?? "ni",
+    country: initAutoSignup.country ?? "6",
+    country_code: String(initAutoSignup.country_code ?? init.country_code ?? "62").replace(/^\+/, ""),
+    pin: initAutoSignup.pin ?? init.pin ?? "",
+    name: initAutoSignup.name ?? "SJC",
+    email: initAutoSignup.email ?? "",
+    max_price: initAutoSignup.max_price ?? "",
+    otp_timeout: Number(initAutoSignup.otp_timeout ?? 180),
+    otp_interval: Number(initAutoSignup.otp_interval ?? 5),
+    smsbower_url: initAutoSignup.smsbower_url ?? "https://smsbower.page/stubs/handler_api.php",
+    client_id: initAutoSignup.client_id ?? "gopay:consumer:app",
+    client_secret: initAutoSignup.client_secret ?? "raOUumeMRBNifqvZRFjvsgTnjAlaA9",
+    signup_authorization: initAutoSignup.signup_authorization ?? "",
+    token_grant_type: initAutoSignup.token_grant_type ?? "refresh_token",
+  };
+}
+
 const form = ref({
   accounts: initialAccounts(),
+  auto_signup: initialAutoSignup(),
   qr_payment: Boolean(init.qr_payment || init.qr_enabled || ["qr", "qris", "qr_payment"].includes(String(init.payment_mode || init.mode || "").toLowerCase())),
   qr_wait_timeout: init.qr_wait_timeout ?? 300,
   otp_timeout: init.otp_timeout ?? initOtp.timeout ?? 300,
@@ -588,15 +718,45 @@ function cleanAccount(account: GoPayAccountForm, index: number) {
   return cleaned;
 }
 
+function cleanAutoSignup(value: GoPayAutoSignupForm) {
+  const cleaned: any = {
+    enabled: Boolean(value.enabled),
+    smsbower_api_key: String(value.smsbower_api_key || "").trim(),
+    service: String(value.service || "ni").trim(),
+    country: String(value.country || "6").trim(),
+    country_code: String(value.country_code || "62").replace(/^\+/, "").trim(),
+    pin: String(value.pin || "").trim(),
+    name: String(value.name || "SJC").trim(),
+    email: String(value.email || "").trim(),
+    otp_timeout: Number(value.otp_timeout || 180),
+    otp_interval: Number(value.otp_interval || 5),
+  };
+  const maxPrice = String(value.max_price || "").trim();
+  if (maxPrice) cleaned.max_price = maxPrice;
+  const smsbowerUrl = String(value.smsbower_url || "").trim();
+  if (smsbowerUrl) cleaned.smsbower_url = smsbowerUrl;
+  const clientId = String(value.client_id || "").trim();
+  if (clientId) cleaned.client_id = clientId;
+  const clientSecret = String(value.client_secret || "").trim();
+  if (clientSecret) cleaned.client_secret = clientSecret;
+  const signupAuthorization = String(value.signup_authorization || "").trim();
+  if (signupAuthorization) cleaned.signup_authorization = signupAuthorization;
+  const tokenGrantType = String(value.token_grant_type || "").trim();
+  if (tokenGrantType) cleaned.token_grant_type = tokenGrantType;
+  return cleaned;
+}
+
 function buildGopayAnswer() {
   const accounts = form.value.accounts.map(cleanAccount);
   const first = accounts[0] || cleanAccount(newAccount({}, 0), 0);
+  const autoSignup = cleanAutoSignup(form.value.auto_signup);
   return {
-    country_code: first.country_code,
+    country_code: first.country_code || autoSignup.country_code || "62",
     phone_number: first.phone_number,
-    pin: first.pin,
+    pin: first.pin || autoSignup.pin,
     midtrans_client_id: first.midtrans_client_id,
     accounts,
+    auto_signup: autoSignup,
     qr_payment: Boolean(form.value.qr_payment),
     payment_mode: form.value.qr_payment ? "qr" : "tokenization",
     qr_wait_timeout: form.value.qr_wait_timeout,
@@ -682,6 +842,16 @@ onUnmounted(() => {
 }
 .otp-settings {
   margin-top: 14px;
+}
+.auto-signup-card {
+  margin-top: 18px;
+  display: grid;
+  gap: 14px;
+}
+.auto-signup-fields {
+  padding: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
 }
 .qr-toggle {
   display: flex;

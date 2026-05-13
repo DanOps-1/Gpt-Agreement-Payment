@@ -157,6 +157,53 @@ def _gopay_qr_payment_enabled(gp: dict) -> bool:
     return enabled or mode in ("qr", "qris", "qr_payment")
 
 
+def _gopay_auto_signup_from_value(gp: dict) -> dict:
+    if not isinstance(gp, dict):
+        return {}
+    src = gp.get("auto_signup") if isinstance(gp.get("auto_signup"), dict) else {}
+    enabled = _truthy(src.get("enabled") if src else gp.get("auto_signup"))
+    if not enabled:
+        return {}
+    auto_signup: dict = {"enabled": True}
+    defaults = {
+        "service": "ni",
+        "country": "6",
+        "country_code": str(gp.get("country_code") or "62").lstrip("+"),
+        "pin": str(gp.get("pin") or ""),
+        "name": "SJC",
+        "email": "",
+        "otp_timeout": 180,
+        "otp_interval": 5,
+        "smsbower_url": "https://smsbower.page/stubs/handler_api.php",
+        "client_id": "gopay:consumer:app",
+        "client_secret": "raOUumeMRBNifqvZRFjvsgTnjAlaA9",
+        "token_grant_type": "refresh_token",
+    }
+    text_keys = (
+        "smsbower_api_key", "api_key", "service", "country", "country_code",
+        "pin", "name", "email", "max_price", "smsbower_url", "client_id",
+        "client_secret", "signup_authorization", "token_grant_type",
+    )
+    for key in text_keys:
+        target_key = "smsbower_api_key" if key == "api_key" else key
+        value = src.get(key)
+        if value in (None, ""):
+            value = defaults.get(target_key)
+        if value in (None, ""):
+            continue
+        text = str(value).strip()
+        if target_key == "country_code":
+            text = text.lstrip("+")
+        auto_signup[target_key] = text
+    for key in ("otp_timeout", "otp_interval"):
+        value = src.get(key, defaults[key])
+        try:
+            auto_signup[key] = int(value)
+        except (TypeError, ValueError):
+            auto_signup[key] = defaults[key]
+    return auto_signup
+
+
 def _gopay_auto_unbind_from_value(value: dict, fallback: dict | None = None) -> dict:
     fallback = fallback or {}
     src = value.get("auto_unbind") if isinstance(value.get("auto_unbind"), dict) else {}
@@ -217,14 +264,17 @@ def _project_pay(answers: dict) -> dict:
         gp = answers["gopay"] or {}
         accounts = _normalize_gopay_accounts(gp)
         qr_payment = _gopay_qr_payment_enabled(gp)
-        if accounts or qr_payment:
+        auto_signup = _gopay_auto_signup_from_value(gp)
+        if accounts or qr_payment or auto_signup:
             first = accounts[0] if accounts else {}
             out["gopay"] = {
-                "country_code": first["country_code"] if accounts else str(gp.get("country_code") or "62").lstrip("+"),
+                "country_code": first["country_code"] if accounts else str(gp.get("country_code") or auto_signup.get("country_code") or "62").lstrip("+"),
                 "phone_number": first["phone_number"] if accounts else str(gp.get("phone_number") or ""),
-                "pin": first["pin"] if accounts else str(gp.get("pin") or ""),
+                "pin": first["pin"] if accounts else str(gp.get("pin") or auto_signup.get("pin") or ""),
                 "accounts": accounts,
             }
+            if auto_signup:
+                out["gopay"]["auto_signup"] = auto_signup
             if (accounts and first.get("midtrans_client_id")) or gp.get("midtrans_client_id"):
                 out["gopay"]["midtrans_client_id"] = (
                     first.get("midtrans_client_id") if accounts else str(gp.get("midtrans_client_id"))

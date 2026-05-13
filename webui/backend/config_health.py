@@ -166,6 +166,23 @@ def _usable_gopay_accounts(gp: dict) -> list[dict]:
     return []
 
 
+def _gopay_auto_signup_enabled(gp: dict) -> bool:
+    if not isinstance(gp, dict):
+        return False
+    cfg = gp.get("auto_signup") if isinstance(gp.get("auto_signup"), dict) else {}
+    return _truthy(cfg.get("enabled")) if cfg else _truthy(gp.get("auto_signup"))
+
+
+def _missing_gopay_auto_signup(gp: dict) -> list[str]:
+    cfg = gp.get("auto_signup") if isinstance(gp.get("auto_signup"), dict) else {}
+    missing: list[str] = []
+    if _is_missing(cfg.get("smsbower_api_key") or cfg.get("api_key") or os.getenv("SMSBOWER_API_KEY")):
+        missing.append("gopay.auto_signup.smsbower_api_key")
+    if _is_missing(cfg.get("pin") or gp.get("pin")):
+        missing.append("gopay.auto_signup.pin")
+    return missing
+
+
 def _requires_registration(req: dict) -> bool:
     mode = _text(req.get("mode")) or "single"
     if mode == "free_register":
@@ -452,14 +469,33 @@ def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
     if kind == "gopay":
         gp = pay_cfg.get("gopay") if isinstance(pay_cfg.get("gopay"), dict) else {}
         accounts = _usable_gopay_accounts(gp)
-        if not accounts:
+        auto_signup = _gopay_auto_signup_enabled(gp)
+        auto_signup_missing = _missing_gopay_auto_signup(gp) if auto_signup else []
+        if auto_signup_missing:
+            _check(
+                checks,
+                "gopay_config",
+                "fail",
+                "GoPay 一键注册配置不完整",
+                missing=auto_signup_missing,
+                action="在配置向导 GoPay 步骤填写 SMSBower API Key 和 6 位支付码后重新导出",
+            )
+        elif not accounts and not auto_signup:
             _check(
                 checks,
                 "gopay_config",
                 "fail",
                 "GoPay 支付配置不完整",
                 missing=["gopay.accounts[]"],
-                action="在配置向导 GoPay 步骤添加至少一个国家码、手机号和 6 位 PIN 完整的账号后重新导出",
+                action="在配置向导 GoPay 步骤添加账号，或启用一键注册 GoPay 并填写 SMSBower 参数后重新导出",
+            )
+        elif auto_signup:
+            _check(
+                checks,
+                "gopay_config",
+                "ok",
+                "GoPay 一键注册配置已启用",
+                blocking=False,
             )
         else:
             _check(
