@@ -117,6 +117,12 @@
           placeholder="5"
         />
         <TermField
+          v-model.number="form.auto_signup.phone_ttl_seconds"
+          label="手机号存活秒数"
+          type="number"
+          placeholder="960"
+        />
+        <TermField
           v-model="form.auto_signup.smsbower_url"
           label="SMSBower 地址"
           placeholder="https://smsbower.page/stubs/handler_api.php"
@@ -197,10 +203,6 @@
         <span class="wa-login-prompt">$</span>
         测试验证码
       </button>
-      <button class="wa-login-entry" type="button" @click="openUnbindDialog">
-        <span class="wa-login-prompt">$</span>
-        自动解绑
-      </button>
     </div>
 
     <Teleport to="body">
@@ -242,60 +244,6 @@
       </div>
     </Teleport>
 
-    <Teleport to="body">
-      <div v-if="unbindDialog.open" class="otp-overlay" @click.self="closeUnbindDialog">
-        <div class="unbind-modal">
-          <div class="otp-head">
-            <span class="otp-prompt">$</span> GoPay 自动解绑
-          </div>
-          <p class="otp-desc">
-            保存当前 GoPay 账号的 linked-apps 原始请求。支付使用哪个账号，就会使用该账号的解绑请求。
-          </p>
-          <TermSelect
-            v-model="unbindDialog.accountIndex"
-            label="GoPay 账号"
-            :options="unbindAccountOptions"
-          />
-          <TermField
-            v-model="unbindDialog.base_url"
-            label="基础地址"
-            placeholder="https://customer.gopayapi.com"
-          />
-          <textarea
-            class="unbind-input"
-            v-model="unbindDialog.value"
-            autofocus
-            spellcheck="false"
-            placeholder="粘贴 GET /v1/linkedapps 原始请求..."
-          />
-          <div class="label unlink-label">PATCH 解绑原始请求</div>
-          <textarea
-            class="unbind-input unlink-patch-input"
-            v-model="unbindDialog.unlink_raw_request"
-            spellcheck="false"
-            placeholder="粘贴 PATCH /v1/links/{link_id} 原始请求..."
-          />
-          <div v-if="unbindDialog.body || unbindDialog.fetchMeta" class="unbind-response">
-            <div class="label">响应内容</div>
-            <div v-if="unbindDialog.fetchMeta" class="unbind-meta">{{ unbindDialog.fetchMeta }}</div>
-            <div v-if="unbindDialog.hasData" class="unlink-url-box ok">
-              <span class="label">LinkedApps 数据</span>
-              <code>已找到数据</code>
-            </div>
-            <div v-if="unbindDialog.preview_unlink_url" class="unlink-url-box">
-              <span class="label">预览解绑地址</span>
-              <code>{{ unbindDialog.preview_unlink_url }}</code>
-            </div>
-            <pre>{{ unbindDialog.body }}</pre>
-          </div>
-          <div class="otp-actions">
-            <TermBtn variant="ghost" @click="closeUnbindDialog">取消</TermBtn>
-            <TermBtn variant="ghost" :loading="unbindDialog.fetching" @click="fetchUnbindBody">获取内容</TermBtn>
-            <TermBtn @click="saveUnbindRequest">保存</TermBtn>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </section>
 </template>
 
@@ -324,9 +272,6 @@ type GoPayAccountForm = {
   login_phone?: string;
   auto_login_otp_poll_url?: string;
   auto_login_token_dir?: string;
-  auto_unbind_raw_request?: string;
-  auto_unbind_base_url?: string;
-  auto_unbind_unlink_raw_request?: string;
 };
 
 type GoPayAutoSignupForm = {
@@ -341,6 +286,11 @@ type GoPayAutoSignupForm = {
   max_price: string;
   otp_timeout: number;
   otp_interval: number;
+  phone_ttl_seconds: number;
+  parallel_prepare: boolean;
+  reuse_ready_phone: boolean;
+  hold_phone_until_link: boolean;
+  release_on_chatgpt_fail: boolean;
   smsbower_url: string;
   client_id: string;
   client_secret: string;
@@ -368,9 +318,6 @@ function newAccount(seed?: Partial<GoPayAccountForm>, index = 0): GoPayAccountFo
     auto_login_phone: seed?.auto_login_phone ?? seed?.login_phone ?? "",
     auto_login_otp_poll_url: seed?.auto_login_otp_poll_url ?? "",
     auto_login_token_dir: seed?.auto_login_token_dir ?? "",
-    auto_unbind_raw_request: seed?.auto_unbind_raw_request ?? "",
-    auto_unbind_base_url: seed?.auto_unbind_base_url ?? "",
-    auto_unbind_unlink_raw_request: seed?.auto_unbind_unlink_raw_request ?? "",
   };
 }
 
@@ -390,9 +337,6 @@ function initialAccounts(): GoPayAccountForm[] {
       auto_login_phone: item.auto_login_phone ?? item.login_phone ?? "",
       auto_login_otp_poll_url: item.auto_login_otp_poll_url ?? "",
       auto_login_token_dir: item.auto_login_token_dir ?? "",
-      auto_unbind_raw_request: item.auto_unbind_raw_request ?? item.auto_unbind?.raw_request ?? (idx === 0 ? init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "" : ""),
-      auto_unbind_base_url: item.auto_unbind_base_url ?? item.auto_unbind?.base_url ?? (idx === 0 ? init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "" : ""),
-      auto_unbind_unlink_raw_request: item.auto_unbind_unlink_raw_request ?? item.auto_unbind?.unlink_raw_request ?? (idx === 0 ? init.auto_unbind_unlink_raw_request ?? init.auto_unbind?.unlink_raw_request ?? "" : ""),
     }, idx));
   if (accounts.length) return accounts;
   return [newAccount({
@@ -407,9 +351,6 @@ function initialAccounts(): GoPayAccountForm[] {
     auto_login_phone: init.auto_login_phone ?? init.login_phone ?? "",
     auto_login_otp_poll_url: init.auto_login_otp_poll_url ?? "",
     auto_login_token_dir: init.auto_login_token_dir ?? "",
-    auto_unbind_raw_request: init.auto_unbind_raw_request ?? init.auto_unbind?.raw_request ?? "",
-    auto_unbind_base_url: init.auto_unbind_base_url ?? init.auto_unbind?.base_url ?? "",
-    auto_unbind_unlink_raw_request: init.auto_unbind_unlink_raw_request ?? init.auto_unbind?.unlink_raw_request ?? "",
   }, 0)];
 }
 
@@ -426,6 +367,11 @@ function initialAutoSignup(): GoPayAutoSignupForm {
     max_price: initAutoSignup.max_price ?? "",
     otp_timeout: Number(initAutoSignup.otp_timeout ?? 180),
     otp_interval: Number(initAutoSignup.otp_interval ?? 5),
+    phone_ttl_seconds: Number(initAutoSignup.phone_ttl_seconds ?? 960),
+    parallel_prepare: initAutoSignup.parallel_prepare ?? true,
+    reuse_ready_phone: initAutoSignup.reuse_ready_phone ?? true,
+    hold_phone_until_link: initAutoSignup.hold_phone_until_link ?? true,
+    release_on_chatgpt_fail: initAutoSignup.release_on_chatgpt_fail ?? false,
     smsbower_url: initAutoSignup.smsbower_url ?? "https://smsbower.page/stubs/handler_api.php",
     client_id: initAutoSignup.client_id ?? "gopay:consumer:app",
     client_secret: initAutoSignup.client_secret ?? "raOUumeMRBNifqvZRFjvsgTnjAlaA9",
@@ -462,18 +408,6 @@ const otpDialog = ref({
   since: 0,
   preparing: false,
 });
-const unbindDialog = ref({
-  open: false,
-  accountIndex: "0",
-  value: "",
-  base_url: "",
-  unlink_raw_request: "",
-  fetching: false,
-  body: "",
-  fetchMeta: "",
-  hasData: false,
-  preview_unlink_url: "",
-});
 let timer: number | undefined;
 let otpTestTimer: number | undefined;
 
@@ -497,16 +431,6 @@ const otpAccountOptions = computed(() => form.value.accounts
     };
   })
   .filter(Boolean) as { value: string; label: string; desc: string }[]);
-
-const unbindAccountOptions = computed(() => form.value.accounts.map((account, idx) => {
-  const phone = String(account.phone_number || "").trim();
-  const countryCode = String(account.country_code || "").replace(/^\+/, "") || "62";
-  return {
-    value: String(idx),
-    label: account.label ? `${account.label} (+${countryCode} ${phone || "-"})` : `GoPay #${idx + 1}`,
-    desc: "该账号支付成功后使用这组解绑 header",
-  };
-}));
 
 const selectedOtpAccount = computed(() => {
   const fallback = otpAccountOptions.value[0]?.value || "";
@@ -614,74 +538,6 @@ function maybeResolveOtpTest() {
   }
 }
 
-function openUnbindDialog() {
-  const idx = Number(unbindDialog.value.accountIndex || 0);
-  const account = form.value.accounts[idx] || form.value.accounts[0] || newAccount({}, 0);
-  unbindDialog.value.open = true;
-  unbindDialog.value.accountIndex = String(Math.max(0, form.value.accounts.indexOf(account)));
-  unbindDialog.value.value = account.auto_unbind_raw_request || "";
-  unbindDialog.value.base_url = account.auto_unbind_base_url || "";
-  unbindDialog.value.unlink_raw_request = account.auto_unbind_unlink_raw_request || "";
-  unbindDialog.value.body = "";
-  unbindDialog.value.fetchMeta = "";
-  unbindDialog.value.hasData = false;
-  unbindDialog.value.preview_unlink_url = "";
-}
-
-function closeUnbindDialog() {
-  unbindDialog.value.open = false;
-}
-
-async function saveUnbindRequest() {
-  const idx = Number(unbindDialog.value.accountIndex || 0);
-  const account = form.value.accounts[idx];
-  if (!account) {
-    message.warning("请选择 GoPay 账号");
-    return;
-  }
-  account.auto_unbind_raw_request = unbindDialog.value.value;
-  account.auto_unbind_base_url = unbindDialog.value.base_url.trim();
-  account.auto_unbind_unlink_raw_request = unbindDialog.value.unlink_raw_request;
-  store.setAnswer("gopay", buildGopayAnswer());
-  try {
-    await store.saveToServer();
-    closeUnbindDialog();
-    message.success("自动解绑请求已保存");
-  } catch (e: any) {
-    message.error(e.response?.data?.detail || "自动解绑请求保存失败");
-  }
-}
-
-async function fetchUnbindBody() {
-  if (!unbindDialog.value.value.trim()) {
-    message.warning("请先粘贴原始请求");
-    return;
-  }
-  unbindDialog.value.fetching = true;
-  unbindDialog.value.body = "";
-  unbindDialog.value.fetchMeta = "";
-  unbindDialog.value.hasData = false;
-  unbindDialog.value.preview_unlink_url = "";
-  try {
-    const r = await api.post("/config/gopay/auto-unbind/fetch-body", {
-      base_url: unbindDialog.value.base_url,
-      raw_request: unbindDialog.value.value,
-    });
-    const body = typeof r.data?.body === "string"
-      ? r.data.body
-      : JSON.stringify(r.data?.body_json ?? "", null, 2);
-    unbindDialog.value.body = body;
-    unbindDialog.value.fetchMeta = `${r.data?.status_code || ""} ${r.data?.content_type || ""}`.trim();
-    unbindDialog.value.hasData = Boolean(r.data?.has_data);
-    unbindDialog.value.preview_unlink_url = r.data?.unlink_url || "";
-    message.success(unbindDialog.value.hasData ? "已找到 LinkedApps 数据" : "已获取响应内容");
-  } catch (e: any) {
-    message.error(e.response?.data?.detail || "获取响应内容失败");
-  } finally {
-    unbindDialog.value.fetching = false;
-  }
-}
-
 function cleanAccount(account: GoPayAccountForm, index: number) {
   const cleaned: any = {
     label: account.label || `account-${index + 1}`,
@@ -706,15 +562,6 @@ function cleanAccount(account: GoPayAccountForm, index: number) {
   if (String(account.auto_login_token_dir || "").trim()) {
     cleaned.auto_login_token_dir = String(account.auto_login_token_dir || "").trim();
   }
-  if (String(account.auto_unbind_base_url || "").trim()) {
-    cleaned.auto_unbind_base_url = String(account.auto_unbind_base_url || "").trim();
-  }
-  if (String(account.auto_unbind_raw_request || "").trim()) {
-    cleaned.auto_unbind_raw_request = String(account.auto_unbind_raw_request || "");
-  }
-  if (String(account.auto_unbind_unlink_raw_request || "").trim()) {
-    cleaned.auto_unbind_unlink_raw_request = String(account.auto_unbind_unlink_raw_request || "");
-  }
   return cleaned;
 }
 
@@ -730,6 +577,11 @@ function cleanAutoSignup(value: GoPayAutoSignupForm) {
     email: String(value.email || "").trim(),
     otp_timeout: Number(value.otp_timeout || 180),
     otp_interval: Number(value.otp_interval || 5),
+    phone_ttl_seconds: Number(value.phone_ttl_seconds || 960),
+    parallel_prepare: Boolean(value.parallel_prepare),
+    reuse_ready_phone: Boolean(value.reuse_ready_phone),
+    hold_phone_until_link: Boolean(value.hold_phone_until_link),
+    release_on_chatgpt_fail: Boolean(value.release_on_chatgpt_fail),
   };
   const maxPrice = String(value.max_price || "").trim();
   if (maxPrice) cleaned.max_price = maxPrice;
@@ -783,19 +635,6 @@ watch(otpAccountOptions, (options) => {
     otpDialog.value.accountKey = options[0].value;
   }
 }, { immediate: true });
-
-watch(() => unbindDialog.value.accountIndex, (value) => {
-  if (!unbindDialog.value.open) return;
-  const account = form.value.accounts[Number(value || 0)];
-  if (!account) return;
-  unbindDialog.value.value = account.auto_unbind_raw_request || "";
-  unbindDialog.value.base_url = account.auto_unbind_base_url || "";
-  unbindDialog.value.unlink_raw_request = account.auto_unbind_unlink_raw_request || "";
-  unbindDialog.value.body = "";
-  unbindDialog.value.fetchMeta = "";
-  unbindDialog.value.hasData = false;
-  unbindDialog.value.preview_unlink_url = "";
-});
 
 onMounted(() => {
   refreshStatus();

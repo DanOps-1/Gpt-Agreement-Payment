@@ -89,9 +89,6 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
             value = item.get(key) if key in item else gp.get(key)
             if has_value and (value or key in ("qr_pre_linking", "qris_pre_linking", "linking_before_qr")):
                 account[key] = value
-        auto_unbind = _gopay_auto_unbind_from_value(item, fallback=gp)
-        if auto_unbind:
-            account["auto_unbind"] = auto_unbind
         if all(account.get(k) for k in ("country_code", "phone_number", "pin")):
             accounts.append(account)
 
@@ -138,9 +135,6 @@ def _normalize_gopay_accounts(gp: dict) -> list[dict]:
         ):
             if gp.get(key) or (key in gp and key in ("qr_pre_linking", "qris_pre_linking", "linking_before_qr")):
                 account[key] = gp[key]
-        auto_unbind = _gopay_auto_unbind_from_value(gp)
-        if auto_unbind:
-            account["auto_unbind"] = auto_unbind
         return [account]
     return []
 
@@ -174,6 +168,11 @@ def _gopay_auto_signup_from_value(gp: dict) -> dict:
         "email": "",
         "otp_timeout": 180,
         "otp_interval": 5,
+        "phone_ttl_seconds": 960,
+        "parallel_prepare": True,
+        "reuse_ready_phone": True,
+        "hold_phone_until_link": True,
+        "release_on_chatgpt_fail": False,
         "smsbower_url": "https://smsbower.page/stubs/handler_api.php",
         "client_id": "gopay:consumer:app",
         "client_secret": "raOUumeMRBNifqvZRFjvsgTnjAlaA9",
@@ -195,44 +194,15 @@ def _gopay_auto_signup_from_value(gp: dict) -> dict:
         if target_key == "country_code":
             text = text.lstrip("+")
         auto_signup[target_key] = text
-    for key in ("otp_timeout", "otp_interval"):
+    for key in ("otp_timeout", "otp_interval", "phone_ttl_seconds"):
         value = src.get(key, defaults[key])
         try:
             auto_signup[key] = int(value)
         except (TypeError, ValueError):
             auto_signup[key] = defaults[key]
+    for key in ("parallel_prepare", "reuse_ready_phone", "hold_phone_until_link", "release_on_chatgpt_fail"):
+        auto_signup[key] = _truthy(src.get(key, defaults[key]))
     return auto_signup
-
-
-def _gopay_auto_unbind_from_value(value: dict, fallback: dict | None = None) -> dict:
-    fallback = fallback or {}
-    src = value.get("auto_unbind") if isinstance(value.get("auto_unbind"), dict) else {}
-    auto_unbind_base_url = str(
-        src.get("base_url")
-        or value.get("auto_unbind_base_url")
-        or fallback.get("auto_unbind_base_url")
-        or ""
-    ).strip()
-    raw_unbind_request = str(
-        src.get("raw_request")
-        or value.get("auto_unbind_raw_request")
-        or fallback.get("auto_unbind_raw_request")
-        or ""
-    )
-    unlink_raw_request = str(
-        src.get("unlink_raw_request")
-        or value.get("auto_unbind_unlink_raw_request")
-        or fallback.get("auto_unbind_unlink_raw_request")
-        or ""
-    )
-    auto_unbind = {}
-    if auto_unbind_base_url:
-        auto_unbind["base_url"] = auto_unbind_base_url
-    if raw_unbind_request.strip():
-        auto_unbind["raw_request"] = raw_unbind_request
-    if unlink_raw_request.strip():
-        auto_unbind["unlink_raw_request"] = unlink_raw_request
-    return auto_unbind
 
 
 def _project_pay(answers: dict) -> dict:
@@ -301,9 +271,6 @@ def _project_pay(answers: dict) -> dict:
                 "timeout": int(gp.get("otp_timeout") or 300),
                 "interval": 1,
             }
-            auto_unbind = _gopay_auto_unbind_from_value(first if accounts else gp, fallback=gp)
-            if auto_unbind:
-                out["gopay"]["auto_unbind"] = auto_unbind
     if "team_plan" in answers:
         tp = answers["team_plan"] or {}
         plan: dict = {}

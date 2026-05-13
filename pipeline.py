@@ -871,6 +871,61 @@ class AlreadyPaidError(PaymentError):
         super().__init__(message, code="already_paid")
 
 
+def _gopay_auto_signup_cfg(card_cfg: dict | None) -> dict:
+    gp = (card_cfg or {}).get("gopay") or {}
+    auto = gp.get("auto_signup") if isinstance(gp.get("auto_signup"), dict) else {}
+    return dict(auto) if isinstance(auto, dict) else {}
+
+
+def _gopay_dynamic_signup_enabled(card_cfg: dict | None) -> bool:
+    gp = (card_cfg or {}).get("gopay") or {}
+    auto = gp.get("auto_signup") if isinstance(gp.get("auto_signup"), dict) else None
+    if isinstance(auto, dict):
+        return str(auto.get("enabled", True)).strip().lower() not in ("0", "false", "no", "off")
+    return str(auto or gp.get("auto_register_gopay") or "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _gopay_prepare_parallel_enabled(card_cfg: dict | None) -> bool:
+    if not _gopay_dynamic_signup_enabled(card_cfg):
+        return False
+    auto = _gopay_auto_signup_cfg(card_cfg)
+    for key in ("parallel_prepare", "reuse_ready_phone", "hold_phone_until_link"):
+        if str(auto.get(key, True)).strip().lower() in ("0", "false", "no", "off"):
+            return False
+    return True
+
+
+def _start_gopay_prepare_process(card_config_path: str, card_cfg: dict | None, *, python: str = "", log_label: str = ""):
+    if not _gopay_prepare_parallel_enabled(card_cfg):
+        return None
+    py = python or sys.executable
+    cmd = [py, str(GOPAY_PY), "--config", str(Path(card_config_path).resolve()), "--prepare-auto-signup", "--json-result"]
+    prefix = f"[gopay-prepare:{log_label}] " if log_label else "[gopay-prepare] "
+    print(prefix + "启动手机号预注册/PIN 设置")
+
+    def _worker():
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                **_subprocess_tree_kwargs(),
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                print(prefix + line.rstrip())
+            rc = proc.wait()
+            print(prefix + f"exit={rc}")
+        except Exception as exc:
+            print(prefix + f"failed: {type(exc).__name__}: {exc}")
+
+    thread = threading.Thread(target=_worker, name=f"gopay-prepare-{log_label or os.getpid()}", daemon=True)
+    thread.start()
+    return thread
+
+
 def _codex_oauth_client_id_from_card_cfg(cfg: dict) -> str:
     """Resolve Codex OAuth client_id for child card.py processes.
 
@@ -1169,6 +1224,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
         effective_card = temp_card
     leased_gopay_account = None
     temp_gopay_card = None
+    gopay_prepare_thread = None
 
     ts = datetime.now(timezone.utc).isoformat()
     record = {"ts": ts, "registration": {}, "payment": {},
@@ -1176,6 +1232,13 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
               "register_proxy": reg_proxy, "payment_proxy": pay_proxy}
 
     try:
+        if use_gopay:
+            gopay_prepare_thread = _start_gopay_prepare_process(
+                effective_card,
+                card_cfg or {},
+                log_label=log_label or "pipeline",
+            )
+
         # Step 1: 注册
         print(f"\n{'='*60}")
         print(f"[pipeline] Step 1/2: 注册 ChatGPT 账号")
@@ -1206,12 +1269,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
         print(f"{'='*60}")
         pay_card_path = effective_card
         gp_cfg_for_pay = (card_cfg or {}).get("gopay") or {}
-        gp_auto_signup = gp_cfg_for_pay.get("auto_signup") if isinstance(gp_cfg_for_pay, dict) else None
-        gopay_dynamic_signup = (
-            bool(gp_auto_signup.get("enabled", True))
-            if isinstance(gp_auto_signup, dict)
-            else str(gp_auto_signup or gp_cfg_for_pay.get("auto_register_gopay") or "").strip().lower() in ("1", "true", "yes", "y", "on")
-        )
+        gopay_dynamic_signup = _gopay_dynamic_signup_enabled(card_cfg or {})
         if use_gopay and gopay_account_pool is not None and not gopay_dynamic_signup:
             holder = log_label or reg.get("email") or "pipeline"
             try:
@@ -1952,6 +2010,29 @@ def _pool_plan_type(card_cfg: dict | None = None) -> str:
     return ""
 
 
+def _chatgpt_account_id_from_token(token: str) -> str:
+    """Decode ChatGPT JWT and return chatgpt_account_id when present."""
+    token = str(token or "").strip()
+    parts = token.split(".")
+    if len(parts) < 2:
+        return ""
+    try:
+        import base64 as _b64
+        payload_part = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = json.loads(_b64.urlsafe_b64decode(payload_part).decode())
+        return str((payload.get("https://api.openai.com/auth") or {}).get("chatgpt_account_id") or "")
+    except Exception:
+        return ""
+
+
+def _pool_account_id_from_tokens(*values: str) -> str:
+    for value in values:
+        account_id = _chatgpt_account_id_from_token(value)
+        if account_id:
+            return account_id
+    return ""
+
+
 def _pool_update(target_email: str, to_status: str, stage: str, reason: str = "",
                  payload: dict | None = None, **fields) -> None:
     try:
@@ -2025,6 +2106,13 @@ def _pool_payment_result(reg: dict, pay_result: dict, card_cfg: dict | None = No
         or _find_latest_refresh_token_for_email(email, session_id)
         or _find_latest_refresh_token_for_email(email)
     )
+    registered = _find_latest_registered_account_for_email(email)
+    account_id = _pool_account_id_from_tokens(
+        str(reg.get("id_token") or ""),
+        str(reg.get("access_token") or ""),
+        str(registered.get("id_token") or ""),
+        str(registered.get("access_token") or ""),
+    )
     if status == "succeeded":
         to_status = "plus_with_rt" if rt else "plus_missing_rt"
         stage = "payment_succeeded_with_rt" if rt else "payment_succeeded_missing_rt"
@@ -2041,6 +2129,7 @@ def _pool_payment_result(reg: dict, pay_result: dict, card_cfg: dict | None = No
         payload={"payment": pay_result},
         email=email,
         chatgpt_email=email,
+        account_id=account_id,
         refresh_token=rt,
         plan_type=_pool_plan_type(card_cfg),
         payment_status=status,
@@ -2057,6 +2146,11 @@ def _pool_rt_result(email: str, refresh_token: str, *, stage: str = "rt_obtained
     email = _norm_email(email)
     if not email:
         return
+    registered = _find_latest_registered_account_for_email(email)
+    account_id = _pool_account_id_from_tokens(
+        str(registered.get("id_token") or ""),
+        str(registered.get("access_token") or ""),
+    )
     _pool_update(
         email,
         "plus_with_rt" if refresh_token else "plus_missing_rt",
@@ -2064,6 +2158,7 @@ def _pool_rt_result(email: str, refresh_token: str, *, stage: str = "rt_obtained
         reason or ("RT obtained" if refresh_token else "RT missing"),
         email=email,
         chatgpt_email=email,
+        account_id=account_id,
         refresh_token=refresh_token,
         plan_type=_pool_plan_type(card_cfg),
         payment_session_id=session_id,

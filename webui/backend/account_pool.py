@@ -5,6 +5,7 @@ records are copied in only when the user explicitly runs a migration action.
 """
 from __future__ import annotations
 
+import base64
 import json
 import time
 from datetime import datetime, timezone
@@ -108,6 +109,27 @@ def _text(value: Any) -> str:
 
 def _email(value: Any) -> str:
     return _text(value).strip().lower()
+
+
+def _chatgpt_account_id_from_token(token: Any) -> str:
+    token = _text(token).strip()
+    parts = token.split(".")
+    if len(parts) < 2:
+        return ""
+    try:
+        payload_part = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_part).decode())
+        return _text((payload.get("https://api.openai.com/auth") or {}).get("chatgpt_account_id"))
+    except Exception:
+        return ""
+
+
+def _account_id_from_tokens(*tokens: Any) -> str:
+    for token in tokens:
+        account_id = _chatgpt_account_id_from_token(token)
+        if account_id:
+            return account_id
+    return ""
 
 
 def _now_iso() -> str:
@@ -583,6 +605,7 @@ def migrate_from_legacy_inventory() -> dict:
                 "csrf_token": acc.get("csrf_token") or "",
                 "cookie_header": acc.get("cookie_header") or "",
                 "refresh_token": rt,
+                "account_id": _account_id_from_tokens(acc.get("id_token"), acc.get("access_token")),
                 "team_account_id": card.get("team_account_id") or "",
                 "team_gpt_account_pk": card.get("team_gpt_account_pk") or "",
                 "invite_permission": card.get("invite_permission") or "",

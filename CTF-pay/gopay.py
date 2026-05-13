@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import contextlib
 import datetime as _dt
 import json
 import os
@@ -77,18 +78,6 @@ except Exception:
     except Exception:
         _signed_gopay_headers = None  # type: ignore
 
-try:
-    from webui.backend import gopay_auto_unbind as _gopay_auto_unbind
-except Exception:
-    try:
-        _repo_root = Path(__file__).resolve().parents[1]
-        if str(_repo_root) not in sys.path:
-            sys.path.insert(0, str(_repo_root))
-        from webui.backend import gopay_auto_unbind as _gopay_auto_unbind
-    except Exception:
-        _gopay_auto_unbind = None  # type: ignore
-
-
 def _new_session(impersonate: str = "chrome136") -> Any:
     """Build session with chrome TLS fingerprint when available."""
     if _CurlCffiSession is not None:
@@ -116,6 +105,7 @@ GOPAY_LOGIN_CLIENT_SECRET = "raOUumeMRBNifqvZRFjvsgTnjAlaA9"
 GOPAY_SIGNUP_BASIC_AUTH = "Basic YmI2NDg0MTMtYjYzNy00NDNhLThlYmYtMTc2Y2Y5YjVkYzMy"
 GOPAY_API_BASE_URL = "https://api.gojekapi.com"
 SMSBOWER_API_URL = "https://smsbower.page/stubs/handler_api.php"
+GOPAY_PREPARED_PHONE_TTL_S = 16 * 60
 
 DEFAULT_TIMEOUT = 30
 LINK_RETRY_LIMIT = 2  # 406 "account already linked" retry
@@ -310,14 +300,47 @@ def _merge_header_sources(*sources: Any) -> dict[str, str]:
     return merged
 
 
-def _auto_unbind_header_sources(gopay_cfg: dict) -> list[Any]:
-    auto = gopay_cfg.get("auto_unbind") if isinstance(gopay_cfg.get("auto_unbind"), dict) else {}
-    return [
-        gopay_cfg.get("auto_unbind_raw_request"),
-        gopay_cfg.get("auto_unbind_unlink_raw_request"),
-        auto.get("raw_request"),
-        auto.get("unlink_raw_request"),
-    ]
+def _safe_json_load(path: Path, default: Any) -> Any:
+    try:
+        if not path.exists():
+            return default
+        return json.loads(path.read_text(encoding="utf-8") or "null")
+    except Exception:
+        return default
+
+
+def _safe_json_write(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+@contextlib.contextmanager
+def _file_lock(lock_path: Path, timeout_s: float = 30.0):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.time() + max(1.0, timeout_s)
+    fd = None
+    while time.time() < deadline:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            os.write(fd, str(os.getpid()).encode("ascii", "ignore"))
+            break
+        except FileExistsError:
+            time.sleep(0.2)
+    if fd is None:
+        raise GoPayError(f"lock timeout: {lock_path}")
+    try:
+        yield
+    finally:
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _default_qris_headers(gopay_cfg: dict) -> dict[str, str]:
@@ -966,6 +989,26 @@ class GoPayCharger:
             return {"ok": False, "skipped": True, "reason": "disabled"}
         if self.country_code and self.phone and self.pin and self.gopay_cfg.get("_auto_signup_completed"):
             return {"ok": True, "skipped": True, "reason": "already_completed"}
+        cached = self._auto_signup_claim_ready_phone()
+        if not cached:
+            cached = self._auto_signup_wait_ready_phone()
+        if cached:
+            self._apply_prepared_auto_signup(cached)
+            self.gopay_cfg["_auto_signup_completed"] = True
+            self.log(
+                "[gopay] auto-signup reuse prepared phone "
+                f"phone={_mask_phone(self.phone, self.country_code)} "
+                f"age={int(time.time() - float(cached.get('phone_acquired_at') or time.time()))}s"
+            )
+            return {
+                "ok": True,
+                "reused": True,
+                "phone_number": self.phone,
+                "country_code": self.country_code,
+                "account_id": str(cached.get("account_id") or ""),
+                "token_path": str(cached.get("token_path") or ""),
+                "activation_id": str(cached.get("activation_id") or ""),
+            }
         unique_id = _random_unique_id()
         self.gopay_cfg["x_uniqueid"] = unique_id
         self.gopay_cfg["x-uniqueid"] = unique_id
@@ -973,6 +1016,151 @@ class GoPayCharger:
         result = self._gopay_auto_signup_wallet()
         self.gopay_cfg["_auto_signup_completed"] = True
         return result
+
+    def _auto_signup_cache_enabled(self) -> bool:
+        auto = self._auto_signup_cfg()
+        if not _truthy_cfg(auto.get("reuse_ready_phone", True)):
+            return False
+        return _truthy_cfg(auto.get("hold_phone_until_link", True))
+
+    def _auto_signup_parallel_prepare_enabled(self) -> bool:
+        auto = self._auto_signup_cfg()
+        return _truthy_cfg(auto.get("parallel_prepare", True)) and not _truthy_cfg(
+            self.gopay_cfg.get("_prepare_auto_signup_process")
+        )
+
+    def _auto_signup_phone_ttl(self) -> float:
+        auto = self._auto_signup_cfg()
+        return max(60.0, _float_cfg(auto, "phone_ttl_seconds", GOPAY_PREPARED_PHONE_TTL_S))
+
+    def _auto_signup_cache_path(self) -> Path:
+        auto = self._auto_signup_cfg()
+        explicit = str(auto.get("prepared_phone_cache") or self.gopay_cfg.get("auto_signup_prepared_phone_cache") or "").strip()
+        if explicit:
+            return Path(explicit)
+        root = Path(self.auto_login_token_dir) if self.auto_login_token_dir else Path(__file__).resolve().parents[1] / "output" / "gopay_tokens"
+        service = str(auto.get("service") or "ni")
+        country = str(auto.get("country") or "6")
+        return root / f"prepared_gopay_{service}_{country}.json"
+
+    def _auto_signup_lock_path(self) -> Path:
+        path = self._auto_signup_cache_path()
+        return path.with_suffix(path.suffix + ".lock")
+
+    def _auto_signup_load_cache(self) -> dict:
+        data = _safe_json_load(self._auto_signup_cache_path(), {})
+        return data if isinstance(data, dict) else {}
+
+    def _auto_signup_save_cache(self, data: dict) -> None:
+        _safe_json_write(self._auto_signup_cache_path(), data)
+
+    def _auto_signup_cache_is_fresh(self, item: dict) -> bool:
+        if not isinstance(item, dict):
+            return False
+        if str(item.get("status") or "") not in ("ready", "reserved"):
+            return False
+        acquired = float(item.get("phone_acquired_at") or 0)
+        if acquired <= 0:
+            return False
+        return (time.time() - acquired) <= self._auto_signup_phone_ttl()
+
+    def _auto_signup_claim_ready_phone(self) -> dict:
+        if not self._auto_signup_cache_enabled():
+            return {}
+        path = self._auto_signup_cache_path()
+        with _file_lock(self._auto_signup_lock_path()):
+            cache = self._auto_signup_load_cache()
+            item = cache.get("current") if isinstance(cache.get("current"), dict) else {}
+            if not self._auto_signup_cache_is_fresh(item):
+                if item:
+                    item["status"] = "expired"
+                    item["expired_at"] = time.time()
+                    cache["current"] = item
+                    self._auto_signup_save_cache(cache)
+                return {}
+            if str(item.get("status") or "") != "ready":
+                return {}
+            item["status"] = "reserved"
+            item["reserved_at"] = time.time()
+            item["reserved_by"] = f"{os.getpid()}:{uuid.uuid4()}"
+            cache["current"] = item
+            self._auto_signup_save_cache(cache)
+            self.log(f"[gopay] prepared phone lease claimed cache={path}")
+            return dict(item)
+
+    def _auto_signup_wait_ready_phone(self) -> dict:
+        if not self._auto_signup_cache_enabled() or not self._auto_signup_parallel_prepare_enabled():
+            return {}
+        auto = self._auto_signup_cfg()
+        timeout_s = max(0.0, _float_cfg(auto, "link_wait_timeout", _float_cfg(auto, "prepare_timeout", 300.0)))
+        if timeout_s <= 0:
+            return {}
+        deadline = time.time() + timeout_s
+        logged = False
+        while time.time() < deadline:
+            claimed = self._auto_signup_claim_ready_phone()
+            if claimed:
+                return claimed
+            if not logged:
+                self.log(f"[gopay] waiting prepared GoPay phone up to {int(timeout_s)}s")
+                logged = True
+            time.sleep(2.0)
+        self.log("[gopay] prepared GoPay phone wait timeout, fallback to local auto-signup")
+        return {}
+
+    def _auto_signup_mark_ready(self, item: dict) -> None:
+        if not self._auto_signup_cache_enabled():
+            return
+        with _file_lock(self._auto_signup_lock_path()):
+            cache = self._auto_signup_load_cache()
+            item = dict(item)
+            item["status"] = "ready"
+            item["ready_at"] = time.time()
+            item["expires_at"] = float(item.get("phone_acquired_at") or time.time()) + self._auto_signup_phone_ttl()
+            cache["current"] = item
+            self._auto_signup_save_cache(cache)
+            self.log(f"[gopay] prepared phone cached ttl={int(self._auto_signup_phone_ttl())}s")
+
+    def _auto_signup_mark_consumed(self, status: str = "consumed") -> None:
+        if not self._auto_signup_cache_enabled():
+            return
+        activation_id = str(self._auto_signup_activation_id or "")
+        phone = str(self.phone or "")
+        with _file_lock(self._auto_signup_lock_path()):
+            cache = self._auto_signup_load_cache()
+            item = cache.get("current") if isinstance(cache.get("current"), dict) else {}
+            if not item:
+                return
+            if activation_id and str(item.get("activation_id") or "") != activation_id:
+                return
+            if phone and str(item.get("phone_number") or "") != phone:
+                return
+            item["status"] = status
+            item[f"{status}_at"] = time.time()
+            cache["current"] = item
+            self._auto_signup_save_cache(cache)
+
+    def _apply_prepared_auto_signup(self, item: dict) -> None:
+        country_code = str(item.get("country_code") or "62").lstrip("+")
+        phone = _phone_digits(item.get("phone_number") or "")
+        pin = _phone_digits(item.get("pin") or self.pin)
+        unique_id = str(item.get("x_uniqueid") or item.get("x-uniqueid") or "").strip()
+        activation_id = str(item.get("activation_id") or "")
+        used_otps = item.get("used_otps") if isinstance(item.get("used_otps"), list) else []
+        self.country_code = country_code
+        self.phone = phone
+        self.pin = pin
+        self.auto_login_pin = pin
+        self._auto_signup_activation_id = activation_id
+        self._auto_signup_used_otps = [str(x) for x in used_otps if x]
+        self._auto_signup_sms_finished = False
+        self.gopay_cfg["country_code"] = country_code
+        self.gopay_cfg["phone_number"] = phone
+        self.gopay_cfg["pin"] = pin
+        self.gopay_cfg["auto_login_pin"] = pin
+        if unique_id:
+            self.gopay_cfg["x_uniqueid"] = unique_id
+            self.gopay_cfg["x-uniqueid"] = unique_id
 
     def _auto_signup_reactivate_sms(self, label: str) -> None:
         if not self._auto_signup_activation_id:
@@ -1153,7 +1341,6 @@ class GoPayCharger:
     ) -> dict[str, str]:
         headers = _merge_header_sources(
             _default_gopay_app_headers(self.gopay_cfg),
-            *_auto_unbind_header_sources(self.gopay_cfg),
             self.gopay_cfg.get("headers"),
             self.gopay_cfg.get("login_headers"),
             self.gopay_cfg.get("auto_login_headers"),
@@ -1476,9 +1663,11 @@ class GoPayCharger:
         max_phone_attempts = max(1, int(_float_cfg(auto, "max_phone_attempts", 5)))
         signup_otp_timeout = max(1.0, _float_cfg(auto, "signup_otp_timeout", 30.0))
         activation_id = ""
+        phone_acquired_at = 0.0
         first_otp = ""
         verification_id = ""
         otp_token = ""
+        prepared_item: dict = {}
         try:
             phone = ""
             raw_phone = ""
@@ -1488,6 +1677,7 @@ class GoPayCharger:
             for phone_attempt in range(1, max_phone_attempts + 1):
                 self.log(f"[sms] 请求手机号 ({phone_attempt}/{max_phone_attempts})")
                 activation_id, raw_phone, _raw = self._smsbower_get_number()
+                phone_acquired_at = time.time()
                 self._auto_signup_activation_id = activation_id
                 self._auto_signup_used_otps = self._smsbower_current_codes(activation_id)
                 self._auto_signup_sms_finished = False
@@ -1689,18 +1879,28 @@ class GoPayCharger:
                 pin_setup_result=pin_result,
             )
             self.log(f"[gopay] auto-signup complete phone={_mask_phone(phone, country_code)} token_path={token_path}")
-            return {
+            prepared_item = {
                 "ok": True,
+                "status": "ready",
+                "activation_id": activation_id,
+                "phone_acquired_at": phone_acquired_at or time.time(),
                 "phone_number": phone,
                 "country_code": country_code,
                 "account_id": account_id,
                 "token_path": token_path,
+                "pin": pin,
+                "x_uniqueid": str(self.gopay_cfg.get("x_uniqueid") or self.gopay_cfg.get("x-uniqueid") or ""),
+                "used_otps": list(self._auto_signup_used_otps),
                 "pin_setup": pin_result,
                 "refresh_tail": refresh_token[-8:] if refresh_token else "",
             }
+            self._auto_signup_mark_ready(prepared_item)
+            return prepared_item
         except Exception:
             if activation_id:
                 self._smsbower_set_status(activation_id, 8)
+            if prepared_item:
+                self._auto_signup_mark_consumed("failed")
             raise
 
     def _gopay_save_login_tokens(
@@ -2314,56 +2514,10 @@ class GoPayCharger:
         ).decode("ascii")
         return {"Authorization": f"Basic {token}"}
 
-    def _pre_unbind_existing_gopay_links(self) -> None:
-        auto = self.gopay_cfg.get("auto_unbind") if isinstance(self.gopay_cfg.get("auto_unbind"), dict) else {}
-        raw_request = str(auto.get("raw_request") or self.gopay_cfg.get("auto_unbind_raw_request") or "").strip()
-        base_url = str(auto.get("base_url") or self.gopay_cfg.get("auto_unbind_base_url") or "")
-        timeout = _float_cfg(auto or self.gopay_cfg, "timeout", DEFAULT_TIMEOUT)
-        if not raw_request:
-            self.log("[gopay] auto-unbind precheck skipped: raw_request not configured")
-            return
-        if _gopay_auto_unbind is None:
-            self.log("[gopay] auto-unbind precheck skipped: gopay_auto_unbind unavailable")
-            return
-
-        self.log("[gopay] auto-unbind precheck: checking linked GoPay apps")
-        try:
-            linked = _gopay_auto_unbind.fetch_linkedapps(raw_request, base_url, timeout=timeout)
-            entries = _gopay_auto_unbind.extract_gopay_link_entries(linked.get("body_json"))
-        except Exception as exc:
-            raise GoPayError(f"auto-unbind precheck failed: {type(exc).__name__}: {str(exc)[:300]}") from exc
-
-        if not linked.get("has_data"):
-            raise GoPayError(
-                "auto-unbind precheck failed before linking: "
-                f"linkedapps status={linked.get('status_code') or '-'} body={str(linked.get('body') or '')[:240]}"
-            )
-        if not entries:
-            self.log("[gopay] auto-unbind precheck ok: no existing binding")
-            return
-
-        self.log(f"[gopay] auto-unbind precheck found {len(entries)} linked account(s), unlinking before linking")
-        try:
-            result = _gopay_auto_unbind.run_from_gopay_config(self.gopay_cfg, log=self.log)
-        except Exception as exc:
-            raise GoPayError(f"auto-unbind failed before linking: {type(exc).__name__}: {str(exc)[:300]}") from exc
-        if result.get("ok"):
-            self.log(
-                "[gopay] auto-unbind precheck ok: existing binding removed "
-                f"status={result.get('unlink_status_code') or '-'}"
-            )
-            return
-        raise GoPayError(
-            "auto-unbind failed before linking: "
-            f"reason={result.get('reason') or '-'} linkedapps_status={result.get('linkedapps_status_code') or '-'} "
-            f"unlink_status={result.get('unlink_status_code') or '-'}"
-        )
-
     # ───── Step 7: Midtrans linking initiation ─────
 
     def _midtrans_init_linking(self, snap_token: str) -> str:
         """POST snap/v3/accounts/{snap}/linking. Retries on 406."""
-        self._pre_unbind_existing_gopay_links()
         url = f"https://app.midtrans.com/snap/v3/accounts/{snap_token}/linking"
         self.midtrans_page_url = f"https://app.midtrans.com/snap/v4/redirection/{snap_token}"
         body = {
@@ -3048,13 +3202,6 @@ class GoPayCharger:
 
     def _qris_base_headers(self) -> dict[str, str]:
         qris_cfg = self._qris_cfg()
-        prefer_auto_unbind = _truthy_cfg(
-            qris_cfg.get("prefer_auto_unbind_headers")
-            or self.gopay_cfg.get("qris_prefer_auto_unbind_headers")
-            or self.gopay_cfg.get("prefer_auto_unbind_headers")
-            or True
-        )
-        auto_sources = _auto_unbind_header_sources(self.gopay_cfg)
         explicit_sources = (
             self.gopay_cfg.get("headers"),
             self.gopay_cfg.get("qris_headers"),
@@ -3062,13 +3209,9 @@ class GoPayCharger:
             qris_cfg.get("headers"),
             qris_cfg.get("raw_headers"),
         )
-        ordered_sources = (
-            (_default_qris_headers(self.gopay_cfg), *explicit_sources, *auto_sources)
-            if prefer_auto_unbind
-            else (_default_qris_headers(self.gopay_cfg), *auto_sources, *explicit_sources)
-        )
         headers = _merge_header_sources(
-            *ordered_sources,
+            _default_qris_headers(self.gopay_cfg),
+            *explicit_sources,
         )
         headers.update(self._location_defaults_for_current_ip())
         headers = {k: v for k, v in headers.items() if str(v or "").strip()}
@@ -3084,7 +3227,7 @@ class GoPayCharger:
             raise GoPayError(
                 "gopay qris headers missing required fields for x-e1 signing: "
                 + ", ".join(missing)
-                + "; paste GoPay APP headers in the existing auto-unbind raw request/header field"
+                + "; paste GoPay APP headers in the GoPay headers or QRIS headers field"
             )
         return headers
 
@@ -4166,6 +4309,7 @@ class GoPayCharger:
         if self.auto_signup_enabled and self._auto_signup_activation_id and not self._auto_signup_sms_finished:
             self._smsbower_set_status(self._auto_signup_activation_id, 6)
             self._auto_signup_sms_finished = True
+            self._auto_signup_mark_consumed("consumed")
         return reference_id
 
     def _run_midtrans_and_gopay(self, snap_token: str, cs_id: str) -> dict:
@@ -4210,6 +4354,7 @@ class GoPayCharger:
         if self.auto_signup_enabled and self._auto_signup_activation_id and not self._auto_signup_sms_finished:
             self._smsbower_set_status(self._auto_signup_activation_id, 6)
             self._auto_signup_sms_finished = True
+            self._auto_signup_mark_consumed("consumed")
 
         # ── Charge: second PIN
         charge_ref = self._midtrans_create_charge(snap_token)
@@ -4960,6 +5105,8 @@ def main():
                         help="seconds to wait for OTP file")
     parser.add_argument("--json-result", action="store_true",
                         help="Emit GOPAY_RESULT_JSON=... line on success")
+    parser.add_argument("--prepare-auto-signup", action="store_true",
+                        help="Only prepare/cache GoPay auto-signup phone + token + PIN, then exit")
     parser.add_argument("--from-redirect-url", default="", metavar="URL",
                         help="半自动模式：跳过 chatgpt+stripe 前段，直接从 pm-redirects.stripe.com URL 接管 Midtrans+GoPay")
     parser.add_argument("--cs-id", default="", help="可选：cs_live_xxx，verify 阶段用")
@@ -5004,8 +5151,13 @@ def main():
         proxy_cfg=cfg,
         runtime_cfg=cfg.get("runtime"),
     )
+    if args.prepare_auto_signup:
+        charger.gopay_cfg["_prepare_auto_signup_process"] = True
     try:
-        if args.from_redirect_url:
+        if args.prepare_auto_signup:
+            print("[gopay] prepare auto-signup phone ...")
+            result = charger._ensure_runtime_gopay_account()
+        elif args.from_redirect_url:
             print(f"[gopay] semi-auto mode: starting from {args.from_redirect_url[:80]}...")
             result = charger.run_from_redirect(args.from_redirect_url, cs_id=args.cs_id)
         else:
