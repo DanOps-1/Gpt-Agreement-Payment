@@ -2863,7 +2863,11 @@ def _classify_oauth_failure(log: str) -> str:
         or ("OTP" in log and "超时" in log)
     ):
         return "otp_timeout"
-    if "未捕获到 callback URL" in log or "callback 无 code" in log:
+    if (
+        "未捕获到 callback URL" in log
+        or "callback 无 code" in log
+        or ("callback URL" in log and "/log-in" in log)
+    ):
         return "no_callback"
     # OpenAI 拒绝 OAuth authorize 参数（最常见：client_id 占位符 / 失效 token）
     if "AuthApiFailure" in log or "auth.openai.com/error?payload=" in log:
@@ -2909,28 +2913,38 @@ def _exchange_rt_with_classification(
             except Exception:
                 pass
 
-    buf = io.StringIO()
-    real_stdout = sys.stdout
-    sys.stdout = _Tee(buf, real_stdout)
-    rt = ""
-    try:
+    def _run_once(attempt: int) -> tuple[str, str]:
+        buf = io.StringIO()
+        real_stdout = sys.stdout
+        sys.stdout = _Tee(buf, real_stdout)
+        rt = ""
         try:
-            rt = card_mod._exchange_refresh_token_with_session(
-                email=email,
-                password=password,
-                mail_cfg=mail_cfg,
-                proxy_url=proxy_url,
-            )
-        except Exception as e:
-            print(f"[free] _exchange_rt 异常: {e}")
-            return "", "exception"
-    finally:
-        sys.stdout = real_stdout
+            try:
+                if attempt > 1:
+                    print(f"[RT] 未捕获 callback URL，重试获取 refresh_token {attempt}/2 ...")
+                rt = card_mod._exchange_refresh_token_with_session(
+                    email=email,
+                    password=password,
+                    mail_cfg=mail_cfg,
+                    proxy_url=proxy_url,
+                )
+            except Exception as e:
+                print(f"[free] _exchange_rt 异常: {e}")
+                return "", "exception"
+        finally:
+            sys.stdout = real_stdout
+        log = buf.getvalue()
+        return rt, "" if rt else _classify_oauth_failure(log)
 
-    log = buf.getvalue()
+    rt, fail = _run_once(1)
     if rt:
         return rt, ""
-    return "", _classify_oauth_failure(log)
+    if fail == "no_callback":
+        print("[RT] 未捕获 callback URL，准备重试 1 次")
+        rt, fail = _run_once(2)
+        if rt:
+            return rt, ""
+    return "", fail
 
 
 def _read_card_cfg(path):
