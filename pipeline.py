@@ -1116,7 +1116,7 @@ def _start_gopay_stock_worker(card_config_path: str, card_cfg: dict | None, *, w
             while not stop_event.is_set():
                 children[:] = [p for p in children if p.poll() is None]
                 counts = _gopay_stock_counts(card_cfg)
-                have = int(counts["ready"]) + int(counts["preparing"]) + len(children)
+                have = int(counts["ready"]) + int(counts["reserved"]) + int(counts["preparing"]) + len(children)
                 shortage = max(0, min_stock - have)
                 spawn_n = min(shortage, max_prepare_workers - len(children))
                 if spawn_n > 0:

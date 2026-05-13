@@ -171,6 +171,7 @@ def _gopay_auto_signup_from_value(gp: dict) -> dict:
         "otp_timeout": 180,
         "otp_interval": 5,
         "phone_ttl_seconds": 960,
+        "ready_grace_seconds": 10,
         "parallel_prepare": True,
         "reuse_ready_phone": True,
         "hold_phone_until_link": True,
@@ -196,7 +197,7 @@ def _gopay_auto_signup_from_value(gp: dict) -> dict:
         if target_key == "country_code":
             text = text.lstrip("+")
         auto_signup[target_key] = text
-    for key in ("otp_timeout", "otp_interval", "phone_ttl_seconds"):
+    for key in ("otp_timeout", "otp_interval", "phone_ttl_seconds", "ready_grace_seconds"):
         value = src.get(key, defaults[key])
         try:
             auto_signup[key] = int(value)

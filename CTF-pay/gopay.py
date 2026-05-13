@@ -1127,6 +1127,35 @@ class GoPayCharger:
             return False
         return (time.time() - acquired) <= self._auto_signup_phone_ttl()
 
+    def _auto_signup_ready_grace_seconds(self) -> float:
+        auto = self._auto_signup_cfg()
+        return max(
+            0.0,
+            _float_cfg(
+                auto,
+                "ready_grace_seconds",
+                _float_cfg(
+                    auto,
+                    "prepared_phone_ready_grace_seconds",
+                    _float_cfg(auto, "ready_wait_seconds", 10.0),
+                ),
+            ),
+        )
+
+    def _auto_signup_ready_grace_passed(self, item: dict, now: float) -> bool:
+        grace_s = self._auto_signup_ready_grace_seconds()
+        if grace_s <= 0:
+            return True
+        ready_at = float(
+            item.get("ready_at")
+            or item.get("phone_probe_ok_at")
+            or item.get("phone_acquired_at")
+            or 0
+        )
+        if ready_at <= 0:
+            return True
+        return (now - ready_at) >= grace_s
+
     def _auto_signup_reserved_is_stale(self, item: dict) -> bool:
         if str(item.get("status") or "") != "reserved":
             return False
@@ -1143,19 +1172,25 @@ class GoPayCharger:
             cache = self._auto_signup_load_cache()
             items = [item for item in cache.get("items", []) if isinstance(item, dict)]
             changed = False
+            now = time.time()
             for item in items:
                 if str(item.get("status") or "") in ("ready", "reserved") and not self._auto_signup_cache_is_fresh(item):
                     item["status"] = "expired"
-                    item["expired_at"] = time.time()
+                    item["expired_at"] = now
                     changed = True
                 elif self._auto_signup_reserved_is_stale(item):
                     item["status"] = "ready"
-                    item["stale_reserved_released_at"] = time.time()
+                    item["ready_at"] = now
+                    item["stale_reserved_released_at"] = now
                     item.pop("reserved_by", None)
                     changed = True
             ready_items = [
                 item for item in items
-                if str(item.get("status") or "") == "ready" and self._auto_signup_cache_is_fresh(item)
+                if (
+                    str(item.get("status") or "") == "ready"
+                    and self._auto_signup_cache_is_fresh(item)
+                    and self._auto_signup_ready_grace_passed(item, now)
+                )
             ]
             if not ready_items:
                 if changed:
@@ -1164,7 +1199,7 @@ class GoPayCharger:
                 return {}
             item = sorted(ready_items, key=lambda x: float(x.get("phone_acquired_at") or x.get("ready_at") or 0))[0]
             item["status"] = "reserved"
-            item["reserved_at"] = time.time()
+            item["reserved_at"] = now
             item["reserved_by"] = f"{os.getpid()}:{uuid.uuid4()}"
             item.setdefault("lease_id", str(uuid.uuid4()))
             cache["items"] = items
