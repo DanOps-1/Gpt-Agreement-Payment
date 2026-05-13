@@ -756,6 +756,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
     child_prefix = f"  [reg:{log_label}]" if log_label else "  [reg]"
 
     cmd = [python, "-c", script, auth_bundle_dir, cardw_config_path]
+    no_output_timeout = max(30.0, min(float(timeout), float(os.environ.get("REGISTER_NO_OUTPUT_TIMEOUT", "90"))))
     print(f"{reg_prefix} 注册新账号 (config={os.path.basename(cardw_config_path)}) ...")
 
     def _run_register_child(attempt: int) -> tuple[int, dict | None, list[str]]:
@@ -782,11 +783,16 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
 
             threading.Thread(target=_reader, name=f"register-reader-{log_label or attempt}", daemon=True).start()
             stream_done = False
+            last_output_at = time.time()
             while True:
                 if time.time() > deadline:
                     print(f"{reg_prefix} 注册子进程超时 {int(timeout)}s，终止 pid={proc.pid}")
                     _terminate_process_tree(proc)
                     return 124, result, out_lines
+                if time.time() - last_output_at > no_output_timeout:
+                    print(f"{reg_prefix} register child no output for {int(no_output_timeout)}s, terminate pid={proc.pid}")
+                    _terminate_process_tree(proc)
+                    return 125, result, out_lines
                 if proc.poll() is not None and stream_done:
                     break
                 try:
@@ -797,6 +803,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
                     stream_done = True
                     continue
                 line = raw_line.rstrip("\n")
+                last_output_at = time.time()
                 out_lines.append(line)
                 print(f"{child_prefix} {line}")
                 if line.startswith("LOCALAUTH_RESULT_JSON="):
@@ -2620,11 +2627,9 @@ def _extract_registered_email_from_logs(lines) -> str:
 def _is_registration_session_timeout_retryable(lines) -> bool:
     text = "\n".join(str(x or "") for x in (lines or [])[-80:])
     low = text.lower()
-    return (
-        "chatgpt.com session" in low
-        and "15s" in low
-        and "email-verification" in low
-    )
+    if "启动 camoufox" in text or "camoufox" in low:
+        return True
+    return "chatgpt.com session" in low and "15s" in low and "email-verification" in low
 
 
 def _norm_email(value: str) -> str:
