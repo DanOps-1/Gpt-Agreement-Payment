@@ -1297,6 +1297,8 @@ class GoPayCharger:
         exclude_codes: Any = None,
         reactivate: bool = True,
         resend_callback: Callable[[], None] | None = None,
+        resend_after_s: float | None = None,
+        max_resends: int | None = None,
     ) -> str:
         if not self._auto_signup_activation_id:
             raise GoPayError("auto-signup SMS activation is missing")
@@ -1313,6 +1315,8 @@ class GoPayCharger:
             label,
             exclude_codes=excludes,
             resend_callback=resend_callback,
+            resend_after_s=resend_after_s,
+            max_resends=max_resends,
         )
         self._auto_signup_used_otps.append(otp)
         return otp
@@ -2921,6 +2925,8 @@ class GoPayCharger:
                         "link OTP",
                         reactivate=False,
                         resend_callback=self._auto_signup_link_resend_callback(reference_id),
+                        resend_after_s=60.0,
+                        max_resends=1,
                     )
                     return self._gopay_validate_otp(reference_id, next_otp, _attempt=_attempt + 1)
                 raise GoPayOTPRejected(message)
@@ -4480,6 +4486,8 @@ class GoPayCharger:
                 "link 验证码",
                 reactivate=False,
                 resend_callback=self._auto_signup_link_resend_callback(reference_id),
+                resend_after_s=60.0,
+                max_resends=1,
             )
         else:
             otp = self._poll_sms_otp(reference_id) if self.use_sms_otp else self.otp_provider()
@@ -4525,6 +4533,8 @@ class GoPayCharger:
                 "link 验证码",
                 reactivate=False,
                 resend_callback=self._auto_signup_link_resend_callback(reference_id),
+                resend_after_s=60.0,
+                max_resends=1,
             )
         else:
             otp = self._poll_sms_otp(reference_id) if self.use_sms_otp else self.otp_provider()
