@@ -980,7 +980,14 @@ class GoPayCharger:
         self.log(f"[sms] reactivate before {label}")
         self._smsbower_set_status(self._auto_signup_activation_id, 3)
 
-    def _auto_signup_next_otp(self, label: str, *, exclude_codes: Any = None, reactivate: bool = True) -> str:
+    def _auto_signup_next_otp(
+        self,
+        label: str,
+        *,
+        exclude_codes: Any = None,
+        reactivate: bool = True,
+        resend_callback: Callable[[], None] | None = None,
+    ) -> str:
         if not self._auto_signup_activation_id:
             raise GoPayError("auto-signup SMS activation is missing")
         if reactivate:
@@ -991,7 +998,12 @@ class GoPayCharger:
                 excludes.extend(str(x) for x in exclude_codes if x)
             else:
                 excludes.append(str(exclude_codes))
-        otp = self._smsbower_wait_code(self._auto_signup_activation_id, label, exclude_codes=excludes)
+        otp = self._smsbower_wait_code(
+            self._auto_signup_activation_id,
+            label,
+            exclude_codes=excludes,
+            resend_callback=resend_callback,
+        )
         self._auto_signup_used_otps.append(otp)
         return otp
 
@@ -1403,10 +1415,27 @@ class GoPayCharger:
         except Exception as exc:
             self.log(f"[sms] setStatus {status} failed: {type(exc).__name__}: {str(exc)[:160]}")
 
-    def _smsbower_wait_code(self, activation_id: str, label: str, *, exclude_codes: Any = None) -> str:
+    def _smsbower_wait_code(
+        self,
+        activation_id: str,
+        label: str,
+        *,
+        exclude_codes: Any = None,
+        resend_callback: Callable[[], None] | None = None,
+        resend_after_s: float | None = None,
+        max_resends: int | None = None,
+    ) -> str:
         auto = self._auto_signup_cfg()
         timeout = _float_cfg(auto, "otp_timeout", _float_cfg(auto, "timeout", self.auto_login_otp_timeout))
         interval = _float_cfg(auto, "otp_interval", _float_cfg(auto, "interval", max(5.0, self.auto_login_otp_interval)))
+        resend_after = (
+            float(resend_after_s)
+            if resend_after_s is not None
+            else _float_cfg(auto, "sms_otp_resend_after", _float_cfg(auto, "sms_otp_resend_interval", 60.0))
+        )
+        resend_limit = max(0, int(max_resends if max_resends is not None else _int_cfg(auto, "sms_otp_max_resends", 3)))
+        resend_count = 0
+        next_resend_at = time.time() + max(1.0, resend_after)
         deadline = time.time() + max(30.0, timeout)
         while time.time() < deadline:
             text = self._smsbower_get("getStatus", {"id": activation_id})
@@ -1417,6 +1446,11 @@ class GoPayCharger:
             if text.startswith("STATUS_CANCEL") or text.startswith("STATUS_FINISH"):
                 raise OTPCancelled(f"{label} failed: {text}")
             self.log(f"[sms] {label} waiting ({text})")
+            if resend_callback and resend_count < resend_limit and time.time() >= next_resend_at:
+                resend_count += 1
+                self.log(f"[sms] {label} resend {resend_count}/{resend_limit}")
+                resend_callback()
+                next_resend_at = time.time() + max(1.0, resend_after)
             time.sleep(max(1.0, interval))
         raise OTPCancelled(f"{label} timeout after {timeout}s")
 
@@ -2470,6 +2504,13 @@ class GoPayCharger:
             self._gopay_resend_sms_otp(reference_id)
         else:
             self._gopay_user_consent(reference_id)
+
+    def _auto_signup_link_resend_callback(self, reference_id: str) -> Callable[[], None]:
+        def resend() -> None:
+            self._auto_signup_reactivate_sms("link 验证码")
+            self._gopay_resend_sms_otp(reference_id, allow_user_consent_fallback=False)
+
+        return resend
 
     def _poll_sms_otp(self, reference_id: str = "") -> str:
         if not self.sms_otp_poll_url:
@@ -4076,7 +4117,11 @@ class GoPayCharger:
             flush=True,
         )
         if self.auto_signup_enabled and self._auto_signup_activation_id:
-            otp = self._auto_signup_next_otp("link 验证码", reactivate=False)
+            otp = self._auto_signup_next_otp(
+                "link 验证码",
+                reactivate=False,
+                resend_callback=self._auto_signup_link_resend_callback(reference_id),
+            )
         else:
             otp = self._poll_sms_otp(reference_id) if self.use_sms_otp else self.otp_provider()
         if not otp:
@@ -4116,7 +4161,11 @@ class GoPayCharger:
             flush=True,
         )
         if self.auto_signup_enabled and self._auto_signup_activation_id:
-            otp = self._auto_signup_next_otp("link 验证码", reactivate=False)
+            otp = self._auto_signup_next_otp(
+                "link 验证码",
+                reactivate=False,
+                resend_callback=self._auto_signup_link_resend_callback(reference_id),
+            )
         else:
             otp = self._poll_sms_otp(reference_id) if self.use_sms_otp else self.otp_provider()
         if not otp:
