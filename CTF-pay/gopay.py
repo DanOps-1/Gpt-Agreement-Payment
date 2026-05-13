@@ -1661,6 +1661,10 @@ class GoPayCharger:
             if not access_token:
                 raise GoPayError(f"gopay auto-signup token missing access_token: {_log_preview(token_body, 500)}")
 
+            self.pin = pin
+            self.auto_login_pin = pin
+            self.gopay_cfg["pin"] = pin
+            self.gopay_cfg["auto_login_pin"] = pin
             pin_result = self._gopay_setup_pin_after_login(
                 phone=phone,
                 country_code=country_code,
@@ -1673,11 +1677,8 @@ class GoPayCharger:
                 raise GoPayError(f"gopay auto-signup pin setup did not complete: {pin_result}")
             self.country_code = country_code
             self.phone = phone
-            self.pin = pin
-            self.auto_login_pin = pin
             self.gopay_cfg["country_code"] = country_code
             self.gopay_cfg["phone_number"] = phone
-            self.gopay_cfg["pin"] = pin
             token_path = self._gopay_save_login_tokens(
                 phone=phone,
                 country_code=country_code,
@@ -1850,7 +1851,8 @@ class GoPayCharger:
         self.log(
             "[gopay-login] pin setup "
             f"status={setup_resp.get('status_code')} "
-            f"token_tail={(setup_token[-8:] if setup_token else '-')}"
+            f"token_tail={(setup_token[-8:] if setup_token else '-')} "
+            f"pin_tail={self.auto_login_pin[-2:] if self.auto_login_pin else '-'}"
         )
         return {
             "ok": True,
@@ -2596,6 +2598,7 @@ class GoPayCharger:
     def _tokenize_pin(self, challenge_id: str, client_id: str) -> str:
         """POST customer.gopayapi.com/api/v1/users/pin/tokens/nb → JWT."""
         headers = self._pin_web_headers()
+        self.log(f"[gopay-pin] using configured pin_tail={self.pin[-2:] if self.pin else '-'}")
         self.log(
             "[gopay-pin] request headers "
             + _json_for_log(_safe_request_headers_for_debug(headers))
