@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import base64
 import json
 import zipfile
 from datetime import datetime, timezone
@@ -100,19 +101,42 @@ class RetryRequest(IdsRequest):
 
 def _pool_account_for_downstream(item: dict) -> dict:
     email = str(item.get("chatgpt_email") or item.get("email") or "").strip().lower()
+    access_token = item.get("access_token") or ""
+    id_token = item.get("id_token") or ""
     return {
         "id": item.get("id"),
         "email": email,
         "password": item.get("account_password") or item.get("email_password") or "",
-        "access_token": item.get("access_token") or "",
-        "id_token": item.get("id_token") or "",
+        "access_token": access_token,
+        "id_token": id_token,
         "refresh_token": item.get("refresh_token") or "",
+        "account_id": (
+            item.get("account_id")
+            or item.get("team_account_id")
+            or item.get("team_gpt_account_pk")
+            or _account_id_from_token(id_token)
+            or _account_id_from_token(access_token)
+            or ""
+        ),
         "device_id": item.get("device_id") or "",
         "client_id": item.get("mail_client_id") or "",
         "mail_refresh_token": item.get("mail_refresh_token") or "",
         "email_refresh_token": item.get("mail_refresh_token") or "",
         "outlook_refresh_token": item.get("mail_refresh_token") or "",
     }
+
+
+def _account_id_from_token(token: str) -> str:
+    token = str(token or "").strip()
+    parts = token.split(".")
+    if len(parts) < 2:
+        return ""
+    try:
+        payload_part = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_part).decode())
+        return str((payload.get("https://api.openai.com/auth") or {}).get("chatgpt_account_id") or "")
+    except Exception:
+        return ""
 
 
 def _selected_accounts(ids: list[int]) -> list[dict]:
@@ -224,8 +248,8 @@ def export_pool_accounts(req: ExportRequest, user: str = CurrentUser):
             "email": acc.get("email") or "",
             "access_token": acc.get("access_token") or "",
             "refresh_token": acc.get("refresh_token") or "",
-            "id_token": acc.get("id_token") or "",
-            "account_id": "",
+            "id_token": acc.get("id_token") or acc.get("access_token") or "",
+            "account_id": acc.get("account_id") or "",
             "type": "codex",
             "exported_at": datetime.now(timezone.utc).isoformat(),
         }

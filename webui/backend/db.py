@@ -238,6 +238,14 @@ def _text(value: Any) -> str:
     return str(value)
 
 
+def _first_text(row: dict, *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return _text(value)
+    return ""
+
+
 def _email(value: Any) -> str:
     return _text(value).strip().lower()
 
@@ -511,8 +519,8 @@ class Database:
                     _text(row.get("access_token")),
                     _text(row.get("device_id")),
                     _text(row.get("csrf_token")),
-                    _text(row.get("id_token")),
-                    _text(row.get("refresh_token")),
+                    _first_text(row, "id_token", "idToken", "id_token_jwt", "idTokenJwt"),
+                    _first_text(row, "refresh_token", "refreshToken"),
                     _text(row.get("cookie_header")),
                     time.time(),
                 ),
