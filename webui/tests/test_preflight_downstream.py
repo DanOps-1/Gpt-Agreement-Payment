@@ -46,3 +46,31 @@ def test_cpa_ok(client):
         "admin_key": "k",
     })
     assert r.json()["status"] == "ok"
+
+
+@respx.mock
+def test_cpa_normalizes_management_page_url(client):
+    _login(client)
+    respx.get("https://cpa.example.com/api/v0/management/auth-files").mock(
+        return_value=Response(200, json=[])
+    )
+    r = client.post("/api/preflight/cpa", json={
+        "base_url": "https://cpa.example.com/management.html#/",
+        "admin_key": "k",
+    })
+    assert r.json()["status"] == "ok"
+
+
+@respx.mock
+def test_cpa_rejects_html_management_response(client):
+    _login(client)
+    respx.get("https://cpa.example.com/api/v0/management/auth-files").mock(
+        return_value=Response(200, content="<html>management</html>", headers={"content-type": "text/html"})
+    )
+    r = client.post("/api/preflight/cpa", json={
+        "base_url": "https://cpa.example.com/api",
+        "admin_key": "k",
+    })
+    body = r.json()
+    assert body["status"] == "fail"
+    assert "不是 JSON" in body["message"]

@@ -79,6 +79,38 @@ def test_config_health_ok_with_cloudflare_secrets(client, tmp_path, monkeypatch)
     assert not body["blocking"]
 
 
+def test_config_health_ok_with_luckmail_ms_graph(client, tmp_path, monkeypatch):
+    _login(client)
+    pay_path, reg_path = _seed_configs(tmp_path, monkeypatch)
+
+    pay = json.loads(pay_path.read_text(encoding="utf-8"))
+    pay["mail"] = {
+        "provider": "luckmail_ms_graph",
+        "luckmail": {"project_code": "openai", "email_type": "ms_graph"},
+    }
+    pay_path.write_text(json.dumps(pay), encoding="utf-8")
+    reg_path.write_text(json.dumps({
+        "mail": {
+            "provider": "luckmail_ms_graph",
+            "luckmail": {"project_code": "openai", "email_type": "ms_graph"},
+        },
+        "captcha": {"client_key": "captcha-key"},
+    }), encoding="utf-8")
+
+    db = get_db()
+    db.clear_runtime_data()
+    db.set_runtime_json("secrets", {
+        "luckmail": {"api_key": "lk-key"}
+    })
+
+    r = client.post("/api/config/health", json={"mode": "single", "paypal": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert not body["blocking"]
+    assert any(c["name"] == "luckmail" and c["status"] == "ok" for c in body["checks"])
+
+
 def test_run_start_blocked_by_config_health(client, tmp_path, monkeypatch):
     _login(client)
     _seed_configs(tmp_path, monkeypatch)

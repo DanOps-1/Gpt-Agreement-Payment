@@ -435,6 +435,17 @@ class GoPayCharger:
             if ref:
                 self.log(f"[gopay] midtrans linking ok reference={ref}")
                 return ref
+            if r.status_code == 429:
+                retry_429_count += 1
+                last_err = r.text[:120]
+                if retry_429_count > LINK_429_RETRY_LIMIT:
+                    raise GoPayError(f"midtrans linking 429 exhausted retries: {last_err}")
+                self.log(
+                    "[gopay] midtrans linking 429 rate limited, "
+                    f"{LINK_429_RETRY_SLEEP_S}s 后重试 {retry_429_count}/{LINK_429_RETRY_LIMIT}"
+                )
+                time.sleep(LINK_429_RETRY_SLEEP_S)
+                continue
             if r.status_code == 406:
                 try:
                     j = r.json()
@@ -446,7 +457,10 @@ class GoPayCharger:
                     last_err = str(j[0])
                 else:
                     last_err = r.text[:120]
-                self.log(f"[gopay] midtrans linking 406 ({last_err}), 冷却 {LINK_RETRY_SLEEP_S}s 再重试 {attempt}/{LINK_RETRY_LIMIT}")
+                retry_406_count += 1
+                if retry_406_count > LINK_RETRY_LIMIT:
+                    break
+                self.log(f"[gopay] midtrans linking 406 ({last_err}), 冷却 {LINK_RETRY_SLEEP_S}s 再重试 {retry_406_count}/{LINK_RETRY_LIMIT}")
                 time.sleep(LINK_RETRY_SLEEP_S)
                 continue
             if not bypass_tried and self._linking_is_rate_limited(r):

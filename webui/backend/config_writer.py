@@ -2,6 +2,7 @@ import json
 import time
 from pathlib import Path
 from . import settings as s
+from .cpa_utils import normalize_cpa_base_url
 from .db import get_db
 
 
@@ -26,10 +27,50 @@ def _payment_method(answers: dict) -> str:
     return (answers.get("payment") or {}).get("method", "both")
 
 
+def _mail_provider(answers: dict) -> str:
+    provider = (answers.get("mail_provider") or {}).get("provider", "")
+    provider = str(provider or "").strip().lower()
+    if provider in ("luckmail", "luckyous", "luckyous_ms_graph", "luckmail_ms_graph", "ms_graph"):
+        return "luckmail_ms_graph"
+    return "cloudflare_kv"
+
+
+def _project_mail(answers: dict, *, include_secrets: bool = False) -> dict:
+    provider = _mail_provider(answers)
+    if provider == "luckmail_ms_graph":
+        raw = answers.get("luckmail") or {}
+        luckmail: dict = {
+            "base_url": raw.get("base_url") or "https://mails.luckyous.com",
+            "project_code": raw.get("project_code", ""),
+            "email_type": "ms_graph",
+            "domain": raw.get("domain", ""),
+            "poll_interval_s": int(raw.get("poll_interval_s") or 3),
+            "timeout_seconds": int(raw.get("timeout_seconds") or 180),
+        }
+        if include_secrets:
+            luckmail["api_key"] = raw.get("api_key", "")
+        return {
+            "provider": "luckmail_ms_graph",
+            "luckmail": luckmail,
+        }
+
+    zones = (answers.get("cloudflare") or {}).get("zone_names") or []
+    out = {"provider": "cloudflare_kv"}
+    if zones:
+        out.update({
+            "catch_all_domain": zones[0],
+            "catch_all_domains": list(zones),
+        })
+    return out
+
+
 def _project_pay(answers: dict) -> dict:
     """Map flat wizard answers onto CTF-pay config schema."""
     out: dict = {}
     pm = _payment_method(answers)
+    mail = _project_mail(answers)
+    if mail:
+        out["mail"] = mail
     if "paypal" in answers and pm in ("paypal", "both"):
         out["paypal"] = answers["paypal"]
     if "captcha" in answers:
@@ -40,7 +81,10 @@ def _project_pay(answers: dict) -> dict:
     if "team_system" in answers:
         out["team_system"] = answers["team_system"]
     if "cpa" in answers:
-        out["cpa"] = answers["cpa"]
+        cpa = dict(answers["cpa"] or {})
+        if cpa.get("base_url"):
+            cpa["base_url"] = normalize_cpa_base_url(cpa.get("base_url") or "")
+        out["cpa"] = cpa
     if pm == "gopay" and "gopay" in answers:
         gp = answers["gopay"] or {}
         if all(gp.get(k) for k in ("country_code", "phone_number", "pin")):
@@ -112,15 +156,11 @@ def _project_reg(answers: dict) -> dict:
     """Map flat wizard answers onto CTF-reg config schema."""
     out: dict = {}
     pm = _payment_method(answers)
-    # mail.catch_all_domain(s) 来自 Step03 Cloudflare 的 zone_names
-    # IMAP 字段（imap_server/port/email/auth_code）已彻底删除——OTP 走
-    # CF Email Worker → KV，凭证存 SQLite runtime_meta[secrets]。
-    zones = (answers.get("cloudflare") or {}).get("zone_names") or []
-    if zones:
-        out["mail"] = {
-            "catch_all_domain": zones[0],
-            "catch_all_domains": list(zones),
-        }
+    # IMAP 字段（imap_server/port/email/auth_code）已彻底删除。
+    # mail 可选 Cloudflare KV 或 LuckMail ms_graph；敏感凭证进 SQLite secrets。
+    mail = _project_mail(answers)
+    if mail:
+        out["mail"] = mail
     if "card" in answers and pm in ("card", "both"):
         out["card"] = {k: answers["card"].get(k, "") for k in ("number", "cvc", "exp_month", "exp_year")}
     if "billing" in answers:
@@ -143,12 +183,13 @@ def _project_reg(answers: dict) -> dict:
 
 
 def _write_secrets(answers: dict) -> str | None:
-    """合并 Cloudflare 凭证到 SQLite runtime_meta[secrets]。
+    """合并外部服务凭证到 SQLite runtime_meta[secrets]。
 
     输入合成：
       - api_token / zone_names: Step03 cloudflare 的 cf_token + zone_names
       - account_id / otp_kv_namespace_id / otp_worker_name: Step04 cloudflare_kv
       - forward_to (可选): Step03 forward_to
+      - luckmail.api_key: Step03 LuckMail
 
     返回存储位置描述；如无任何字段则返回 None。
     """
@@ -169,14 +210,22 @@ def _write_secrets(answers: dict) -> str | None:
     # 注：fallback_to 不写 secrets——它只是给 Worker 部署时绑的
     # FALLBACK_TO env var 用，pipeline.py 这边没人读它。
 
-    if not cf_section:
+    lm = answers.get("luckmail") or {}
+    luckmail_section: dict = {}
+    if lm.get("api_key"):
+        luckmail_section["api_key"] = lm["api_key"]
+
+    if not cf_section and not luckmail_section:
         return None
 
     db = get_db()
     existing = db.get_runtime_json("secrets", {})
     if not isinstance(existing, dict):
         existing = {}
-    existing.setdefault("cloudflare", {}).update(cf_section)
+    if cf_section:
+        existing.setdefault("cloudflare", {}).update(cf_section)
+    if luckmail_section:
+        existing.setdefault("luckmail", {}).update(luckmail_section)
     db.set_runtime_json("secrets", existing)
     return "sqlite:runtime_meta/secrets"
 

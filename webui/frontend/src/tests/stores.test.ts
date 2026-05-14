@@ -53,11 +53,24 @@ describe("wizardStore", () => {
     expect(s.isStepUnlocked(4)).toBe(true);
   });
 
-  it("isStepHidden gopay: keep step 6 (slot reused), hide 7 + 13", () => {
+  it("isStepUnlocked uses luckmail instead of cloudflare gates", () => {
+    const s = useWizardStore();
+    s.setAnswer("mail_provider", { provider: "luckmail_ms_graph" });
+    s.setPreflight("system", { status: "ok", message: "", checks: [] });
+    s.setPreflight("luckmail", { status: "ok", message: "", checks: [] });
+    expect(s.isStepUnlocked(4)).toBe(true);
+    expect(s.isStepUnlocked(5)).toBe(true);
+    expect(s.isStepUnlocked(6)).toBe(false);
+    s.setPreflight("proxy", { status: "ok", message: "", checks: [] });
+    expect(s.isStepUnlocked(6)).toBe(true);
+    expect(s.isStepHidden(4)).toBe(true);
+  });
+
+  it("isStepHidden gopay: hide step 6 + 13", () => {
     const s = useWizardStore();
     s.setAnswer("payment", { method: "gopay" });
-    expect(s.isStepHidden(6)).toBe(false);
-    expect(s.isStepHidden(7)).toBe(true);
+    expect(s.isStepHidden(6)).toBe(true);
+    expect(s.isStepHidden(7)).toBe(false);
     expect(s.isStepHidden(13)).toBe(true);
   });
 

@@ -475,9 +475,9 @@ def _provision_openai_auth_via_local_bundle(cfg: dict, fresh_cfg: dict) -> dict:
         billing["currency"] = str(plan_cfg["billing_currency"]).upper()
 
     mail_cfg = ab_cfg.setdefault("mail", {})
-    # IMAP/SMTP 字段已废弃（OTP 走 CF Email Worker → KV，见 cf_kv_otp_provider）；
-    # 这里只保留 catch_all_domain / catch_all_domains / auto_provision。
-    for key in ("catch_all_domain", "catch_all_domains", "auto_provision"):
+    # IMAP/SMTP 字段已废弃。这里保留当前邮件 provider 所需配置：
+    # Cloudflare KV 或 LuckMail ms_graph。
+    for key in ("provider", "catch_all_domain", "catch_all_domains", "auto_provision", "luckmail"):
         if key in auto_cfg and auto_cfg.get(key) not in (None, ""):
             mail_cfg[key] = auto_cfg.get(key)
     if isinstance(auto_cfg.get("mail"), dict):
@@ -534,7 +534,7 @@ logging.basicConfig(
 )
 
 cfg = Config.from_file(config_path)
-mail = MailProvider(cfg.mail.catch_all_domain)
+mail = MailProvider.from_config(cfg.mail)
 flow = AuthFlow(cfg)
 login_email = (os.getenv("LOCALAUTH_LOGIN_EMAIL") or "").strip()
 login_password = os.getenv("LOCALAUTH_LOGIN_PASSWORD", "")
@@ -5082,11 +5082,31 @@ def _safe_screenshot(page, path: str):
         pass
 
 
-def _fetch_openai_login_otp(target_email: str, timeout: int = 180) -> str:
-    """从 CF KV 取 OpenAI 登录 OTP（worker 已替代 IMAP→QQ 转发链路）。
+def _fetch_openai_login_otp(
+    target_email: str,
+    mail_cfg: dict = None,
+    timeout: int = 180,
+    mail_provider=None,
+) -> str:
+    """按 mail_cfg 取 OpenAI 登录 OTP。
 
     返回空串表示超时或 KV 路径配置缺失，调用方按需 fallback。
     """
+    mail_cfg = mail_cfg or {}
+    provider = str(mail_cfg.get("provider") or "").strip().lower()
+    if provider in ("luckmail", "luckyous", "luckyous_ms_graph", "luckmail_ms_graph", "ms_graph"):
+        try:
+            from mail_provider import MailProvider
+            mp = mail_provider or MailProvider.from_config(mail_cfg)
+            mp.prepare_for_otp(target_email, reason="rt_login")
+            return mp.wait_for_otp(target_email, timeout=timeout)
+        except TimeoutError:
+            _log(f"      [RT-OTP] LuckMail 等 OTP 超时 {timeout}s")
+            return ""
+        except Exception as e:
+            _log(f"      [RT-OTP] LuckMail 取 OTP 异常: {e}")
+            return ""
+
     try:
         from cf_kv_otp_provider import CloudflareKVOtpProvider
     except ImportError as e:
@@ -5199,6 +5219,12 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
     has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
     tmp_profile = _tmp.mkdtemp(prefix="rt_login_")
     code_captured = {"url": ""}
+    mail_provider_for_otp = None
+    try:
+        from mail_provider import MailProvider as _OtpMailProvider
+        mail_provider_for_otp = _OtpMailProvider.from_config(mail_cfg or {})
+    except Exception as e:
+        _log(f"      [RT-OTP] 初始化 mail provider 失败，将按旧路径尝试: {e}")
 
     try:
         with Camoufox(
@@ -5240,6 +5266,8 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
             try:
                 page.wait_for_selector('input[type="email"], input[name="email"]',
                                        state="visible", timeout=20000)
+                if mail_provider_for_otp is not None:
+                    mail_provider_for_otp.prepare_for_otp(email, reason="rt_login_before_email_submit")
                 email_input = page.query_selector('input[type="email"]:visible') or \
                               page.query_selector('input[name="email"]:visible')
                 email_input.click(); time.sleep(0.3)
@@ -5301,8 +5329,13 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                     page.query_selector('input[autocomplete="one-time-code"]') or
                     page.query_selector('input[inputmode="numeric"]')):
                     if not otp_fetched:
-                        _log("      [RT] 检测到 OTP 页面，从 IMAP 取验证码 ...")
-                        otp_code = _fetch_openai_login_otp(target_email=email, timeout=180)
+                        _log("      [RT] 检测到 OTP 页面，取邮箱验证码 ...")
+                        otp_code = _fetch_openai_login_otp(
+                            target_email=email,
+                            mail_cfg=mail_cfg,
+                            timeout=180,
+                            mail_provider=mail_provider_for_otp,
+                        )
                         if not otp_code:
                             _log("      [RT] OTP 获取超时")
                             return ""

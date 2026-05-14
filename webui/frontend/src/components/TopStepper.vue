@@ -40,11 +40,13 @@ watch(() => store.currentStep, async () => {
 // 否则选了 GoPay 时 stepper 还显示「PAYPAL」会跟实际表单错位。
 const steps = computed(() => {
   const pm = (store.answers.payment as any)?.method;
+  const provider = (store.answers.mail_provider as any)?.provider;
   const paySlotTitle = pm === "gopay" ? "GOPAY" : "PAYPAL";
+  const mailTitle = provider === "luckmail_ms_graph" ? "LUCKMAIL" : "CF";
   return [
     { n: 1, title: "模式", phase: "基础" },
     { n: 2, title: "系统", phase: "基础" },
-    { n: 3, title: "CF", phase: "基础" },
+    { n: 3, title: mailTitle, phase: "基础" },
     { n: 4, title: "CF KV", phase: "基础" },
     { n: 5, title: "代理", phase: "基础" },
     { n: 6, title: paySlotTitle, phase: "支付" },
