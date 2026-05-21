@@ -89,6 +89,46 @@ flowchart LR
 
 ![webui 截图](docs/images/webui.png)
 
+#### Docker 部署（最快路径，一键起）
+
+仓库自带 `Dockerfile`（多阶段 build：node 前端 + ubuntu 24.04 runtime）+ `docker-compose.yml`，把所有系统依赖 / Playwright Chromium+Firefox / Camoufox / gost SOCKS5 中继 / Node QuickJS（OpenAI Sentinel 用）全打进镜像。host 上的 git working tree 作为单一真实源，整仓 bind mount 进容器，改完 Python 代码 `docker compose restart` 即时生效，不用重 build。
+
+```bash
+git clone https://github.com/DanOps-1/Gpt-Agreement-Payment
+cd Gpt-Agreement-Payment
+docker compose up -d --build
+# 默认监听 127.0.0.1:8765（host 端口），浏览器开 http://127.0.0.1:8765/
+# 首次访问跳 /setup 创建管理员
+```
+
+常用维护命令：
+
+```bash
+# 实时日志
+docker compose logs -f webui
+
+# 进容器调试（pip list / 跑测试 / inspect SQLite）
+docker compose exec webui bash
+
+# 改完 Python 代码后让 uvicorn 重载（bind mount 已 sync 源码，只需重启进程）
+docker compose restart webui
+
+# 改完前端代码后在容器内 rebuild dist
+docker compose exec webui sh -c "cd /app/webui/frontend && npm run build"
+
+# 完全停 + 清容器
+docker compose down
+
+# 镜像升级 (拉新 base / 升 Python 包)
+docker compose build --no-cache && docker compose up -d
+```
+
+数据落盘：`output/` 是 host 目录 bind mount，里面 `webui.db`（SQLite）+ 运行结果 / 日志 host 可见可备份。`webui/frontend/dist` 和 `node_modules` 走 anonymous volume，被镜像 baked 版本覆盖（不被 host 空目录覆盖）。
+
+公网访问（nginx 反代 + HTTPS）见 [`webui/README.md`](webui/README.md)。默认 `docker-compose.yml` 把端口绑 `127.0.0.1:8765`；要直接 `0.0.0.0` 暴露请改 `ports` 段（不建议，没认证层在前面）。
+
+#### 手装（不用 Docker）
+
 ```bash
 # 1. 后端依赖
 pip install -r webui/requirements.txt
@@ -131,9 +171,11 @@ cp CTF-pay/config.paypal.example.json     CTF-pay/config.paypal.json
 cp CTF-reg/config.paypal-proxy.example.json   CTF-reg/config.paypal-proxy.json
 ```
 
-字段含义和 schema 看 [`docs/configuration.md`](docs/configuration.md)。
+字段含义和 schema 看 [`docs/configuration.md`](docs/configuration.md)。Docker 部署的 entrypoint 第一次启动时会自动 bootstrap 这两份 config，host 编辑后 `docker compose restart webui` 生效。
 
 ### 跑
+
+> Docker 用户用 webui 跑就够了。下面的 CLI 命令是给本地原生跑的用户；Docker 里要跑同样命令先 `docker compose exec webui bash` 进容器。
 
 ```bash
 # 1) 单次完整流程 (PayPal billing agreement)
