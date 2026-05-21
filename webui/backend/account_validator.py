@@ -195,6 +195,170 @@ def _probe_check_v4_plan(access_token: str, timeout: float,
     return "valid", plan, msg
 
 
+def _probe_check_v4_plan_via_cookie(account: dict, timeout: float,
+                                      proxy: Optional[str]) -> tuple[str, str, str]:
+    """access_token 被 revoke 时的 fallback: 用 session_token cookie 直接调
+    /backend-api/accounts/check (chrome 指纹 + curl_cffi). cookie 引用 server-side
+    session, 比 Bearer JWT 的 revoke 边界更宽松, plan 变更后短期内仍可读 entitlement.
+    返回 (status, plan_type, message).
+    """
+    try:
+        from curl_cffi import requests as cr
+    except Exception as e:
+        return "unknown", "", f"check/v4-cookie: curl_cffi missing: {e}"
+
+    session_token = (account.get("session_token") or "").strip()
+    if not session_token:
+        return "unknown", "", "check/v4-cookie: no session_token"
+
+    cookies = {"__Secure-next-auth.session-token": session_token}
+    csrf_token = (account.get("csrf_token") or "").strip()
+    if csrf_token:
+        cookies["__Host-next-auth.csrf-token"] = csrf_token
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": _USER_AGENT,
+        "Referer": "https://chatgpt.com/",
+    }
+
+    proxies_arg = None
+    if proxy:
+        p = proxy.replace("socks5://", "socks5h://")
+        proxies_arg = {"http": p, "https": p}
+
+    def _try(proxies_dict):
+        with cr.Session(impersonate="chrome136", proxies=proxies_dict) as s:
+            return s.get(_CHECK_V4_URL, headers=headers, cookies=cookies, timeout=timeout)
+
+    r = None
+    last_err = ""
+    tried = []
+    if proxies_arg:
+        tried.append(("proxy", proxies_arg))
+    tried.append(("direct", None))
+    for label, proxies in tried:
+        try:
+            r = _try(proxies)
+            break
+        except Exception as e:
+            last_err = f"{label}: {type(e).__name__}: {str(e)[:80]}"
+            r = None
+            continue
+    if r is None:
+        return "unknown", "", f"check/v4-cookie: {last_err}"
+
+    code = getattr(r, "status_code", 0)
+    if code == 401:
+        return "invalid", "", "check/v4-cookie: 401 (session revoked)"
+    if code == 403:
+        return "invalid", "", "check/v4-cookie: 403"
+    if code != 200:
+        return "unknown", "", f"check/v4-cookie: http {code}"
+    try:
+        data = r.json()
+    except Exception:
+        return "unknown", "", "check/v4-cookie: 200 non-json"
+    if not isinstance(data, dict):
+        return "unknown", "", "check/v4-cookie: 200 non-dict"
+    acc = (data.get("accounts") or {}).get("default") or {}
+    if not acc:
+        return "unknown", "", "check/v4-cookie: no default account"
+    ent = acc.get("entitlement") or {}
+    has_active = bool(ent.get("has_active_subscription"))
+    sub_plan = str(ent.get("subscription_plan") or "")
+    plan = _subscription_plan_to_normal(sub_plan)
+    if not plan:
+        plan = "free" if not has_active else "unknown"
+    msg = (
+        f"check/v4-cookie ok; sub_plan={sub_plan!r} plan={plan} active={has_active}"
+        f" expires={ent.get('expires_at')}"
+    )
+    return "valid", plan, msg
+
+
+def _refresh_at_via_session_cookie(account: dict, timeout: float,
+                                     proxy: Optional[str]) -> tuple[str, str]:
+    """OpenAI 在 plan 变更 (e.g. plus 激活) 时 revoke 旧 access_token,
+    /backend-api/accounts/check 返 401 token_invalidated. 用 session_token cookie
+    调 NextAuth `/api/auth/session` 拿新签的 access_token (带新 plan claim).
+    走 curl_cffi (chrome 指纹), 避免 cookie auth 被 CF 风控拦截 (httpx + raw
+    requests 实测 403 bot challenge).
+
+    返回 (new_access_token, message). 成功时同步写回 registered_accounts.access_token.
+    """
+    try:
+        from curl_cffi import requests as cr
+    except Exception as e:
+        return "", f"session refresh: curl_cffi missing: {e}"
+
+    session_token = (account.get("session_token") or "").strip()
+    if not session_token:
+        return "", "session refresh: no session_token"
+    csrf_token = (account.get("csrf_token") or "").strip()
+
+    cookies = {"__Secure-next-auth.session-token": session_token}
+    if csrf_token:
+        cookies["__Host-next-auth.csrf-token"] = csrf_token
+
+    proxies_arg = None
+    if proxy:
+        p = proxy.replace("socks5://", "socks5h://")
+        proxies_arg = {"http": p, "https": p}
+
+    headers = {
+        "User-Agent": _USER_AGENT,
+        "Accept": "application/json",
+        "Referer": "https://chatgpt.com/",
+    }
+
+    def _try(proxies_dict):
+        with cr.Session(impersonate="chrome136", proxies=proxies_dict) as s:
+            return s.get(_SESSION_URL, headers=headers, cookies=cookies, timeout=timeout)
+
+    r = None
+    last_err = ""
+    tried = []
+    if proxies_arg:
+        tried.append(("proxy", proxies_arg))
+    tried.append(("direct", None))
+    for label, proxies in tried:
+        try:
+            r = _try(proxies)
+            break
+        except Exception as e:
+            last_err = f"{label}: {type(e).__name__}: {str(e)[:80]}"
+            r = None
+            continue
+    if r is None:
+        return "", f"session refresh: {last_err}"
+
+    code = getattr(r, "status_code", 0)
+    if code != 200:
+        return "", f"session refresh: http {code}"
+
+    try:
+        data = r.json()
+    except Exception:
+        return "", "session refresh: 200 non-json"
+    new_at = ""
+    if isinstance(data, dict):
+        new_at = str(data.get("accessToken") or "").strip()
+    if not new_at or new_at.count(".") != 2:
+        return "", "session refresh: no accessToken in body"
+
+    # 写回 DB
+    try:
+        db = get_db()
+        with db._conn() as c:
+            c.execute(
+                "UPDATE registered_accounts SET access_token=? WHERE id=?",
+                (new_at, int(account.get("id") or 0)),
+            )
+    except Exception as e:
+        print(f"[validator] session refresh write-back failed: {e}")
+    return new_at, f"session refresh ok (len={len(new_at)})"
+
+
 def _gost_alive(port: int = 18898) -> bool:
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=1):
@@ -502,6 +666,26 @@ def validate_account_by_id(account_id: int, *, timeout_s: float = 10.0,
     if at:
         proxy = "socks5://127.0.0.1:18898" if use_proxy and _gost_alive() else None
         live_status, live_plan, live_msg = _probe_check_v4_plan(at, timeout_s, proxy)
+        # access_token 在 plan 变更时被 OpenAI revoke (e.g. plus 激活, setup_intent
+        # succeed). 401 时用 session_token cookie 走 NextAuth /api/auth/session
+        # 拿新签的 access_token (带新 plan claim), 重新 probe.
+        # access_token 在 plan 变更时被 OpenAI revoke (e.g. plus 激活, setup_intent
+        # succeed). 401 时按优先级 fallback:
+        #   1. cookie 直接走 check/v4 (session-side revoke 比 Bearer JWT 宽松)
+        #   2. NextAuth /api/auth/session 拿新签 access_token 再 probe
+        if live_status == "invalid" and "401" in (live_msg or "") and account.get("session_token"):
+            ck_status, ck_plan, ck_msg = _probe_check_v4_plan_via_cookie(account, timeout_s, proxy)
+            print(f"[validator {account_id}] cookie fallback: {ck_msg}")
+            if ck_status == "valid":
+                live_status, live_plan, live_msg = ck_status, ck_plan, f"cookie-fallback | {ck_msg}"
+            else:
+                new_at, refresh_msg = _refresh_at_via_session_cookie(account, timeout_s, proxy)
+                print(f"[validator {account_id}] AT refresh: {refresh_msg}")
+                if new_at and new_at != at:
+                    account["access_token"] = new_at
+                    at = new_at
+                    retry_status, retry_plan, retry_msg = _probe_check_v4_plan(at, timeout_s, proxy)
+                    live_status, live_plan, live_msg = retry_status, retry_plan, f"refreshed-AT | {retry_msg}"
         if live_status == "valid":
             # curl_cffi+chrome impersonate 200 OK from /backend-api/accounts/check 是
             # 比 httpx /me 403 更可靠的"token 有效"信号 (httpx 缺浏览器指纹常被 CF 误拦)。

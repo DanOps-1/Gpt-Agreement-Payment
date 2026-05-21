@@ -35,10 +35,17 @@ class BridgeHelper:
     def __init__(self, url: str):
         self.url = url
         self.playwright = sync_playwright().start()
-        self.browser = self.playwright.chromium.launch(headless=True)
+        # Try chromium then fall back to firefox (docker may have only firefox installed)
+        try:
+            self.browser = self.playwright.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+            )
+        except Exception:
+            self.browser = self.playwright.firefox.launch(headless=True)
         self.page = self.browser.new_page(viewport={"width": 1280, "height": 960})
         self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-        self.page.wait_for_timeout(3_000)
+        self.page.wait_for_timeout(2_000)
 
     def close(self):
         try:

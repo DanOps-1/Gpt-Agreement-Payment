@@ -145,7 +145,7 @@ def _requires_email_otp(req: dict) -> bool:
 
 def _payment_kind(req: dict) -> str:
     mode = _text(req.get("mode")) or "single"
-    if mode in {"free_register", "free_backfill_rt"} or bool(req.get("register_only")):
+    if mode in {"free_register", "free_backfill_rt", "promo_link"} or bool(req.get("register_only")):
         return "none"
     if bool(req.get("qris")):
         return "qris"

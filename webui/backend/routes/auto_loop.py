@@ -19,7 +19,7 @@ class StartRequest(BaseModel):
     qris: bool = False
     pay_only: bool = False
     register_only: bool = False
-    register_mode: str = Field(default="browser", pattern="^(browser|protocol)$")
+    register_mode: str = Field(default="protocol", pattern="^(browser|protocol)$")
 
 
 @router.post("/start")
