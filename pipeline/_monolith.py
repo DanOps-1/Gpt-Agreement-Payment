@@ -2686,6 +2686,38 @@ class WebshareClient:
         raise RuntimeError("Webshare 等待新代理超时")
 
 
+_GOST_LAST_FILE = "/tmp/gost_last.json"
+
+
+def _save_gost_last(new_ip: str, new_port: int, username: str, password: str,
+                     listen_port: int, upstream_scheme: str) -> None:
+    """成功 swap 后落盘, 让别的子进程在 webshare API 抖动时也能 fallback 拉起.
+    敏感字段 (password) 在容器内, /tmp 只本容器可访问."""
+    try:
+        import json as _json
+        with open(_GOST_LAST_FILE, "w", encoding="utf-8") as f:
+            _json.dump({
+                "proxy_address": new_ip,
+                "port": int(new_port),
+                "username": username,
+                "password": password,
+                "listen_port": int(listen_port),
+                "upstream_scheme": upstream_scheme,
+                "saved_at": time.time(),
+            }, f)
+    except Exception:
+        pass
+
+
+def _load_gost_last() -> dict | None:
+    try:
+        import json as _json
+        with open(_GOST_LAST_FILE, "r", encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception:
+        return None
+
+
 def _swap_gost_relay(new_ip: str, new_port: int, username: str, password: str,
                        listen_port: int = 18898, upstream_scheme: str = "http") -> None:
     """把监听 listen_port 的 gost 换成新上游。安全匹配进程命令行中的 -L=socks5://:<port> 片段。"""
@@ -2740,6 +2772,7 @@ def _swap_gost_relay(new_ip: str, new_port: int, username: str, password: str,
     while time.time() < settle_deadline:
         if _probe_gost_upstream(listen_port, timeout_s=3):
             print(f"[gost] 启动新中继 PID={p.pid}  {upstream}  (探活通过)")
+            _save_gost_last(new_ip, new_port, username, password, listen_port, upstream_scheme)
             return
         time.sleep(0.5)
     raise RuntimeError(
@@ -2764,7 +2797,12 @@ def _probe_gost_upstream(listen_port: int, timeout_s: int = 5) -> bool:
 
 def _ensure_gost_alive(card_cfg: dict, team_client=None) -> bool:
     """启动/循环前调。先检 listen，再做上游探活——任何一关挂了都走 refresh+swap
-    自愈（覆盖 Webshare 换 IP 但 gost 还指着旧 IP 这种 407 场景）。"""
+    自愈（覆盖 Webshare 换 IP 但 gost 还指着旧 IP 这种 407 场景）。
+
+    并发 worker 同时调时, 用 /tmp/gost_ensure.lock flock 串行化, 避免
+    N worker 同时 swap_gost_relay 互相 kill 对方刚起的 gost (产生 chromium
+    ERR_CONNECTION_CLOSED). 拿不到 lock 就 spin 等, 第二个 worker 进 lock 时
+    listen 已在 + 探活通过, 直接 return True."""
     ws_cfg = (card_cfg or {}).get("webshare") or {}
     if not ws_cfg.get("enabled"):
         return False
@@ -2772,6 +2810,48 @@ def _ensure_gost_alive(card_cfg: dict, team_client=None) -> bool:
     listen_port = int(ws_cfg.get("gost_listen_port", 18898))
     if not api_key:
         return False
+
+    import fcntl
+    lock_path = f"/tmp/gost_ensure_{listen_port}.lock"
+    lock_fd = None
+    try:
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+        # 阻塞式 LOCK_EX, 最长等 90s (gost swap 最长 ~15s, 加 webshare API 失败兜底 30s timeout)
+        import signal as _sig
+        class _Timeout(Exception): ...
+        def _alarm(_s, _f):
+            raise _Timeout()
+        old_handler = _sig.signal(_sig.SIGALRM, _alarm)
+        _sig.alarm(90)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        except _Timeout:
+            print(f"[gost] ensure lock 等 90s 超时, 放弃")
+            return False
+        finally:
+            _sig.alarm(0)
+            _sig.signal(_sig.SIGALRM, old_handler)
+    except Exception as e:
+        # fcntl 不支持的环境 (mac / windows) 退到无锁路径
+        print(f"[gost] flock 失败 ({e}), 走无锁路径")
+        if lock_fd is not None:
+            try: os.close(lock_fd)
+            except Exception: pass
+        lock_fd = None
+
+    try:
+        return _ensure_gost_alive_inner(card_cfg, team_client, ws_cfg, listen_port)
+    finally:
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+            except Exception:
+                pass
+
+
+def _ensure_gost_alive_inner(card_cfg: dict, team_client, ws_cfg: dict, listen_port: int) -> bool:
+    api_key = (ws_cfg.get("api_key") or "").strip()
     # 检 listen
     listening = False
     try:
@@ -2796,13 +2876,29 @@ def _ensure_gost_alive(card_cfg: dict, team_client=None) -> bool:
             print(f"[gost] 上游死，rotate 自愈也失败: {e}")
             return False
     print(f"[gost] listen :{listen_port} 无监听，自动拉起")
+    upstream_scheme = str(ws_cfg.get("gost_upstream_scheme", "http"))
+    px: dict | None = None
     try:
         client = WebshareClient(api_key)
         px = client.get_current_proxy()
     except Exception as e:
         print(f"[gost] 查询 Webshare 当前 IP 失败: {e}")
-        return False
-    upstream_scheme = str(ws_cfg.get("gost_upstream_scheme", "http"))
+        # webshare API 抖 (502/timeout 常见) → 回退用上次 _swap_gost_relay 成功
+        # 留下的 cache (/tmp/gost_last.json), 至少先把 gost 拉起再说. 即便 IP 已经
+        # 被 webshare 池替换了 _probe_gost_upstream 也会立刻探活失败, 调用方 retry
+        # 时会重新进 listen-在-但-上游-死 分支触发 rotate.
+        cached = _load_gost_last()
+        if cached:
+            print(f"[gost] fallback 用 cache IP {cached.get('proxy_address')}:{cached.get('port')} 拉起")
+            px = {
+                "proxy_address": cached["proxy_address"],
+                "port": int(cached["port"]),
+                "username": cached["username"],
+                "password": cached["password"],
+            }
+        else:
+            print("[gost] 也没 /tmp/gost_last.json cache, 放弃")
+            return False
     try:
         _swap_gost_relay(px["proxy_address"], int(px["port"]),
                           px["username"], px["password"],

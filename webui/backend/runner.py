@@ -103,8 +103,45 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
               gopay_otp_file: str = "", qris: bool = False, count: int = 0,
               target_emails: Optional[list] = None, rt_only: bool = False,
               promo_plan: str = "plus", promo_country: str = "ID",
-              promo_currency: str = "IDR", promo_campaign_id: str = "") -> list[str]:
+              promo_currency: str = "IDR", promo_campaign_id: str = "",
+              # no_card_plus 参数 (走独立 scripts/no_card_paypal_plus.py, 不走 pipeline.py)
+              no_card_promo_link_id: int = 0,
+              no_card_phone: str = "3507505224",
+              no_card_otp_timeout: int = 240,
+              no_card_signup_retries: int = 3,
+              no_card_node_rpa_timeout: int = 900,
+              no_card_max_due: int = 100,
+              no_card_allow_already_paid: bool = False,
+              no_card_allow_full_price: bool = False,
+              no_card_paypal_country: str = "US",
+              no_card_paypal_lang: str = "en",
+              no_card_inventory_mail_source: str = "any") -> list[str]:
     """根据参数拼出最终命令行。"""
+    # no_card_plus 模式: 独立脚本, 走 Chromium RPA 跑 promo link → PayPal → ChatGPT plus.
+    # SMS API URL 从 config.paypal.json::paypal.sms_api_url 或环境变量读, 不通过 cmdline
+    # 传 (token 敏感, 避免落进 ps/log).
+    if mode == "no_card_plus":
+        cmd = ["xvfb-run", "-a", "python", "-u", "scripts/no_card_paypal_plus.py",
+               "--config", str(s.PAY_CONFIG_PATH),
+               "--paypal-node-rpa",
+               "--paypal-node-rpa-timeout", str(int(no_card_node_rpa_timeout)),
+               "--paypal-signup-retries", str(int(no_card_signup_retries)),
+               "--paypal-country", (no_card_paypal_country or "US").upper(),
+               "--paypal-lang", (no_card_paypal_lang or "en").lower(),
+               "--phone", (no_card_phone or "3507505224"),
+               "--otp-timeout", str(int(no_card_otp_timeout)),
+               "--max-due", str(int(no_card_max_due))]
+        if int(no_card_promo_link_id) > 0:
+            cmd.extend(["--promo-link-id", str(int(no_card_promo_link_id))])
+        if no_card_allow_already_paid:
+            cmd.append("--allow-already-paid")
+        if no_card_allow_full_price:
+            cmd.append("--allow-full-price")
+        src = (no_card_inventory_mail_source or "any").strip().lower()
+        if src in ("outlook", "catch_all"):
+            cmd.extend(["--inventory-mail-source", src])
+        return cmd
+
     cmd = ["xvfb-run", "-a", "python", "-u", "pipeline.py",
            "--config", str(s.PAY_CONFIG_PATH)]
     # free_only 两个子模式 + promo_link 都不走 paypal / gopay / qris 支付段
@@ -203,7 +240,20 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
           register_mode: str = "protocol",
           env_overrides: Optional[dict] = None,
           target_emails: Optional[list] = None, rt_only: bool = False,
-          mail_source: str = "outlook", outlook_email: str = "") -> dict:
+          mail_source: str = "outlook", outlook_email: str = "",
+          # no_card_plus 参数
+          no_card_promo_link_id: int = 0,
+          no_card_phone: str = "3507505224",
+          no_card_sms_api_url: str = "",
+          no_card_otp_timeout: int = 240,
+          no_card_signup_retries: int = 1,
+          no_card_node_rpa_timeout: int = 900,
+          no_card_max_due: int = 100,
+          no_card_allow_already_paid: bool = False,
+          no_card_allow_full_price: bool = False,
+          no_card_paypal_country: str = "US",
+          no_card_paypal_lang: str = "en",
+          no_card_inventory_mail_source: str = "any") -> dict:
     global _proc, _started_at, _ended_at, _exit_code, _cmd, _mode
     global _log_lines, _seq_counter, _otp_file, _otp_to_db, _otp_pending, _otp_file_is_temp
     global _active_gopay_phone
@@ -220,7 +270,18 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
                         target_emails=target_emails, rt_only=rt_only,
                         promo_plan=promo_plan, promo_country=promo_country,
                         promo_currency=promo_currency,
-                        promo_campaign_id=promo_campaign_id)
+                        promo_campaign_id=promo_campaign_id,
+                        no_card_promo_link_id=no_card_promo_link_id,
+                        no_card_phone=no_card_phone,
+                        no_card_otp_timeout=no_card_otp_timeout,
+                        no_card_signup_retries=no_card_signup_retries,
+                        no_card_node_rpa_timeout=no_card_node_rpa_timeout,
+                        no_card_max_due=no_card_max_due,
+                        no_card_allow_already_paid=no_card_allow_already_paid,
+                        no_card_allow_full_price=no_card_allow_full_price,
+                        no_card_paypal_country=no_card_paypal_country,
+                        no_card_paypal_lang=no_card_paypal_lang,
+                        no_card_inventory_mail_source=no_card_inventory_mail_source)
 
         # GoPay link-state pre-flight: if the configured phone is currently
         # linked from a prior successful charge, GoPay will reject the next
@@ -281,6 +342,27 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
         if qris and os.getenv("WEBUI_QRIS_FORCE_MOCK", "").strip().lower() in ("1", "true", "yes"):
             env["QRIS_MOCK"] = "1"
             print("[runner] WEBUI_QRIS_FORCE_MOCK=1 → 子进程 QRIS_MOCK=1 (demo 模式，绕过 OpenAI)")
+        # no_card_plus 模式: scripts/no_card_paypal_plus.py 要 SMS API URL.
+        # 不走 cmdline (token 敏感), 三层兜底注入 env:
+        #   1. 用户在 webui form 输入的 no_card_sms_api_url (优先)
+        #   2. host 进程 env PAYPAL_SMS_API_URL / PPS_SMS_API_URL
+        #   3. config.paypal.json::paypal.sms_api_url
+        if mode == "no_card_plus":
+            sms_url = (no_card_sms_api_url or "").strip()
+            if not sms_url:
+                sms_url = (os.environ.get("PAYPAL_SMS_API_URL")
+                           or os.environ.get("PPS_SMS_API_URL") or "").strip()
+            if not sms_url:
+                try:
+                    pay_cfg = _read_pay_config()
+                    sms_url = ((pay_cfg.get("paypal") or {}).get("sms_api_url") or "").strip()
+                except Exception as e:
+                    print(f"[runner] no_card_plus 读 sms_api_url 失败: {e}")
+            if sms_url:
+                env["PAYPAL_SMS_API_URL"] = sms_url
+                env.setdefault("PPS_SMS_API_URL", sms_url)
+            else:
+                print("[runner] no_card_plus: SMS API URL 缺失, 子进程会 fail (在 UI 输 SMS API URL 或 config.paypal.json::paypal.sms_api_url)")
         if env_overrides:
             for k, v in env_overrides.items():
                 if v is None:

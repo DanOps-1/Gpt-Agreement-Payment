@@ -219,6 +219,12 @@ class Database:
             c.execute("ALTER TABLE registered_accounts ADD COLUMN last_check_message TEXT DEFAULT ''")
         if "last_plan_type" not in existing_acc:
             c.execute("ALTER TABLE registered_accounts ADD COLUMN last_plan_type TEXT DEFAULT ''")
+        # 并发跑 no_card_plus 时多 worker 抢占同一 promo_link 的原子化锁字段
+        existing_pl = {row["name"] for row in c.execute("PRAGMA table_info(promo_links)").fetchall()}
+        if "claimed_by" not in existing_pl:
+            c.execute("ALTER TABLE promo_links ADD COLUMN claimed_by TEXT DEFAULT ''")
+        if "claimed_at" not in existing_pl:
+            c.execute("ALTER TABLE promo_links ADD COLUMN claimed_at REAL DEFAULT 0")
 
     # ──────────────────────────────────────────
     # Runtime data store. SQLite is the only source of truth for runtime data.
@@ -370,7 +376,7 @@ class Database:
             rows = c.execute(
                 "SELECT status, COUNT(*) AS n FROM promo_links GROUP BY status"
             ).fetchall()
-        out = {"fresh": 0, "used": 0, "expired": 0, "total": 0}
+        out = {"fresh": 0, "in_use": 0, "used": 0, "expired": 0, "total": 0}
         for r in rows:
             out[r["status"]] = r["n"]
             out["total"] += r["n"]
@@ -379,8 +385,163 @@ class Database:
     def mark_promo_link_used(self, link_id: int) -> bool:
         with self._conn() as c:
             cur = c.execute(
-                "UPDATE promo_links SET status='used', used_at=? WHERE id=? AND status='fresh'",
+                "UPDATE promo_links SET status='used', used_at=?, claimed_by='', claimed_at=0 "
+                "WHERE id=? AND status IN ('fresh','in_use')",
                 (time.time(), int(link_id)),
+            )
+            return cur.rowcount > 0
+
+    def mark_promo_link_status(self, link_id: int, new_status: str) -> bool:
+        """通用 status 更新, 支持 fresh / used / expired / in_use.
+
+        no_card_paypal_plus.py 检测到 stripe due > 0 (promo 不命中) 时调
+        mark_promo_link_status(id, 'expired') 标该 link 废, 防止下次 auto pick
+        再选中跑同样浪费几分钟.
+        """
+        valid = {"fresh", "used", "expired", "in_use"}
+        if new_status not in valid:
+            return False
+        with self._conn() as c:
+            cur = c.execute(
+                "UPDATE promo_links SET status=? WHERE id=?",
+                (new_status, int(link_id)),
+            )
+            return cur.rowcount > 0
+
+    def claim_next_fresh_promo_link(
+        self,
+        worker_id: str,
+        plan_like: str = "plus",
+        email: str = "",
+        max_due_cents: int = 100,
+        exclude_ids: list[int] | None = None,
+    ) -> dict | None:
+        """原子地占用一条 fresh promo_link：UPDATE...WHERE status='fresh' 一次性把
+        最早匹配的行翻到 status='in_use' + claimed_by=worker_id，并 RETURNING 行内容。
+
+        SQLite 3.35+ 支持 RETURNING；老版本走 SELECT+UPDATE in IMMEDIATE 事务兜底。
+        多个 worker 并发调时 SQLite 行级 BUSY 重试 + WHERE status='fresh' 二次校验
+        保证不会两个 worker 拿到同一行。
+        """
+        worker_id = _text(worker_id).strip() or "anon"
+        plan_like = _text(plan_like).strip() or "plus"
+        email = _text(email).strip()
+        now = time.time()
+        # 先选最匹配 id 的 fresh 行：lower(plan_name) LIKE '%plus%'，可选 email 过滤
+        where = ["status='fresh'", "lower(plan_name) LIKE ?"]
+        params: list = [f"%{plan_like.lower()}%"]
+        if max_due_cents and max_due_cents > 0:
+            where.append("amount_due_cents <= ?")
+            params.append(int(max_due_cents))
+        if email:
+            where.append("lower(email) = lower(?)")
+            params.append(email)
+        excl = [int(x) for x in (exclude_ids or []) if int(x) > 0]
+        if excl:
+            placeholders = ",".join("?" * len(excl))
+            where.append(f"id NOT IN ({placeholders})")
+            params.extend(excl)
+        with self._conn() as c:
+            # SQLite 3.35+: 用 RETURNING + 子查询 LIMIT 1 一句话原子完成
+            try:
+                row = c.execute(
+                    f"""
+                    UPDATE promo_links
+                       SET status='in_use', claimed_by=?, claimed_at=?
+                     WHERE id = (
+                       SELECT id FROM promo_links
+                        WHERE {' AND '.join(where)}
+                        ORDER BY id DESC
+                        LIMIT 1
+                     )
+                    RETURNING id, email, checkout_url, cs_id, processor_entity,
+                              plan_name, promo_campaign_id, billing_country,
+                              billing_currency, amount_due_cents, status
+                    """,
+                    (worker_id, now, *params),
+                ).fetchone()
+                return dict(row) if row else None
+            except sqlite3.OperationalError:
+                pass
+            # 兜底：BEGIN IMMEDIATE → SELECT → UPDATE
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                sel = c.execute(
+                    f"SELECT id, email, checkout_url, cs_id, processor_entity, plan_name, "
+                    f"       promo_campaign_id, billing_country, billing_currency, "
+                    f"       amount_due_cents, status "
+                    f"FROM promo_links WHERE {' AND '.join(where)} "
+                    f"ORDER BY id DESC LIMIT 1",
+                    tuple(params),
+                ).fetchone()
+                if not sel:
+                    c.execute("COMMIT")
+                    return None
+                upd = c.execute(
+                    "UPDATE promo_links SET status='in_use', claimed_by=?, claimed_at=? "
+                    "WHERE id=? AND status='fresh'",
+                    (worker_id, now, int(sel["id"])),
+                )
+                if upd.rowcount <= 0:
+                    c.execute("ROLLBACK")
+                    return None
+                c.execute("COMMIT")
+                return dict(sel)
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+
+    def claim_promo_link_by_id(self, worker_id: str, link_id: int) -> dict | None:
+        """显式 --promo-link-id 模式：atomic claim 指定 id 的 fresh 行，
+        被别的 worker 抢了就返 None。"""
+        worker_id = _text(worker_id).strip() or "anon"
+        with self._conn() as c:
+            try:
+                row = c.execute(
+                    """
+                    UPDATE promo_links
+                       SET status='in_use', claimed_by=?, claimed_at=?
+                     WHERE id=? AND status='fresh'
+                    RETURNING id, email, checkout_url, cs_id, processor_entity,
+                              plan_name, promo_campaign_id, billing_country,
+                              billing_currency, amount_due_cents, status
+                    """,
+                    (worker_id, time.time(), int(link_id)),
+                ).fetchone()
+                return dict(row) if row else None
+            except sqlite3.OperationalError:
+                pass
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                sel = c.execute(
+                    "SELECT id, email, checkout_url, cs_id, processor_entity, plan_name, "
+                    "       promo_campaign_id, billing_country, billing_currency, "
+                    "       amount_due_cents, status FROM promo_links "
+                    "WHERE id=? AND status='fresh'",
+                    (int(link_id),),
+                ).fetchone()
+                if not sel:
+                    c.execute("COMMIT")
+                    return None
+                c.execute(
+                    "UPDATE promo_links SET status='in_use', claimed_by=?, claimed_at=? WHERE id=?",
+                    (worker_id, time.time(), int(link_id)),
+                )
+                c.execute("COMMIT")
+                return dict(sel)
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+
+    def release_promo_link(self, link_id: int, new_status: str = "fresh") -> bool:
+        """worker 失败时把 in_use 状态退回 fresh（或标 expired）让其它 worker 复用。"""
+        if new_status not in ("fresh", "expired"):
+            return False
+        with self._conn() as c:
+            cur = c.execute(
+                "UPDATE promo_links SET status=?, claimed_by='', claimed_at=0 "
+                "WHERE id=? AND status='in_use'",
+                (new_status, int(link_id)),
             )
             return cur.rowcount > 0
 

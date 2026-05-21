@@ -1,16 +1,17 @@
 """邮箱服务（outlook 池 + CF Email Routing fallback）。
 
 历史上这个模块走 IMAP 拉 QQ 邮箱接 OTP（5s 轮询 + 转发链路 30–90s 延迟）。
-现在彻底切到 Cloudflare Email Worker → KV 路径：
+catch-all 邮箱现在切到 Cloudflare Email Worker → KV 路径：
 
     寄件人 → CF MX (catch-all) → otp-relay Worker → KV
                                                        ↓
                                             cf_kv_otp_provider 读
 
+Outlook 池账号只走 IMAP XOAUTH2 纯协议收码，禁止 Outlook Web scrape。
 OTP 提取由 Worker 端做（见 scripts/otp_email_worker.js），
-本模块只剩两件事：
-  1. 用 catch-all 域名生成随机收件地址 (`create_mailbox`)
-  2. 委托 `CloudflareKVOtpProvider` 阻塞拿 OTP (`wait_for_otp`)
+本模块负责：
+  1. 选择 outlook 池账号或生成 catch-all 随机收件地址 (`create_mailbox`)
+  2. 通过 IMAP XOAUTH2 / CloudflareKVOtpProvider 阻塞拿 OTP (`wait_for_otp`)
 
 KV 凭证读取顺序：环境变量 `CF_API_TOKEN/CF_ACCOUNT_ID/CF_OTP_KV_NAMESPACE_ID`
 → SQLite runtime_meta[secrets] 的 cloudflare 段。详见 cf_kv_otp_provider.py。
@@ -247,89 +248,67 @@ class MailProvider:
         timeout: int = 120,
         issued_after: Optional[float] = None,
     ) -> str:
-        """阻塞等 OTP。outlook 池 claim 的账号走 IMAP OAuth2；
-        catch-all fallback 走 CF KV。失败抛 TimeoutError / RuntimeError。
+        """阻塞等 OTP。
+
+        - Outlook 池账号：只走 IMAP XOAUTH2 纯协议收码，不再调用 Outlook Web scrape。
+        - catch-all 邮箱：走 CF Email Worker → KV 纯协议读码。
+
+        失败抛 TimeoutError / RuntimeError；不会返回 None。
         """
-        # 当前邮箱来自 outlook 池 → IMAP OAuth2 fetch
+        # 当前邮箱来自 outlook 池 → IMAP OAuth2 fetch（纯协议，禁止 web fallback）
         creds = self._outlook_creds
         if creds and creds.get("email", "").lower() == (email_addr or "").lower():
             try:
                 import sys as _sys
                 from pathlib import Path as _Path
-                _root = _Path(__file__).resolve().parents[2]  # Wave H bug: mail/provider.py 多沉一层, parents[1] 现在指 CTF-reg/ 而非仓库根
+                _root = _Path(__file__).resolve().parents[2]  # 仓库根
                 if str(_root) not in _sys.path:
                     _sys.path.insert(0, str(_root))
                 from webui.backend import outlook_pool as _op
             except Exception as e:
                 raise RuntimeError(f"outlook_pool 模块不可用: {e}")
-            # protocol 路径下 outlook 池"已有账号"分支需要 60-120s 内见结果——
-            # OpenAI 真发邮件通常 5-30s 到达；超过 90s 没邮件 = OpenAI 反欺诈静默拒绝。
-            # 给 caller 主权（OTP_TIMEOUT），floor 90s 保留邮件投递抖动余地。
+
+            # protocol 路径下 outlook 池需要 60-120s 内见结果。
+            # OpenAI 真发邮件通常 5-30s 到达；超过 90s 没邮件通常是 OTP 未投递/账号不可用。
             timeout = max(int(timeout), 90)
-            # 严格 threshold：只接受 issued_after 之后到达的邮件, 避免 retry resend 后
-            # 抓 server 端已失效的"旧 X 邮件" → verify 401 wrong_email_otp_code.
-            # 5s grace 仅容忍 NTP 偏差; OpenAI → outlook 邮件投递延迟通常 < 5s, 测过.
+            # 严格 threshold：只接受 issued_after 之后到达的邮件，避免 retry resend 后
+            # 抓 server 端已失效的旧码 → verify 401 wrong_email_otp_code。
             strict_threshold = (issued_after - 5) if issued_after else (time.time() - 5)
-            # 自动化优先级根据 client_id 动态决定:
-            #   - Thunderbird 公开 client_id (注册时声明了 v2 IMAP scope) → IMAP 优先 (秒级, 扫 INBOX/Junk/Spam)
-            #   - 其它 supplier 自家 client_id (常 v1 wl.imap 限制, IMAP 拒) → web scrape 优先
-            # 后备永远是 manual file 兜底.
-            THUNDERBIRD_IMAP_OK = {
-                "9e5f94bc-e8a4-4e73-b8be-63364c29d753",  # 新 Thunderbird
-                "08162f7c-0fd2-4200-a84a-f25a4db0b584",  # 老 Thunderbird
-            }
-            imap_first = (creds.get("client_id") in THUNDERBIRD_IMAP_OK)
-            password = creds.get("password", "")
-            otp = None
 
-            def _try_imap():
-                logger.info(
-                    f"[mail] outlook IMAP OAuth2 取 OTP -> {email_addr} "
-                    f"(timeout={timeout}s threshold>={int(strict_threshold)})"
+            logger.info(
+                f"[mail] outlook IMAP OAuth2 纯协议取 OTP -> {email_addr} "
+                f"(timeout={timeout}s threshold>={int(strict_threshold)})"
+            )
+            try:
+                otp = _op.fetch_otp_via_imap(
+                    creds["email"], creds["refresh_token"], creds["client_id"],
+                    timeout=timeout, threshold_ts=strict_threshold,
                 )
+            except Exception as e:
+                reason = f"IMAP XOAUTH2 纯协议失败: {e}"
                 try:
-                    return _op.fetch_otp_via_imap(
-                        creds["email"], creds["refresh_token"], creds["client_id"],
-                        timeout=timeout, threshold_ts=strict_threshold,
-                    )
-                except Exception as _e:
-                    logger.warning(f"[mail] IMAP XOAUTH2 fail: {_e}")
-                    return None
-
-            def _try_web():
-                if not password:
-                    return None
-                logger.info(
-                    f"[mail] outlook WEB scrape OTP -> {email_addr} "
-                    f"(timeout={timeout}s threshold>={int(strict_threshold)})"
-                )
-                try:
-                    from mail.outlook import scrape_otp as _ows  # Wave H
-                    return _ows(email_addr, password, timeout=timeout, threshold_ts=strict_threshold)
-                except Exception as _e:
-                    logger.warning(f"[mail] web scrape fail: {_e}")
-                    return None
-
-            if imap_first:
-                logger.info(f"[mail] client_id={creds['client_id'][:8]} 已知 IMAP-OK → IMAP 优先")
-                otp = _try_imap() or _try_web()
-            else:
-                logger.info(f"[mail] client_id={creds['client_id'][:8]} 非 Thunderbird → web 优先")
-                otp = _try_web() or _try_imap()
-
-            if not otp:
-                # web + IMAP 双 fail → mark_dead + raise. 不能返 None
-                # (verify_otp(None) 触发 OpenAI 400 "expected a string, but got null").
-                try:
-                    self.mark_outlook_dead("web + IMAP 双 fail (OpenAI 静默拒发 OTP)")
+                    self.mark_outlook_dead(reason)
                 except Exception:
                     pass
-                # 设 flag 让 drivers/protocol 跳过 retry resend (已经 web+IMAP 都试了, 再等 180s 浪费)
                 self.outlook_exhausted = True
                 raise TimeoutError(
-                    f"outlook OTP timeout (web + IMAP 双 fail, fast-fail) for {email_addr}"
+                    f"outlook OTP timeout (IMAP-only pure protocol, no web fallback) "
+                    f"for {email_addr}; {reason}"
+                ) from e
+
+            if not otp:
+                reason = "IMAP XOAUTH2 纯协议未收到 OTP"
+                try:
+                    self.mark_outlook_dead(reason)
+                except Exception:
+                    pass
+                self.outlook_exhausted = True
+                raise TimeoutError(
+                    f"outlook OTP timeout (IMAP-only pure protocol, no web fallback) "
+                    f"for {email_addr}; {reason}"
                 )
-            # OpenAI 真发了 OTP 收到了 → 邮箱已被 OpenAI 认识, mark used 防 reuse.
+
+            # OpenAI 真发了 OTP 收到了 → 邮箱已被 OpenAI 认识，mark used 防 reuse。
             try:
                 _op.mark_used(creds["email"], chatgpt_email=creds["email"])
             except Exception as e:

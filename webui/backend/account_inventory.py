@@ -109,6 +109,25 @@ def _derive_plan_tag(email: str, *, paid: bool, is_team: bool) -> str:
     return "free"
 
 
+def _normalize_plan_type(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    if "team" in raw:
+        return "team"
+    if "plus" in raw:
+        return "plus"
+    if "pro" in raw:
+        return "pro"
+    if "free" in raw:
+        return "free"
+    return raw[:40]
+
+
+def _is_paid_plan(plan_type: str) -> bool:
+    return _normalize_plan_type(plan_type) in {"plus", "team", "pro"}
+
+
 def _latest_payment_by_email(events: list[dict]) -> dict[str, dict]:
     latest: dict[str, dict] = {}
     for ev in events:
@@ -196,9 +215,10 @@ def build_accounts_inventory() -> dict:
         has_access = bool(acc.get("access_token"))
         has_auth = has_session or has_access
         has_rt = email in rt_emails
-        consumed = email in consumed_emails
         oauth = oauth_map.get(email.lower()) or oauth_map.get(email) or {}
         latest = latest_payment.get(email) or {}
+        verified_plan = _normalize_plan_type(acc.get("last_plan_type"))
+        consumed = email in consumed_emails or _is_paid_plan(verified_plan)
         error = str(latest.get("error") or "")
         pay_state = "reusable"
         if consumed:
@@ -229,7 +249,7 @@ def build_accounts_inventory() -> dict:
         if rt_state == "missing":
             counts["rt_missing"] += 1
 
-        plan_tag = _derive_plan_tag(email, paid=consumed, is_team=email in team_emails)
+        plan_tag = verified_plan or _derive_plan_tag(email, paid=consumed, is_team=email in team_emails)
         cpa_status = cpa_status_by_email.get(email, "")
         cpa_pushed = cpa_status == "ok"
         items.append({
@@ -259,6 +279,8 @@ def build_accounts_inventory() -> dict:
             "last_check_status": acc.get("last_check_status") or "",
             "last_check_message": acc.get("last_check_message") or "",
             "last_check_at": acc.get("last_check_at") or 0,
+            "last_plan_type": verified_plan,
+            "plan_source": "rt" if verified_plan else ("payment" if consumed else "derived"),
         })
 
     return {

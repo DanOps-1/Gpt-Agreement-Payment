@@ -193,6 +193,21 @@ class GoPayAuto:
         x1, y1, x2, y2 = bounds
         self.tap((x1 + x2) // 2, (y1 + y2) // 2)
 
+    def _read_pin_keypad_coords(self) -> dict[str, tuple[int, int]]:
+        """从 UI dump 动态读 PIN 键盘按钮中心坐标. content-desc 是数字字符串.
+        cloudphone#1 (900x1600) 跟 #2 (1080x1920) 分辨率不同, 硬编码坐标会输错.
+        """
+        xml = self.ui_dump()
+        import re
+        coords: dict[str, tuple[int, int]] = {}
+        node_re = re.compile(r'<node[^>]+content-desc="([^"]*)"[^>]+bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"')
+        for m in node_re.finditer(xml):
+            cd, x1, y1, x2, y2 = m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5))
+            if cd in "0123456789" and len(cd) == 1:
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                coords[cd] = (cx, cy)
+        return coords
+
     # ─── PIN 输入 ──────────────────────────────────────────
     def enter_pin(self, pin: str, humanize: bool = True) -> None:
         """点击数字键盘输 6 位 PIN。GoPay 自定义键盘不接受 input text。
@@ -202,13 +217,23 @@ class GoPayAuto:
         """
         if not pin or not pin.isdigit() or len(pin) != 6:
             raise GoPayAutoError(f"PIN 必须 6 位数字，给的是 {pin!r}")
-        self.log("[gopay-adb] enter_pin: ******")
+        # 动态读 keypad 坐标 — 硬编码对 1080x1920 不准
+        try:
+            dynamic = self._read_pin_keypad_coords()
+        except Exception:
+            dynamic = {}
+        # 必须 10 个数字全有, 否则不开始 (防止部分输错锁号)
+        if len(dynamic) != 10 or not all(d in dynamic for d in "0123456789"):
+            raise GoPayAutoError(
+                f"PIN keypad UI dump 不完整 ({len(dynamic)}/10 digit 找到), 拒绝盲点击防锁号"
+            )
+        self.log(f"[gopay-adb] enter_pin: ****** (dynamic coords {len(dynamic)} digits)")
         import random as _r
         for i, d in enumerate(pin):
-            x, y = PIN_DIGIT_POS[d]
+            x, y = dynamic[d]
             if humanize:
                 self.tap(x, y, jitter=10)
-                # 第 3-4 位之间偶尔长停（模拟想一下）
+                # 第 3-4 位之间偶尔长停（模拟真人犹豫）
                 if i in (2, 3) and _r.random() < 0.4:
                     time.sleep(_r.uniform(1.0, 2.0))
                 else:

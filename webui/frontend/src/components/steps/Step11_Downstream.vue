@@ -35,6 +35,14 @@
         </div>
       </div>
     </div>
+
+    <div class="term-divider" style="margin-top:20px">散户面板 (cpa_autofill)</div>
+    <TermToggle v-model="af.enabled">启用散户面板推送</TermToggle>
+    <div v-if="af.enabled" class="form-stack" style="margin-top:12px">
+      <TermField v-model="af.base_url" label="Base URL · base_url (例: https://autofill.lukyface.com)" />
+      <TermField v-model="af.api_token" label="API Token · /supplier 面板里轮换出来的 Bearer token" type="password" />
+      <p style="font-size:12px; color:#7a7363; margin:4px 0 0">挂单价 (元/号) 在每次推送时弹窗输入,不在这里预设。</p>
+    </div>
   </section>
 </template>
 
@@ -49,6 +57,7 @@ import TermToggle from "../term/TermToggle.vue";
 const store = useWizardStore();
 const tsInit = store.answers.team_system ?? {};
 const cpaInit = store.answers.cpa ?? {};
+const afInit = store.answers.cpa_autofill ?? {};
 
 // 开关默认关闭（不读 init.enabled），但其余字段保留 source 同步的值
 // 这样用户启用 toggle 时直接看到预填的 url/凭据
@@ -63,12 +72,18 @@ const cpa = ref({
   base_url: cpaInit.base_url ?? "",
   admin_key: cpaInit.admin_key ?? "",
 });
+const af = ref({
+  enabled: false,
+  base_url: afInit.base_url ?? "https://autofill.lukyface.com",
+  api_token: afInit.api_token ?? "",
+});
 
 // 立即同步到 store 覆盖可能从 source 同步过来的 enabled=true，
 // 否则 UI 显示关但 wizard state / 导出仍会写 enabled=true
 onMounted(() => {
   store.setAnswer("team_system", {});
   store.setAnswer("cpa", {});
+  store.setAnswer("cpa_autofill", {});
   store.saveToServer();
 });
 const tsLoading = ref(false);
@@ -95,9 +110,10 @@ async function testCpa() {
     });
   } finally { cpaLoading.value = false; }
 }
-watch([ts, cpa], () => {
+watch([ts, cpa, af], () => {
   store.setAnswer("team_system", ts.value.enabled ? ts.value : {});
   store.setAnswer("cpa", cpa.value.enabled ? cpa.value : {});
+  store.setAnswer("cpa_autofill", af.value.enabled ? af.value : {});
   store.saveToServer();
 }, { deep: true });
 

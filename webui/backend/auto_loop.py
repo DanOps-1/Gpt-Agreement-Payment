@@ -415,7 +415,7 @@ def start(
     qris: bool = False,
     pay_only: bool = False,
     register_only: bool = False,
-    register_mode: str = "browser",
+    register_mode: str = "protocol",
     zone_rotate_on_reg_fails: int = 3,
     zone_rotate_after_ip_rotations: int = 2,
 ) -> dict:
@@ -444,7 +444,7 @@ def start(
         "workers": 3,
         "self_dealer": 0,
         "count": 0,
-        "register_mode": register_mode,
+        "register_mode": "protocol",
     }
 
     zone_list = _load_zone_list_from_cardw()
