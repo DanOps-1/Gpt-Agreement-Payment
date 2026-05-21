@@ -192,6 +192,126 @@ def test_exported_reg_config_accepts_checkout_link_fields(client, tmp_path, monk
     assert cfg.team_plan.is_coupon_from_query_param is False
 
 
+def test_export_strips_team_only_fields_when_plan_is_plus(client, tmp_path, monkeypatch):
+    """Plus 订阅没有 workspace / seat 概念；example skeleton 默认填 Team 模板，
+    deep_merge 会把 seat=5 / workspace=MyWorkspace 留下来，让 abcard 路径在
+    Plus 下跟 plan_name 不匹配。导出层必须主动剥干净。"""
+    _login(client)
+
+    # 显式让 skeleton 带上 Team 默认字段，模拟 config.paypal.example.json 的真实形态
+    pay_ex = tmp_path / "CTF-pay" / "config.paypal.example.json"
+    reg_ex = tmp_path / "CTF-reg" / "config.paypal-proxy.example.json"
+    pay_ex.parent.mkdir(parents=True)
+    reg_ex.parent.mkdir(parents=True)
+    pay_ex.write_text(json.dumps({
+        "paypal": {"email": ""},
+        "captcha": {"api_url": "", "api_key": ""},
+        "fresh_checkout": {
+            "plan": {
+                "plan_name": "chatgptteamplan",
+                "workspace_name": "MyWorkspace",
+                "seat_quantity": 5,
+                "promo_campaign_id": "team-1-month-free",
+            }
+        },
+    }))
+    reg_ex.write_text(json.dumps({
+        "mail": {"catch_all_domain": ""},
+        "captcha": {"client_key": ""},
+        "team_plan": {
+            "plan_name": "chatgptteamplan",
+            "workspace_name": "MyWorkspace",
+            "seat_quantity": 5,
+        },
+    }))
+
+    import webui.backend.settings as s
+    monkeypatch.setattr(s, "PAY_EXAMPLE_PATH", pay_ex)
+    monkeypatch.setattr(s, "REG_EXAMPLE_PATH", reg_ex)
+    monkeypatch.setattr(s, "PAY_CONFIG_PATH", tmp_path / "CTF-pay" / "config.paypal.json")
+    monkeypatch.setattr(s, "REG_CONFIG_PATH", tmp_path / "CTF-reg" / "config.paypal-proxy.json")
+
+    answers = {
+        "team_plan": {
+            "plan_type": "plus",
+            "plan_name": "chatgptplusplan",
+            "entry_point": "all_plans_pricing_modal",
+            "promo_campaign_id": "plus-1-month-free",
+            "billing_country": "IE",
+            "billing_currency": "EUR",
+            "checkout_ui_mode": "custom",
+        },
+    }
+    r = client.post("/api/config/export", json={"answers": answers})
+    assert r.status_code == 200
+
+    pay = json.loads((tmp_path / "CTF-pay" / "config.paypal.json").read_text())
+    plan = pay["fresh_checkout"]["plan"]
+    assert plan["plan_name"] == "chatgptplusplan"
+    assert plan["promo_campaign_id"] == "plus-1-month-free"
+    # 关键断言：team-only 字段必须被剥掉，否则 abcard payload 会跟 Plus plan 不匹配
+    assert "seat_quantity" not in plan
+    assert "workspace_name" not in plan
+
+    reg = json.loads((tmp_path / "CTF-reg" / "config.paypal-proxy.json").read_text())
+    reg_plan = reg["team_plan"]
+    assert reg_plan["plan_name"] == "chatgptplusplan"
+    assert "seat_quantity" not in reg_plan
+    assert "workspace_name" not in reg_plan
+
+
+def test_export_keeps_team_fields_when_plan_is_team(client, tmp_path, monkeypatch):
+    """对照组：Team 订阅必须保留 example skeleton 的 workspace / seat 默认值。"""
+    _login(client)
+
+    pay_ex = tmp_path / "CTF-pay" / "config.paypal.example.json"
+    reg_ex = tmp_path / "CTF-reg" / "config.paypal-proxy.example.json"
+    pay_ex.parent.mkdir(parents=True)
+    reg_ex.parent.mkdir(parents=True)
+    pay_ex.write_text(json.dumps({
+        "paypal": {"email": ""},
+        "captcha": {"api_url": "", "api_key": ""},
+        "fresh_checkout": {
+            "plan": {
+                "plan_name": "chatgptteamplan",
+                "workspace_name": "MyWorkspace",
+                "seat_quantity": 5,
+            }
+        },
+    }))
+    reg_ex.write_text(json.dumps({
+        "mail": {"catch_all_domain": ""},
+        "captcha": {"client_key": ""},
+        "team_plan": {
+            "plan_name": "chatgptteamplan",
+            "workspace_name": "MyWorkspace",
+            "seat_quantity": 5,
+        },
+    }))
+
+    import webui.backend.settings as s
+    monkeypatch.setattr(s, "PAY_EXAMPLE_PATH", pay_ex)
+    monkeypatch.setattr(s, "REG_EXAMPLE_PATH", reg_ex)
+    monkeypatch.setattr(s, "PAY_CONFIG_PATH", tmp_path / "CTF-pay" / "config.paypal.json")
+    monkeypatch.setattr(s, "REG_CONFIG_PATH", tmp_path / "CTF-reg" / "config.paypal-proxy.json")
+
+    answers = {
+        "team_plan": {
+            "plan_type": "team",
+            "plan_name": "chatgptteamplan",
+            "workspace_name": "MyTeam",
+            "seat_quantity": 3,
+        },
+    }
+    r = client.post("/api/config/export", json={"answers": answers})
+    assert r.status_code == 200
+
+    pay = json.loads((tmp_path / "CTF-pay" / "config.paypal.json").read_text())
+    plan = pay["fresh_checkout"]["plan"]
+    assert plan["workspace_name"] == "MyTeam"
+    assert plan["seat_quantity"] == 3
+
+
 def test_export_requires_auth(client):
     r = client.post("/api/config/export", json={"answers": {}})
     assert r.status_code == 401

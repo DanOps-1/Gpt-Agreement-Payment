@@ -30,7 +30,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useMessage } from "naive-ui";
 import { api } from "../api/client";
@@ -40,12 +40,27 @@ const message = useMessage();
 const loading = ref(false);
 const form = ref({ username: "admin", password: "" });
 
+// 二次保险：router beforeEach 出错走 catch 分支会把用户落到 /login，但此时
+// 实例可能根本没初始化过——本组件挂载后再确认一次，没账号就跳 /setup。
+onMounted(async () => {
+  try {
+    const r = await api.get<{ initialized: boolean }>("/setup/status");
+    if (!r.data.initialized) router.replace("/setup");
+  } catch { /* setup status 拿不到就维持当前页让用户看到登录界面 */ }
+});
+
 async function submit() {
   loading.value = true;
   try {
     await api.post("/login", form.value);
     router.push("/wizard");
   } catch (e: any) {
+    // 登录失败时再查一次 setup status——如果是因为还没建账号失败，跳 /setup 比
+    // 反复弹"登录失败"友好
+    try {
+      const r = await api.get<{ initialized: boolean }>("/setup/status");
+      if (!r.data.initialized) { router.replace("/setup"); return; }
+    } catch { /* ignore */ }
     message.error(e.response?.data?.detail || "登录失败");
   } finally { loading.value = false; }
 }

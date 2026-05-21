@@ -1,0 +1,3458 @@
+[
+  {
+    "country": "AD",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AE",
+    "currency": "AED",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 7619,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AF",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AG",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AI",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AL",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AO",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AQ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AR",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AS",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AT",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1917,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AU",
+    "currency": "AUD",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2727,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AW",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AX",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "AZ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BA",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BB",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BD",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BE",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1901,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BF",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BG",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1917,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BH",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BI",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BJ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BL",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 0,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BN",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BO",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BQ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BR",
+    "currency": "BRL",
+    "payment_method_types": [
+      "card",
+      "pix"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 9990,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BS",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BT",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BW",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "BZ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CA",
+    "currency": "CAD",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2500,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CD",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CF",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CG",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CH",
+    "currency": "CHF",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CI",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CK",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CL",
+    "currency": "CLP",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 16798,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CO",
+    "currency": "COP",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 9990000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CR",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CV",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CW",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CY",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1933,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "CZ",
+    "currency": "CZK",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 41240,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "DE",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1933,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "DJ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "DK",
+    "currency": "DKK",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 14320,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "DM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "DO",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "DZ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "EC",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "EE",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 0,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "EG",
+    "currency": "EGP",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 87718,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "ER",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "ES",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1901,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "ET",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 0,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "EU",
+    "currency": "EUR",
+    "error": "checkout-422",
+    "detail": "{\"detail\":[{\"type\":\"enum\",\"loc\":[\"body\",\"billing_details\",\"country\"],\"msg\":\"Input should be 'AF', 'AL', 'DZ', 'AS', 'AD', 'AO', 'AI', 'AQ', 'AG', 'AR', 'AM', 'AW', 'AU', 'AT', 'AZ', 'BS', 'BH', 'BD', "
+  },
+  {
+    "country": "FI",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1833,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "FJ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "FK",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "FM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "FO",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "FR",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1917,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GA",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GB",
+    "currency": "GBP",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1667,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GD",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GE",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GF",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GG",
+    "currency": "GBP",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GH",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GI",
+    "currency": "GBP",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GL",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GN",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GP",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GQ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GR",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1855,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GT",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GU",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GW",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "GY",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "HK",
+    "currency": "HKD",
+    "error": "checkout-422",
+    "detail": "{\"detail\":[{\"type\":\"enum\",\"loc\":[\"body\",\"billing_details\",\"currency\"],\"msg\":\"Input should be 'USD', 'AUD', 'CAD', 'GBP', 'EUR', 'CLP', 'JPY', 'INR', 'IDR', 'PKR', 'THB', 'MYR', 'TWD', 'VND', 'PHP', 'N"
+  },
+  {
+    "country": "HN",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "HR",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1840,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "HT",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "HU",
+    "currency": "HUF",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 707874,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "ID",
+    "currency": "IDR",
+    "payment_method_types": [
+      "card",
+      "gopay"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 34900000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "IE",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1870,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "IL",
+    "currency": "ILS",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 7000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "IM",
+    "currency": "GBP",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "IN",
+    "currency": "INR",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "upi"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 169407,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "IQ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "IS",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1855,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "IT",
+    "currency": "EUR",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1885,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "JE",
+    "currency": "GBP",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "JM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "JO",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "JP",
+    "currency": "JPY",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2727,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "KE",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "KG",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "KH",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "KI",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "KM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "KN",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "KR",
+    "currency": "KRW",
+    "payment_method_types": [
+      "card",
+      "kr_card",
+      "kakao_pay",
+      "naver_pay"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 26364,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "KW",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "KY",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "KZ",
+    "currency": "KZT",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 891964,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "LA",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "LB",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "LC",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "LI",
+    "currency": "CHF",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "LK",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "LR",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "LS",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "LT",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1901,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "LU",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 0,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "LV",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1901,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "LY",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MA",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MC",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MD",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "ME",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MF",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MG",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MH",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MK",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "ML",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MN",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MP",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MQ",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MR",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MS",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MT",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1949,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MU",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MV",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MW",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MX",
+    "currency": "MXN",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 39900,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MY",
+    "currency": "MYR",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 9250,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "MZ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 0,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NA",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NC",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NE",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NF",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NG",
+    "currency": "NGN",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 3150000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NI",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NL",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1901,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NO",
+    "currency": "NOK",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 19920,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NP",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NR",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NU",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "NZ",
+    "currency": "NZD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 3478,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "OM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PA",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PE",
+    "currency": "PEN",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 7990,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PF",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PG",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PH",
+    "currency": "PHP",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 98214,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PK",
+    "currency": "PKR",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 570000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PL",
+    "currency": "PLN",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 8049,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PN",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PR",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PS",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PT",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1870,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PW",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "PY",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "QA",
+    "currency": "QAR",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 7000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "RE",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "RO",
+    "currency": "RON",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 8264,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "RS",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "RW",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SA",
+    "currency": "SAR",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 9000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SB",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SC",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SD",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SE",
+    "currency": "SEK",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 0,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SG",
+    "currency": "SGD",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2752,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SH",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SI",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1885,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SJ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SK",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 1870,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SL",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SM",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SN",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SO",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SR",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SS",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "ST",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SV",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 0,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SX",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "SZ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TC",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 0,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TD",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TF",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TG",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TH",
+    "currency": "THB",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 65327,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TJ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TK",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TL",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TN",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TO",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TR",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TT",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TV",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TW",
+    "currency": "TWD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 69000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "TZ",
+    "currency": "TZS",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 4990000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "UA",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "UG",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "US",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "US2",
+    "currency": "USD",
+    "error": "checkout-422",
+    "detail": "{\"detail\":[{\"type\":\"enum\",\"loc\":[\"body\",\"billing_details\",\"country\"],\"msg\":\"Input should be 'AF', 'AL', 'DZ', 'AS', 'AD', 'AO', 'AI', 'AQ', 'AG', 'AR', 'AM', 'AW', 'AU', 'AT', 'AZ', 'BS', 'BH', 'BD', "
+  },
+  {
+    "country": "UY",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "UZ",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "VA",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "VC",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "VG",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "VI",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "VN",
+    "currency": "VND",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 475000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "VU",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "WF",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "WS",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "XK",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "YE",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "YT",
+    "currency": "EUR",
+    "processor_entity": "openai_ie",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2300,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "ZA",
+    "currency": "ZAR",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 34696,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "ZM",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  },
+  {
+    "country": "ZW",
+    "currency": "USD",
+    "processor_entity": "openai_llc",
+    "payment_method_types": [
+      "card",
+      "paypal"
+    ],
+    "total_summary": {
+      "due": 0,
+      "subtotal": 2000,
+      "total": 0
+    },
+    "mode": "subscription"
+  }
+]

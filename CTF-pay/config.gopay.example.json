@@ -10,6 +10,36 @@
       "interval": 1,
       "code_regex": "(?<!\\d)(\\d{6})(?!\\d)",
       "issued_after_slack_s": 15
+    },
+    "protocol": {
+      "_comment": "可选：X-E1/X-E2 协议签名。默认关闭；填 runtime keys 后 gopay.py 可先尝试 signed pin-token，再 fallback 到原 /nb。",
+      "_v2_comment": "2026-05-14 reverse 完成：sign_version='v2' 走 HMAC-SHA256(K, msg) + HMAC cipher chain + device-static X-E2。需 display_encoder_key (frida memscan from libbatteryOpt+0x92948) + signed_msg_template (frida 抓 SHA-82394 outer hash input)。",
+      "enabled": false,
+      "sign_version": "v1",
+      "extra": {
+        "_v2_required_when_sign_version_v2": "set these when sign_version='v2'",
+        "display_encoder_key": "1V79g&FZMB#zQ9:[T+8*xr1FXYVJ#%J)LiKl?c?=JG8dc{cX?d?p-u&Ti)$<vJC",
+        "signed_msg_template": "/tmp/big_msg_1867.bin"
+      },
+      "authSecret": "",
+      "deviceId": "",
+      "ID_SSO_Access_Token": "",
+      "display_encoder_key": "",
+      "display_aes_key_hex": "",
+      "display_encoder_id": "D",
+      "hmac_signing_key_hex": "",
+      "x_e1_mode": "sample",
+      "x_e1_include_iv": true,
+      "x_e1_repeat": 3,
+      "pin_token_mode": "nb",
+      "pin_token_endpoint": "/api/v1/users/pin/tokens/nb",
+      "_direct_pin_comment": "纯协议直付时改成 pin_token_mode=direct + /api/v1/users/pin/tokens，并提供 pin_public_key_pem/path。",
+      "pin_public_key_path": "",
+      "charge_endpoints": [
+        "/v1/payment/charge",
+        "/v1/transactions/{tref}/pay"
+      ],
+      "fallback_to_unsigned": true
     }
   },
   "fresh_checkout": {

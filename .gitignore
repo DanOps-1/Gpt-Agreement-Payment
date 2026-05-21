@@ -5,6 +5,14 @@ flows_*/
 *.har
 *_har
 
+# CTF-pay/reverse_tools 下面如果有人不小心在归档目录跑工具落了大数据 / profile 备份，
+# 同样要排除。归档进 git 的只有代码 + README。
+CTF-pay/reverse_tools/**/*.mitm
+CTF-pay/reverse_tools/**/*.jsonl
+CTF-pay/reverse_tools/**/*.jsonl.bak.*
+CTF-pay/reverse_tools/**/profile_backup/
+CTF-pay/reverse_tools/**/country_payment_methods.json
+
 # PayPal Camoufox 持久化 profile（含 session cookies）
 CTF-pay/paypal_cf_persist/
 CTF-pay/paypal_cf_persist.bak-*/
@@ -21,6 +29,13 @@ webui/whatsapp_relay/baileys-gopay/
 # 运行时产物（账号凭证 / 支付结果 / 日志 / 域池状态 / CF API token）
 output/
 
+# QRIS 运行时产物（QR PNG + 订单 JSON，含 charge_ref）
+qris_artifacts/
+
+# 临时图片产物（README 未引用）
+/2_1024x750.jpeg
+/QRcode.jpeg
+
 # 用户实际配置（保留 *.example.json，忽略实际填写过的）
 CTF-pay/config.paypal.json
 CTF-pay/config.paypal-*.json
@@ -28,8 +43,12 @@ CTF-reg/config.paypal-proxy.json
 CTF-reg/config.paypal-proxy-*.json
 CTF-reg/config.noproxy.json
 
-# pipeline 注册临时 config（运行时产物）
+# pipeline 临时 config / 状态全部进 .runtime/（Wave A 起统一隔离）
+CTF-pay/.runtime/
+CTF-reg/.runtime/
+# 兼容旧路径（万一有遗漏没进 .runtime/）
 CTF-pay/pipeline_pay_*.json
+CTF-pay/pipeline_plan_*.json
 CTF-reg/pipeline_cardw_*.json
 
 # Python

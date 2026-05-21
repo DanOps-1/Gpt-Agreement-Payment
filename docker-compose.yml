@@ -1,0 +1,47 @@
+# Gpt-Agreement-Payment / 单容器 webui
+#
+# 用法：
+#   git clone <repo> && cd Gpt-Agreement-Payment
+#   docker compose up -d --build
+#   浏览器开 http://127.0.0.1:8765/  （首次去 /setup 创建管理员）
+#
+# 配置文件由 entrypoint 自动从 *.example.json bootstrap，编辑 host 上的
+# CTF-pay/config.paypal.json + CTF-reg/config.paypal-proxy.json 即可，
+# 容器透过 bind mount 实时读取，改完 docker compose restart 生效。
+
+services:
+  webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gpt-agreement-payment:local
+    container_name: gap-webui
+    ports:
+      # 默认只暴露 127.0.0.1，公网请用 nginx 反代或显式改成 "0.0.0.0:8765:8765"
+      - "127.0.0.1:8765:8765"
+    volumes:
+      # 整个仓库 bind mount —— host git working tree 是 SOURCE OF TRUTH，
+      # 改完代码 docker exec / restart 即时生效；不需要重 build。
+      # 不用 single-file mount（inode stale：Edit 工具 atomic-rename 后容器挂旧 inode）。
+      - .:/app
+      # 屏蔽 host 上的 frontend node_modules / dist，让镜像里 baked 版本生效
+      # （anonymous volume 启动时从 image 同步，不被 host 空目录覆盖）
+      - /app/webui/frontend/node_modules
+      - /app/webui/frontend/dist
+      # webui SQLite + 注册结果 + 域池状态都落这（host 可见可备份）
+      - ./output:/app/output
+    environment:
+      # webui SQLite + wizard state 存放位置（settings.py 默认就是 /app/output）
+      WEBUI_DATA_DIR: /app/output
+      # OTP 等待超时：60s 比原 180s 更利于命中 OpenAI honeypot（已有账号假分支不真发邮件）
+      # 时快速失败让外层换新 persona/IP 重试。CF Email→Worker→KV 链路实测端到端 ~0.3s，
+      # 60s 是 200x 余量。需要更长可在用户 .env 里覆盖。
+      OTP_TIMEOUT: "60"
+      # 注册协议路径强制使用 Node/QuickJS Sentinel；runtime 镜像会在
+      # entrypoint 校验 /usr/local/bin/node 存在，否则 fail-fast。
+      OPENAI_SENTINEL_REQUIRE_QUICKJS: "1"
+      OPENAI_SENTINEL_NODE_PATH: /usr/local/bin/node
+      # WEBUI_QRIS_FORCE_MOCK: "1"  # 演示模式（绕过 OpenAI 风控）；真支付时关掉
+    restart: unless-stopped
+    # 浏览器自动化进程数量多，shm 默认 64MB 不够（firefox 会闪退）
+    shm_size: "1gb"

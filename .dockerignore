@@ -1,0 +1,72 @@
+# 与 .gitignore 大致对齐，避免把用户敏感配置 / 大体积运行产物 cook 进镜像
+
+# Git / CI
+.git
+.github
+
+# 用户实际配置（含 PIN / cookie / api_key 等敏感信息），运行时由 entrypoint 从 *.example.json bootstrap
+CTF-pay/config.paypal.json
+CTF-pay/config.paypal-*.json
+CTF-pay/config.qris.json
+CTF-pay/config.gopay.json
+CTF-pay/pipeline_pay_*.json
+CTF-reg/config.paypal-proxy.json
+CTF-reg/config.paypal-proxy-*.json
+CTF-reg/config.noproxy.json
+CTF-reg/pipeline_cardw_*.json
+
+# 运行产物（webui SQLite / wizard state / 注册结果 / 域池）
+output/
+
+# mitmproxy / 浏览器持久化（含 cookies/tokens）
+flows/
+flows.gz
+flows_*/
+*.har
+*_har
+CTF-pay/paypal_cf_persist/
+CTF-pay/paypal_cf_persist.bak-*/
+CTF-pay/whatsapp_relay/
+webui/whatsapp_relay/node_modules/
+webui/whatsapp_relay/.wwebjs_cache/
+webui/whatsapp_relay/.wwebjs_auth/
+webui/whatsapp_relay/.wa-session/
+webui/whatsapp_relay/baileys-gopay/
+
+# 前端：node_modules / dist 都由镜像 frontend-builder 阶段重建
+webui/frontend/node_modules/
+webui/frontend/dist/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 备份
+*.bak_*
+*.bak-*
+*.bak.*
+
+# 编辑器 / agent
+.vscode/
+.idea/
+.claude/
+.codex/
+.serena/
+.superpowers/
+docs/superpowers/
+AGENTS.md
+CLAUDE.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 仓库展示用大文件（README 引用），不需要进镜像
+QRcode.jpeg
+goodgood.jpg
+
+# Docker 自身
+Dockerfile
+docker-compose.yml
+.dockerignore

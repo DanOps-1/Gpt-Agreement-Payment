@@ -68,6 +68,7 @@
     "auto_refresh_on_inactive": true,
     "warmup_route_data": true,
     "plan": {
+      "_comment": "切 Plus 订阅时：plan_name -> chatgptplusplan，promo_campaign_id -> plus-1-month-free，删 workspace_name / seat_quantity（Plus 是单用户，没有 workspace 概念）。或者直接 `pipeline.py --plan plus`，会自动生成一份 Plus 临时配置。",
       "workspace_name": "MyWorkspace",
       "price_interval": "month",
       "seat_quantity": 5,

@@ -25,7 +25,7 @@
           备份：{{ result.backups.join(", ") }}
         </div>
       </div>
-      <pre class="export-cmd">xvfb-run -a python pipeline.py --config {{ relPath(result.pay_path) }} --paypal</pre>
+      <pre class="export-cmd">{{ exportCmd }}</pre>
       <TermBtn @click="goRun" style="margin-top:12px">立即在 Web 里运行 →</TermBtn>
     </div>
   </section>
@@ -52,6 +52,20 @@ interface ExportResult {
 const result = ref<ExportResult | null>(null);
 
 const prettyAll = computed(() => JSON.stringify(store.answers, null, 2));
+
+// 导出 CLI 命令跟着 wizard 实际选择拼：支付方式 + 订阅方案。Team 是默认值，
+// 不显式带 --plan；Plus 必须带 --plan plus，否则 config 万一被人覆盖回 Team 模板
+// 就会回退。
+const exportCmd = computed(() => {
+  if (!result.value) return "";
+  const pm = (store.answers.payment as any)?.method ?? "both";
+  const planType = (store.answers.team_plan as any)?.plan_type ?? "team";
+  const flags: string[] = [];
+  if (pm === "gopay") flags.push("--gopay");
+  else if (pm === "paypal" || pm === "both") flags.push("--paypal");
+  if (planType === "plus") flags.push("--plan", "plus");
+  return `xvfb-run -a python pipeline.py --config ${relPath(result.value.pay_path)} ${flags.join(" ")}`.trim();
+});
 
 async function exportConfigs() {
   loading.value = true;

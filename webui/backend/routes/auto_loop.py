@@ -16,6 +16,7 @@ class StartRequest(BaseModel):
     max_consec_fail: int = Field(ge=1, le=100, default=5)
     paypal: bool = False
     gopay: bool = True
+    qris: bool = False
     pay_only: bool = False
     register_only: bool = False
     register_mode: str = Field(default="browser", pattern="^(browser|protocol)$")

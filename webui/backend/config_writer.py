@@ -14,6 +14,12 @@ def _deep_merge(dst: dict, src: dict) -> dict:
     return dst
 
 
+# Team-only fields that must be stripped from fresh_checkout.plan when the
+# wizard picks the Plus subscription — example skeleton ships team defaults,
+# but Plus is single-user / no workspace, so deep_merge can't be left alone.
+_TEAM_ONLY_PLAN_FIELDS = ("workspace_name", "seat_quantity")
+
+
 def _backup(path: Path) -> Path | None:
     if not path.exists():
         return None
@@ -181,6 +187,24 @@ def _write_secrets(answers: dict) -> str | None:
     return "sqlite:runtime_meta/secrets"
 
 
+def _strip_team_only_fields_for_plus(cfg: dict) -> None:
+    """Plus 订阅不需要 workspace/seat；skeleton 默认填 Team 模板，必须先剥掉
+    再 merge，否则导出的 config.paypal.json 会带 seat_quantity=5 之类字段，
+    让 abcard 路径 / CTF-reg 在 Plus 下跟 plan_name 不匹配。
+
+    pay 配置使用 fresh_checkout.plan 路径；reg 配置使用 team_plan 路径。
+    只要任一段 plan_name 含 "plus" 就两段都剥（避免 wizard 只填了其中一段时
+    残留另一段的 team 默认值）。"""
+    pay_plan = ((cfg.get("fresh_checkout") or {}).get("plan") or {})
+    reg_plan = cfg.get("team_plan") or {}
+    candidate_names = (pay_plan.get("plan_name"), reg_plan.get("plan_name"))
+    if not any("plus" in str(name or "").lower() for name in candidate_names):
+        return
+    for plan in (pay_plan, reg_plan):
+        for key in _TEAM_ONLY_PLAN_FIELDS:
+            plan.pop(key, None)
+
+
 def write_configs(answers: dict) -> dict:
     """Returns {pay_path, reg_path, secrets_path, backups: [path, ...]}."""
     pay_skeleton = json.loads(s.PAY_EXAMPLE_PATH.read_text(encoding="utf-8"))
@@ -193,8 +217,13 @@ def write_configs(answers: dict) -> dict:
     auto = auth.setdefault("auto_register", {})
     auto["config_path"] = str(s.REG_CONFIG_PATH)
 
-    pay = _deep_merge(pay_skeleton, _project_pay(answers))
-    reg = _deep_merge(reg_skeleton, _project_reg(answers))
+    pay_overlay = _project_pay(answers)
+    reg_overlay = _project_reg(answers)
+
+    pay = _deep_merge(pay_skeleton, pay_overlay)
+    reg = _deep_merge(reg_skeleton, reg_overlay)
+    _strip_team_only_fields_for_plus(pay)
+    _strip_team_only_fields_for_plus(reg)
 
     backups = []
     for p in (s.PAY_CONFIG_PATH, s.REG_CONFIG_PATH):
