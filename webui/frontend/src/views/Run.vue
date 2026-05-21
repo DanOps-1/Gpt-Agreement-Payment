@@ -112,7 +112,7 @@
               <TermField
                 v-model="form.no_card_phone"
                 label="phone (E.164, 不带 +)"
-                placeholder="PHONE_REDACTED"
+                placeholder="US 10-digit local number"
               />
               <TermField
                 v-model="form.no_card_sms_api_url"
@@ -239,7 +239,7 @@
               <TermField
                 v-model="w.phone"
                 :label="`slot${idx + 1} phone`"
-                placeholder="PHONE_REDACTED"
+                placeholder="US 10-digit local number"
               />
               <TermField
                 v-model="w.sms_url"
@@ -994,7 +994,7 @@ const form = ref({
   outlook_email: "",  // 仅 mail_source=outlook 时生效, 空 = 池里随便挑
   // no_card_plus 模式 (scripts/no_card_paypal_plus.py): promo+PayPal RPA 0 元开 plus
   no_card_promo_link_id: 0, // 0 = 自动挑最新 fresh plus link
-  no_card_phone: localStorage.getItem("webui.no_card_phone") || "PHONE_REDACTED",
+  no_card_phone: localStorage.getItem("webui.no_card_phone") || "",
   no_card_sms_api_url: localStorage.getItem("webui.no_card_sms_api_url") || "",
   no_card_otp_timeout: 240,
   no_card_signup_retries: 3,

@@ -106,7 +106,7 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
               promo_currency: str = "IDR", promo_campaign_id: str = "",
               # no_card_plus 参数 (走独立 scripts/no_card_paypal_plus.py, 不走 pipeline.py)
               no_card_promo_link_id: int = 0,
-              no_card_phone: str = "PHONE_REDACTED",
+              no_card_phone: str = "",
               no_card_otp_timeout: int = 240,
               no_card_signup_retries: int = 3,
               no_card_node_rpa_timeout: int = 900,
@@ -128,7 +128,7 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
                "--paypal-signup-retries", str(int(no_card_signup_retries)),
                "--paypal-country", (no_card_paypal_country or "US").upper(),
                "--paypal-lang", (no_card_paypal_lang or "en").lower(),
-               "--phone", (no_card_phone or "PHONE_REDACTED"),
+               "--phone", (no_card_phone or ""),
                "--otp-timeout", str(int(no_card_otp_timeout)),
                "--max-due", str(int(no_card_max_due))]
         if int(no_card_promo_link_id) > 0:
@@ -243,7 +243,7 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
           mail_source: str = "outlook", outlook_email: str = "",
           # no_card_plus 参数
           no_card_promo_link_id: int = 0,
-          no_card_phone: str = "PHONE_REDACTED",
+          no_card_phone: str = "",
           no_card_sms_api_url: str = "",
           no_card_otp_timeout: int = 240,
           no_card_signup_retries: int = 1,

@@ -12,13 +12,13 @@
 // @run-at       document-idle
 // ==/UserScript==
 
-// ========== 配置 ==========
+// ========== 配置 (用户自填, 不要把真实卡 / phone / SMS gateway key 提交到 git) ==========
 var CONFIG = {
-    phone: 'PHONE_REDACTED',
-    cardNumber: 'CARD_REDACTED',
-    cardExpiry: '03 / 30',
-    cardCvv: '996',
-    smsKey: 'SMS_KEY_REDACTED'
+    phone: 'YOUR_US_SUBSCRIBER_NUMBER',          // e.g. 10-digit US local number
+    cardNumber: 'YOUR_TEST_CARD_NUMBER',         // VISA/MasterCard test BIN
+    cardExpiry: 'MM / YY',
+    cardCvv: 'XXX',
+    smsKey: 'YOUR_SMS_GATEWAY_API_KEY'           // 配套 @connect 里的 SMS 接码网关
 };
 // ========================
 

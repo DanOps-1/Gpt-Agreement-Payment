@@ -6540,10 +6540,12 @@ def _paypal_signup_node_rpa(
         "firstName": first_name,
         "lastName": last_name,
         "smsApiUrl": (
+            # Sensitive: 不硬编码 SMS gateway key. 用户从 config.paypal.json::paypal.sms_api_url
+            # 或 PPS_SMS_API_URL / PAYPAL_SMS_API_URL env 注入. 缺失时下游 Node RPA OTP 阶段会报错.
             paypal_cfg.get("sms_api_url")
             or os.environ.get("PPS_SMS_API_URL")
             or os.environ.get("PAYPAL_SMS_API_URL")
-            or "http://a.62-us.com/api/get_sms?key=SMS_KEY_REDACTED"
+            or ""
         ),
         "timeoutMs": int(paypal_cfg.get("node_rpa_timeout_s") or paypal_cfg.get("browser_rpa_timeout_s") or 720) * 1000,
         "otpTimeoutMs": int(paypal_cfg.get("otp_timeout_s") or 180) * 1000,
