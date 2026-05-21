@@ -10,6 +10,8 @@
       <div class="run-nav">
         <RouterLink to="/wizard" class="nav-link">配置向导</RouterLink>
         <RouterLink to="/run" class="nav-link active">运行</RouterLink>
+        <RouterLink to="/outlook" class="nav-link">Outlook 池</RouterLink>
+        <RouterLink to="/promo-links" class="nav-link">Promo 长链接</RouterLink>
         <button class="header-btn" @click="logout">退出</button>
       </div>
     </header>
@@ -39,41 +41,136 @@
           <div v-if="form.mode === 'self_dealer'" class="ctl-row sub">
             <TermField v-model.number="form.self_dealer" label="member N" type="number" />
           </div>
-          <div v-if="form.mode === 'free_register'" class="ctl-row sub">
-            <TermField v-model.number="form.count" label="注册数 (0=无限)" type="number" />
+          <div v-if="form.mode === 'free_register' || form.mode === 'promo_link'" class="ctl-row sub">
+            <TermField v-model.number="form.count" label="次数 (0=无限)" type="number" />
+          </div>
+          <p v-if="form.mode === 'promo_link'" class="ctl-hint">
+            注册 / 登录 outlook 邮箱 → 调 ChatGPT checkout 拿 promo 命中的 hosted long URL → 存 promo_links 表。
+            "已有账号" 不 fast-fail (走 OTP login 拿凭证)。区域 / 币种现在可自由指定。
+          </p>
+          <div v-if="form.mode === 'promo_link'" class="promo-region-box">
+            <div class="ctl-row reg-mode">
+              <span class="reg-mode-label">长链接区域 ·</span>
+              <button
+                v-for="preset in promoRegionPresets"
+                :key="preset.country"
+                type="button"
+                class="reg-mode-opt"
+                :class="{ active: form.promo_country === preset.country && form.promo_currency === preset.currency }"
+                @click="applyPromoRegion(preset.country, preset.currency)"
+              >{{ preset.label }}</button>
+            </div>
+            <div class="ctl-row sub promo-region-fields">
+              <label class="promo-select-wrap">
+                <span>plan</span>
+                <select v-model="form.promo_plan" class="promo-select">
+                  <option value="plus">plus</option>
+                  <option value="team">team</option>
+                </select>
+              </label>
+              <TermField
+                v-model="form.promo_country"
+                label="country"
+                placeholder="ID / US / JP"
+                :error="!promoCountryOk"
+                :ok="promoCountryOk"
+                @blur="normalizePromoRegion"
+              />
+              <TermField
+                v-model="form.promo_currency"
+                label="currency"
+                placeholder="IDR / USD / JPY"
+                :error="!promoCurrencyOk"
+                :ok="promoCurrencyOk"
+                @blur="normalizePromoRegion"
+              />
+              <TermField
+                v-model="form.promo_campaign_id"
+                label="campaign"
+                placeholder="空=默认 plus/team free campaign"
+              />
+            </div>
+            <p class="ctl-hint">
+              当前将生成 <code>{{ form.promo_plan }}</code> /
+              <code>{{ normalizedPromoCountry }}</code>/<code>{{ normalizedPromoCurrency }}</code>
+              长链接；也可以直接输入任意 2 位国家代码 + 3 位币种。
+            </p>
           </div>
 
-          <div v-if="!isFreeMode" class="ctl-row toggles">
-            <TermToggle v-model="form.paypal" :disabled="form.gopay">PayPal 支付</TermToggle>
-            <TermToggle v-model="form.gopay" @update:modelValue="onGoPayToggle">GoPay (印尼)</TermToggle>
+          <p class="ctl-hint">
+            UI 已切成按需显示：只展开当前模式 / 支付方式真正会用到的配置和工具。
+          </p>
+
+          <div v-if="showPaymentSelector" class="ctl-row toggles">
+            <TermToggle v-model="form.paypal" :disabled="form.gopay || form.qris">PayPal 支付</TermToggle>
+            <TermToggle v-model="form.gopay" :disabled="form.qris" @update:modelValue="onGoPayToggle">GoPay (印尼)</TermToggle>
+            <TermToggle v-model="form.qris" :disabled="form.gopay" @update:modelValue="onQrisToggle">QRIS (扫码)</TermToggle>
           </div>
-          <div v-if="!isFreeMode" class="ctl-row toggles">
+          <div v-if="showRunModifiers" class="ctl-row toggles">
             <TermToggle v-model="form.pay_only">--pay-only</TermToggle>
             <TermToggle v-model="form.register_only" :disabled="form.pay_only">--register-only</TermToggle>
           </div>
-          <p v-if="!isFreeMode" class="ctl-hint">
+          <p v-if="showRunModifiers" class="ctl-hint">
             <code>--pay-only</code> 跳过注册，优先复用最近注册但未支付账号；
             <code>--register-only</code> 只注册不支付。
+            <span v-if="form.register_only">当前是 register-only，支付方式配置已隐藏。</span>
           </p>
 
-          <div v-if="!form.pay_only" class="ctl-row reg-mode">
+          <div v-if="showRegisterPath" class="ctl-row reg-mode">
             <span class="reg-mode-label">注册路径 ·</span>
-            <label class="reg-mode-opt" :class="{ active: form.register_mode === 'browser' }">
-              <input type="radio" value="browser" v-model="form.register_mode" />
-              浏览器 (Camoufox)
-            </label>
             <label class="reg-mode-opt" :class="{ active: form.register_mode === 'protocol' }">
               <input type="radio" value="protocol" v-model="form.register_mode" />
-              纯协议 (auth_flow)
+              纯协议 (auth_flow + Node/QuickJS)
+            </label>
+            <label class="reg-mode-opt" :class="{ active: form.register_mode === 'browser' }">
+              <input type="radio" value="browser" v-model="form.register_mode" />
+              浏览器模拟 (Camoufox/Playwright)
             </label>
           </div>
-          <p v-if="!form.pay_only" class="ctl-hint">
-            <code>browser</code> 走 Camoufox + Turnstile 真实执行（稳但慢，OpenAI 改 modal 后可能失败）；
-            <code>protocol</code> 走 <code>auth_flow.AuthFlow</code> HTTP 直连（快，但可能被风控）。
-            选择会自动持久化到 localStorage。
+          <p v-if="showRegisterPath" class="ctl-hint">
+            <code>protocol</code>：<code>AuthFlow</code> HTTP 直连 + Node/QuickJS Sentinel；RT 补领走 <code>run_protocol_login</code>。
+            <code>browser</code>：Camoufox 真浏览器；RT 补领走 <code>_exchange_refresh_token_with_session</code>。
+            两者在 OpenAI 强制 <code>add-phone</code> 时都过不去。
           </p>
-          <p v-else class="ctl-hint">
-            <code>{{ form.mode }}</code> 不走支付步骤；OTP 经 CF KV 取，OAuth 拿 rt 后推 CPA 用 <code>cpa.free_plan_tag</code>。
+
+          <!-- 邮箱来源 (二选一互斥): Outlook 接码池 / 自有域名 catch-all -->
+          <div v-if="showMailSource" class="ctl-row reg-mode">
+            <span class="reg-mode-label">邮箱来源 ·</span>
+            <label class="reg-mode-opt" :class="{ active: form.mail_source === 'outlook' }">
+              <input type="radio" value="outlook" v-model="form.mail_source" />
+              Outlook 接码池 (IMAP OAuth2 收码)
+            </label>
+            <label class="reg-mode-opt" :class="{ active: form.mail_source === 'catch_all' }">
+              <input type="radio" value="catch_all" v-model="form.mail_source" />
+              域名 catch-all (CF Email Worker)
+            </label>
+          </div>
+          <div v-if="showOutlookSelector" class="ctl-row reg-mode">
+            <span class="reg-mode-label">Outlook 账号 ·</span>
+            <select v-model="form.outlook_email" class="outlook-select" :disabled="outlookLoading">
+              <option value="">— 池里任取一个 available ({{ outlookAvailable.length }} 个) —</option>
+              <option v-for="acc in outlookAvailable" :key="acc.email" :value="acc.email">
+                {{ acc.email }}
+              </option>
+            </select>
+            <button type="button" class="reg-mode-opt" @click="reloadOutlookPool" :disabled="outlookLoading">
+              {{ outlookLoading ? "..." : "刷新" }}
+            </button>
+            <RouterLink to="/outlook" class="reg-mode-opt">管理池</RouterLink>
+          </div>
+          <p v-if="showOutlookSelector" class="ctl-hint">
+            池空 / 指定号不可用 → 直接报错, 不回退 catch-all。
+            <span v-if="form.outlook_email">当前指定: <code>{{ form.outlook_email }}</code></span>
+          </p>
+          <p v-else-if="showCatchAllHint" class="ctl-hint">
+            用配置里 <code>mail.catch_all_domain</code> + persona 算法生成 <code>alias@yourdomain</code>。
+            OTP 走 CF Email Worker → KV → /api/cf-kv/otp 拉取。没配 domain → 直接报错。
+          </p>
+          <p v-else-if="form.pay_only && modeSupportsPayment" class="ctl-hint">
+            当前是 <code>pay-only</code>：不注册新账号，注册路径 / 邮箱来源已隐藏，只使用库存账号进入支付。
+          </p>
+          <p v-else-if="isFreeBackfillMode" class="ctl-hint">
+            <code>free_backfill_rt</code> 只处理库存老号补 <code>refresh_token</code>，不需要新邮箱或支付方式。
           </p>
         </div>
 
@@ -123,7 +220,40 @@
           </span>
         </div>
 
-        <details class="link-details" :open="autoLoop.running">
+        <!-- QRIS QR 显示：runner 抓到 [qris] PNG 日志后 status.qris 就有值 -->
+        <div v-if="showQrisPanel" class="qris-panel">
+          <div class="qris-head">
+            <span class="qris-title">QRIS 扫码支付</span>
+            <span class="badge" :class="status.qris?.settled ? 'badge-ok' : 'badge-warn'">
+              {{ status.qris?.settled ? "✓ 已入账" : "等待扫码" }}
+            </span>
+          </div>
+          <div class="qris-body">
+            <img v-if="status.qris?.png_path" :src="qrPngUrl" alt="QRIS QR" class="qris-img" />
+            <div class="qris-meta">
+              <p><strong>Reference:</strong> <code>{{ status.qris?.reference }}</code></p>
+              <p v-if="status.qris?.expiry"><strong>过期:</strong> {{ status.qris?.expiry }}</p>
+              <p v-if="status.qris?.qr_image_url">
+                <strong>远端预览:</strong>
+                <a :href="status.qris?.qr_image_url" target="_blank" rel="noopener">
+                  {{ status.qris?.qr_image_url?.replace(/^https?:\/\//, '').slice(0, 60) }}…
+                </a>
+              </p>
+              <p v-if="status.qris?.deeplink_url" class="qris-deeplink">
+                <strong>📱 GoPay app 直接支付：</strong>
+                <a :href="status.qris?.deeplink_url" target="_blank" rel="noopener">点这里在手机 GoPay app 弹付款</a>
+                <br />
+                <span class="qris-hint">手机已装 GoPay app 时优先用这个，绕过扫码 + WhatsApp OTP</span>
+              </p>
+              <p class="qris-hint">
+                或扫上方 QR：用 GoPay / DANA / OVO / ShopeePay 等印尼 e-wallet 扫付。
+                后端轮询 Midtrans status，settle 后自动 verify ChatGPT plan。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <details v-if="showAutoLoopTools" class="link-details" :open="autoLoop.running">
           <summary>
             Auto Loop ·
             <span class="link-summary" :class="autoLoop.running ? 'warn' : 'muted'">
@@ -172,7 +302,7 @@
           </p>
         </details>
 
-        <details class="link-details">
+        <details v-if="showProxyTools" class="link-details">
           <summary>
             出口 IP ·
             <span class="link-summary" :class="proxyIp ? 'ok' : 'muted'">
@@ -192,7 +322,7 @@
           </p>
         </details>
 
-        <details class="link-details">
+        <details v-if="showGopayLinkTools" class="link-details">
           <summary>
             GoPay 链接 ·
             <span class="link-summary" :class="linkSummaryClass">{{ linkSummaryText }}</span>
@@ -262,140 +392,178 @@
             <span class="inventory-label">最近刷新</span>
             <span class="inventory-value">{{ inventoryUpdatedText }}</span>
           </div>
-          <TermBtn variant="ghost" :loading="inventoryLoading" @click="refreshInventory">刷新库存</TermBtn>
+          <div class="inventory-head-actions">
+            <TermBtn
+              v-if="showInventoryContent"
+              variant="ghost"
+              :loading="inventoryLoading"
+              @click="refreshInventory"
+            >刷新库存</TermBtn>
+            <TermBtn variant="ghost" @click="toggleInventoryContent">
+              {{ showInventoryContent ? "收起详情" : "展开库存" }}
+            </TermBtn>
+          </div>
         </div>
-        <div v-if="inventoryError" class="inventory-error">
-          库存刷新失败：{{ inventoryError }}。如果刚更新过代码，重启后端 <code>python -m webui.server</code>。
-        </div>
-
-        <div class="inventory-stats">
-          <div class="inventory-stat">
-            <span class="inventory-stat-label">总账号</span>
-            <strong>{{ inventory.counts.registered_total }}</strong>
-          </div>
-          <div class="inventory-stat">
-            <span class="inventory-stat-label">可复用</span>
-            <strong>{{ inventory.counts.pay_only_eligible }}</strong>
-          </div>
-          <div class="inventory-stat">
-            <span class="inventory-stat-label">已消耗</span>
-            <strong>{{ inventory.counts.pay_only_consumed }}</strong>
-          </div>
-          <div class="inventory-stat">
-            <span class="inventory-stat-label">缺 auth</span>
-            <strong>{{ inventory.counts.pay_only_no_auth }}</strong>
-          </div>
-          <div class="inventory-stat">
-            <span class="inventory-stat-label">有 RT</span>
-            <strong>{{ inventory.counts.with_refresh_token }}</strong>
-          </div>
-          <div class="inventory-stat">
-            <span class="inventory-stat-label">RT 待补</span>
-            <strong>{{ inventory.counts.rt_missing }}</strong>
-          </div>
-          <div class="inventory-stat">
-            <span class="inventory-stat-label">RT 冷却</span>
-            <strong>{{ inventory.counts.rt_cooldown }}</strong>
-          </div>
+        <div v-if="!showInventoryContent" class="inventory-lazy">
+          账号库存默认不加载。选中 <code>pay-only</code> / <code>free_register</code> /
+          <code>free_backfill_rt</code> 会自动展开；也可以手动点「展开库存」。
         </div>
 
-        <div v-if="inventory.accounts.length" class="inventory-filters">
-          <input
-            v-model="invFilters.search"
-            class="inv-filter-input"
-            placeholder="🔍 邮箱关键字"
-          />
-          <select v-model="invFilters.plan" class="inv-filter-sel">
-            <option value="">所有 plan</option>
-            <option value="plus">plus</option>
-            <option value="team">team</option>
-            <option value="free">free</option>
-          </select>
-          <select v-model="invFilters.check" class="inv-filter-sel">
-            <option value="">所有验证</option>
-            <option value="valid">✓ 有效</option>
-            <option value="invalid">✗ 失效</option>
-            <option value="unknown">? 未知</option>
-            <option value="unchecked">未检</option>
-          </select>
-          <select v-model="invFilters.pay" class="inv-filter-sel">
-            <option value="">所有支付</option>
-            <option value="reusable">可复用</option>
-            <option value="consumed">已消耗</option>
-            <option value="no_auth">缺 auth</option>
-          </select>
-          <select v-model="invFilters.rt" class="inv-filter-sel">
-            <option value="">所有 RT</option>
-            <option value="has_rt">有 RT</option>
-            <option value="oauth_succeeded">OAuth 成功</option>
-            <option value="missing">缺 RT</option>
-            <option value="cooldown">冷却中</option>
-            <option value="retryable">可重试</option>
-            <option value="dead">永久失败</option>
-          </select>
-          <select v-model="invFilters.cpa" class="inv-filter-sel">
-            <option value="">所有 CPA</option>
-            <option value="pushed">已推送</option>
-            <option value="not_pushed">未推送</option>
-          </select>
-          <span class="inv-filter-count">{{ filteredAccounts.length }} / {{ inventory.accounts.length }}</span>
-          <TermBtn variant="ghost" :disabled="!hasActiveFilter" @click="resetInvFilters">清除筛选</TermBtn>
-        </div>
-
-        <div v-if="inventory.accounts.length" class="inventory-toolbar">
-          <label class="inventory-toolbar-check">
-            <input type="checkbox" :checked="allFilteredSelected" @change="toggleSelectAllFiltered" />
-            <span>全选筛选结果 ({{ selectedFilteredCount }} / {{ filteredAccounts.length }})</span>
-          </label>
-          <div class="inventory-toolbar-actions">
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="verifySelected">验证选中</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="unknownOrUncheckedIds.length === 0" @click="verifyAllUnknown">验证全部未检 ({{ unknownOrUncheckedIds.length }})</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="pushSelectedToCpa">推送选中→CPA</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="unpushedIds.length === 0" @click="pushAllUnpushed">推送全部未推送 ({{ unpushedIds.length }})</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0 || status.running" @click="payOnlySelected">选中跑 pay-only</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0 || status.running" @click="rtOnlySelected">选中补 RT</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="selectedIds.size === 0" @click="deleteSelected">删除选中</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" :disabled="invalidIds.length === 0" @click="deleteAllInvalid">删除所有失效 ({{ invalidIds.length }})</TermBtn>
+        <template v-else>
+          <div v-if="inventoryError" class="inventory-error">
+            库存刷新失败：{{ inventoryError }}。如果刚更新过代码，重启后端 <code>python -m webui.server</code>。
           </div>
-        </div>
 
-        <div v-if="filteredAccounts.length" class="inventory-list">
-          <div v-for="acc in filteredAccounts" :key="acc.id || acc.email" class="inventory-row" :class="{ 'inventory-row--selected': isSelected(acc.id) }">
-            <div class="inventory-row-top">
-              <input type="checkbox" class="inventory-row-check" :checked="isSelected(acc.id)" @change="toggleSelect(acc.id)" />
-              <span class="inventory-email">{{ acc.email }}</span>
-              <span class="badge" :class="planBadgeClass(acc.plan_tag)">{{ planLabel(acc.plan_tag) }}</span>
-              <span class="badge" :class="checkBadgeClass(acc.last_check_status)" :title="acc.last_check_message">
-                <template v-if="checkingIds.has(acc.id)">⟳ 检查中</template>
-                <template v-else>{{ checkLabel(acc.last_check_status) }}</template>
-              </span>
-              <span class="badge" :class="payBadgeClass(acc.pay_state)">{{ payStateLabel(acc) }}</span>
-              <span class="badge" :class="rtBadgeClass(acc.rt_state)">{{ rtStateLabel(acc) }}</span>
-              <span class="badge" :class="cpaBadgeClass(acc)" :title="acc.cpa_status">{{ cpaLabel(acc) }}</span>
-              <button v-if="!acc.cpa_pushed" class="inventory-row-action" :disabled="inventoryBusy" @click="pushOneToCpa(acc.id)">推送→CPA</button>
+          <div class="inventory-stats">
+            <div class="inventory-stat">
+              <span class="inventory-stat-label">总账号</span>
+              <strong>{{ inventory.counts.registered_total }}</strong>
             </div>
-            <div class="inventory-row-sub">
-              <span>注册 {{ formatInventoryTs(acc.registered_at) }}</span>
-              <span>attempts {{ acc.attempts }}</span>
-              <span>auth {{ authSummary(acc) }}</span>
+            <div v-if="showPayInventoryFields" class="inventory-stat">
+              <span class="inventory-stat-label">可复用</span>
+              <strong>{{ inventory.counts.pay_only_eligible }}</strong>
             </div>
-            <div class="inventory-row-detail">
-              <span>payment {{ acc.latest_payment_status || "—" }}</span>
-              <span v-if="acc.latest_payment_source">source {{ acc.latest_payment_source }}</span>
-              <span v-if="acc.latest_payment_error">error {{ acc.latest_payment_error }}</span>
-              <span v-if="acc.oauth_status">oauth {{ acc.oauth_status }}<template v-if="acc.oauth_fail_reason"> ({{ acc.oauth_fail_reason }})</template></span>
-              <span v-if="acc.oauth_cooldown_remaining_s">cooldown {{ formatCooldown(acc.oauth_cooldown_remaining_s) }}</span>
-              <span v-if="acc.latest_payment_is_already_paid" class="inventory-inline-flag">already paid</span>
-              <span v-if="acc.can_backfill_rt" class="inventory-inline-flag">can backfill rt</span>
+            <div v-if="showPayInventoryFields" class="inventory-stat">
+              <span class="inventory-stat-label">已消耗</span>
+              <strong>{{ inventory.counts.pay_only_consumed }}</strong>
+            </div>
+            <div v-if="showPayInventoryFields" class="inventory-stat">
+              <span class="inventory-stat-label">缺 auth</span>
+              <strong>{{ inventory.counts.pay_only_no_auth }}</strong>
+            </div>
+            <div v-if="showRtInventoryFields" class="inventory-stat">
+              <span class="inventory-stat-label">有 RT</span>
+              <strong>{{ inventory.counts.with_refresh_token }}</strong>
+            </div>
+            <div v-if="showRtInventoryFields" class="inventory-stat">
+              <span class="inventory-stat-label">RT 待补</span>
+              <strong>{{ inventory.counts.rt_missing }}</strong>
+            </div>
+            <div v-if="showRtInventoryFields" class="inventory-stat">
+              <span class="inventory-stat-label">RT 冷却</span>
+              <strong>{{ inventory.counts.rt_cooldown }}</strong>
             </div>
           </div>
-        </div>
-        <div v-else-if="!inventory.accounts.length" class="inventory-empty">
-          暂无账号库存；先跑一次注册/支付，等数据库同步完成后再点刷新。
-        </div>
-        <div v-else class="inventory-empty">
-          所有账号都被筛掉了——清除筛选或调整条件。
-        </div>
+
+          <div v-if="inventory.accounts.length" class="inventory-filters">
+            <input
+              v-model="invFilters.search"
+              class="inv-filter-input"
+              placeholder="🔍 邮箱关键字"
+            />
+            <select v-model="invFilters.plan" class="inv-filter-sel">
+              <option value="">所有 plan</option>
+              <option value="plus">plus</option>
+              <option value="team">team</option>
+              <option value="pro">pro</option>
+              <option value="free">free</option>
+            </select>
+            <select v-model="invFilters.check" class="inv-filter-sel">
+              <option value="">所有验证</option>
+              <option value="valid">✓ 有效</option>
+              <option value="invalid">✗ 失效</option>
+              <option value="unknown">? 未知</option>
+              <option value="unchecked">未检</option>
+            </select>
+            <select v-if="showPayInventoryFields" v-model="invFilters.pay" class="inv-filter-sel">
+              <option value="">所有支付</option>
+              <option value="reusable">可复用</option>
+              <option value="consumed">已消耗</option>
+              <option value="no_auth">缺 auth</option>
+            </select>
+            <select v-if="showRtInventoryFields" v-model="invFilters.rt" class="inv-filter-sel">
+              <option value="">所有 RT</option>
+              <option value="has_rt">有 RT</option>
+              <option value="oauth_succeeded">OAuth 成功</option>
+              <option value="missing">缺 RT</option>
+              <option value="cooldown">冷却中</option>
+              <option value="retryable">可重试</option>
+              <option value="dead">永久失败</option>
+            </select>
+            <select v-if="showCpaInventoryActions" v-model="invFilters.cpa" class="inv-filter-sel">
+              <option value="">所有 CPA</option>
+              <option value="pushed">已推送</option>
+              <option value="not_pushed">未推送</option>
+            </select>
+            <span class="inv-filter-count">{{ filteredAccounts.length }} / {{ inventory.accounts.length }}</span>
+            <TermBtn variant="ghost" :disabled="!hasActiveFilter" @click="resetInvFilters">清除筛选</TermBtn>
+          </div>
+
+          <div v-if="inventory.accounts.length" class="inventory-toolbar">
+            <label class="inventory-toolbar-check">
+              <input type="checkbox" :checked="allFilteredSelected" @change="toggleSelectAllFiltered" />
+              <span>全选筛选结果 ({{ selectedFilteredCount }} / {{ filteredAccounts.length }})</span>
+            </label>
+            <!-- 顶栏: 只放 "全表批量" 操作 (不依赖选中). 单账号操作走卡片右上角按钮 -->
+            <div class="inventory-toolbar-actions">
+              <TermBtn v-if="unknownOrUncheckedIds.length" variant="ghost" :loading="inventoryBusy" @click="verifyAllUnknown">验证全部未检 ({{ unknownOrUncheckedIds.length }})</TermBtn>
+              <TermBtn v-if="planRefreshableIds.length" variant="ghost" :loading="inventoryBusy" @click="refreshPlanAll">实时刷新 Plan ({{ planRefreshableIds.length }})</TermBtn>
+              <TermBtn v-if="rtRefreshableIds.length" variant="ghost" :loading="inventoryBusy" @click="refreshRtStatusAll">RT刷新全部有RT ({{ rtRefreshableIds.length }})</TermBtn>
+              <TermBtn v-if="showCpaInventoryActions && unpushedIds.length" variant="ghost" :loading="inventoryBusy" @click="pushAllUnpushed">推送全部未推送→CPA ({{ unpushedIds.length }})</TermBtn>
+              <TermBtn v-if="unpushedIds.length" variant="ghost" :loading="inventoryBusy" @click="pushAllUnpushedToAutofill">推送全部未推送→散户面板 ({{ unpushedIds.length }})</TermBtn>
+              <TermBtn v-if="invalidIds.length" variant="ghost" :loading="inventoryBusy" @click="deleteAllInvalid">删除所有失效 ({{ invalidIds.length }})</TermBtn>
+            </div>
+          </div>
+          <!-- 多选时浮出: 批量操作"选中" (跟顶栏分开, 不混) -->
+          <div v-if="hasSelection" class="inventory-multi-actions">
+            <span class="inventory-multi-label">已选中 {{ selectedIds.size }} 个 · 批量操作:</span>
+            <TermBtn variant="ghost" :loading="inventoryBusy" @click="verifySelected">验证</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" @click="refreshRtStatusSelected">RT刷新</TermBtn>
+            <TermBtn v-if="showCpaInventoryActions" variant="ghost" :loading="inventoryBusy" @click="pushSelectedToCpa">推送→CPA</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" @click="pushSelectedToAutofill">推送→散户面板</TermBtn>
+            <TermBtn v-if="showPayOnlyInventoryAction" variant="ghost" :loading="inventoryBusy" @click="payOnlySelected">pay-only</TermBtn>
+            <TermBtn v-if="showRtInventoryAction" variant="ghost" :loading="inventoryBusy" @click="rtOnlySelected">补 RT</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" @click="deleteSelected">删除</TermBtn>
+          </div>
+
+          <div v-if="filteredAccounts.length" class="inventory-list">
+            <div v-for="acc in filteredAccounts" :key="acc.id || acc.email" class="inventory-row" :class="{ 'inventory-row--selected': isSelected(acc.id) }">
+              <div class="inventory-row-top">
+                <input type="checkbox" class="inventory-row-check" :checked="isSelected(acc.id)" @change="toggleSelect(acc.id)" />
+                <span class="inventory-email">{{ acc.email }}</span>
+                <span class="badge" :class="planBadgeClass(acc.plan_tag)">{{ planLabel(acc.plan_tag) }}</span>
+                <span class="badge" :class="checkBadgeClass(acc.last_check_status)" :title="acc.last_check_message">
+                  <template v-if="checkingIds.has(acc.id)">⟳ 检查中</template>
+                  <template v-else>{{ checkLabel(acc.last_check_status) }}</template>
+                </span>
+                <span v-if="showPayInventoryFields" class="badge" :class="payBadgeClass(acc.pay_state)">{{ payStateLabel(acc) }}</span>
+                <span v-if="showRtInventoryFields" class="badge" :class="rtBadgeClass(acc.rt_state)">{{ rtStateLabel(acc) }}</span>
+                <span v-if="showCpaInventoryActions" class="badge" :class="cpaBadgeClass(acc)" :title="acc.cpa_status">{{ cpaLabel(acc) }}</span>
+                <!-- 单账号操作按钮组 (右对齐). 跟现有 "推送→CPA" 按钮同一行 -->
+                <div class="inventory-row-actions">
+                  <button class="inventory-row-action" :disabled="inventoryBusy" @click="verifyOne(acc.id)">验证</button>
+                  <button class="inventory-row-action" :disabled="inventoryBusy" @click="refreshRtStatusOne(acc.id)" :title="acc.has_refresh_token ? '用 RT 换新 AT 拿 JWT plan' : '无 RT, 该按钮会返 no_rt'">RT刷新</button>
+                  <button v-if="showCpaInventoryActions && !acc.cpa_pushed" class="inventory-row-action" :disabled="inventoryBusy" @click="pushOneToCpa(acc.id)">推送→CPA</button>
+                  <button class="inventory-row-action" :disabled="inventoryBusy" @click="pushOneToAutofill(acc.id)">推送→散户</button>
+                  <button v-if="showPayOnlyInventoryAction" class="inventory-row-action" :disabled="inventoryBusy" @click="payOnlyOne(acc.id)">pay-only</button>
+                  <button v-if="showRtInventoryAction" class="inventory-row-action" :disabled="inventoryBusy" @click="rtOnlyOne(acc.id)">补 RT</button>
+                  <button class="inventory-row-action inventory-row-action--danger" :disabled="inventoryBusy" @click="deleteOne(acc.id)">删除</button>
+                </div>
+              </div>
+              <div class="inventory-row-sub">
+                <span>注册 {{ formatInventoryTs(acc.registered_at) }}</span>
+                <span>attempts {{ acc.attempts }}</span>
+                <span>auth {{ authSummary(acc) }}</span>
+                <span v-if="acc.last_plan_type">rt-plan {{ acc.last_plan_type }}</span>
+              </div>
+              <div class="inventory-row-detail">
+                <span v-if="showPayInventoryFields">payment {{ acc.latest_payment_status || "—" }}</span>
+                <span v-if="showPayInventoryFields && acc.latest_payment_source">source {{ acc.latest_payment_source }}</span>
+                <span v-if="showPayInventoryFields && acc.latest_payment_error">error {{ acc.latest_payment_error }}</span>
+                <span v-if="showRtInventoryFields && acc.oauth_status">oauth {{ acc.oauth_status }}<template v-if="acc.oauth_fail_reason"> ({{ acc.oauth_fail_reason }})</template></span>
+                <span v-if="showRtInventoryFields && acc.oauth_cooldown_remaining_s">cooldown {{ formatCooldown(acc.oauth_cooldown_remaining_s) }}</span>
+                <span v-if="showPayInventoryFields && acc.latest_payment_is_already_paid" class="inventory-inline-flag">already paid</span>
+                <span v-if="showRtInventoryFields && acc.can_backfill_rt" class="inventory-inline-flag">can backfill rt</span>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="!inventory.accounts.length" class="inventory-empty">
+            暂无账号库存；先跑一次注册/支付，等数据库同步完成后再点刷新。
+          </div>
+          <div v-else class="inventory-empty">
+            所有账号都被筛掉了——清除筛选或调整条件。
+          </div>
+        </template>
       </section>
 
       <Teleport to="body">
@@ -471,7 +639,28 @@ const modes = [
   { value: "daemon", label: "daemon ∞" },
   { value: "free_register", label: "free_register — 免费号+rt+CPA" },
   { value: "free_backfill_rt", label: "free_backfill_rt — 老号补rt" },
+  { value: "promo_link", label: "promo_link — 抓优惠长链接存DB" },
 ];
+const paymentModes = new Set(["single", "batch", "self_dealer", "daemon"]);
+const promoRegionPresets = [
+  { country: "ID", currency: "IDR", label: "ID/IDR" },
+  { country: "US", currency: "USD", label: "US/USD" },
+  { country: "JP", currency: "JPY", label: "JP/JPY" },
+  { country: "GB", currency: "GBP", label: "GB/GBP" },
+  { country: "IE", currency: "EUR", label: "IE/EUR" },
+  { country: "FR", currency: "EUR", label: "FR/EUR" },
+  { country: "DE", currency: "EUR", label: "DE/EUR" },
+  { country: "CA", currency: "CAD", label: "CA/CAD" },
+  { country: "AU", currency: "AUD", label: "AU/AUD" },
+  { country: "SG", currency: "SGD", label: "SG/SGD" },
+  { country: "HK", currency: "HKD", label: "HK/HKD" },
+  { country: "TW", currency: "TWD", label: "TW/TWD" },
+  { country: "KR", currency: "KRW", label: "KR/KRW" },
+  { country: "IN", currency: "INR", label: "IN/INR" },
+];
+const promoCurrencyByCountry: Record<string, string> = Object.fromEntries(
+  promoRegionPresets.map((x) => [x.country, x.currency])
+);
 
 import { useWizardStore } from "../stores/wizard";
 const store = useWizardStore();
@@ -486,6 +675,15 @@ interface RunStatus {
   exit_code: number | null;
   log_count: number;
   otp_pending?: boolean;
+  qris?: {
+    png_path?: string;
+    qr_image_url?: string;
+    deeplink_url?: string;
+    reference?: string;
+    expiry?: string;
+    settled?: boolean;
+    ready_at?: number;
+  };
 }
 
 interface InventoryAccount {
@@ -513,6 +711,8 @@ interface InventoryAccount {
   last_check_message: string;
   last_check_at: number;
   plan_tag: "free" | "plus" | "team" | string;
+  last_plan_type: "free" | "plus" | "team" | "pro" | string;
+  plan_source: "rt" | "payment" | "derived" | string;
   cpa_status: string;
   cpa_pushed: boolean;
 }
@@ -562,18 +762,92 @@ const form = ref({
   mode: (router.currentRoute.value.query.mode as string) || "single",
   paypal: true,
   gopay: false,
+  qris: false,
   pay_only: false,
   register_only: false,
   batch: 5,
   workers: 3,
   self_dealer: 4,
   count: 0, // free_register 模式：注册多少个后停（0 = 无限）
-  register_mode: (localStorage.getItem("webui.register_mode") || "browser") as "browser" | "protocol",
+  promo_plan: (localStorage.getItem("webui.promo_plan") || "plus") as "plus" | "team",
+  promo_country: (localStorage.getItem("webui.promo_country") || "ID").toUpperCase(),
+  promo_currency: (localStorage.getItem("webui.promo_currency") || "IDR").toUpperCase(),
+  promo_campaign_id: localStorage.getItem("webui.promo_campaign_id") || "",
+  register_mode: ((localStorage.getItem("webui.register_mode") as "browser" | "protocol") || "protocol"),
+  // 邮箱来源 (二选一互斥), 默认 outlook
+  mail_source: (localStorage.getItem("webui.mail_source") || "outlook") as "outlook" | "catch_all",
+  outlook_email: "",  // 仅 mail_source=outlook 时生效, 空 = 池里随便挑
 });
 
 watch(() => form.value.register_mode, (v) => {
+  if (v !== "protocol" && v !== "browser") {
+    form.value.register_mode = "protocol";
+    return;
+  }
   try { localStorage.setItem("webui.register_mode", v); } catch {}
 });
+watch(() => form.value.mail_source, (v) => {
+  try { localStorage.setItem("webui.mail_source", v); } catch {}
+  if (v !== "outlook") form.value.outlook_email = "";
+  else reloadOutlookPool();
+});
+watch(() => form.value.mode, (mode) => {
+  if (!paymentModes.has(mode)) {
+    form.value.pay_only = false;
+    form.value.register_only = false;
+  }
+});
+watch(() => form.value.pay_only, (enabled) => {
+  if (enabled) form.value.register_only = false;
+});
+watch(
+  () => [form.value.promo_plan, form.value.promo_country, form.value.promo_currency, form.value.promo_campaign_id],
+  () => {
+    try {
+      localStorage.setItem("webui.promo_plan", form.value.promo_plan);
+      localStorage.setItem("webui.promo_country", normalizedPromoCountry.value);
+      localStorage.setItem("webui.promo_currency", normalizedPromoCurrency.value);
+      localStorage.setItem("webui.promo_campaign_id", form.value.promo_campaign_id || "");
+    } catch {}
+  }
+);
+
+const normalizedPromoCountry = computed(() => (form.value.promo_country || "").trim().toUpperCase());
+const normalizedPromoCurrency = computed(() => (form.value.promo_currency || "").trim().toUpperCase());
+const promoCountryOk = computed(() => /^[A-Z]{2}$/.test(normalizedPromoCountry.value));
+const promoCurrencyOk = computed(() => /^[A-Z]{3}$/.test(normalizedPromoCurrency.value));
+
+function applyPromoRegion(country: string, currency: string) {
+  form.value.promo_country = country.toUpperCase();
+  form.value.promo_currency = currency.toUpperCase();
+}
+
+function normalizePromoRegion() {
+  const country = normalizedPromoCountry.value;
+  form.value.promo_country = country;
+  form.value.promo_currency = normalizedPromoCurrency.value || promoCurrencyByCountry[country] || "";
+}
+
+// Outlook 池下拉数据 (mail_source=outlook 时拉 available 列表)
+const outlookAvailable = ref<Array<{ email: string }>>([]);
+const outlookLoading = ref(false);
+async function reloadOutlookPool() {
+  if (outlookLoading.value) return;
+  outlookLoading.value = true;
+  try {
+    const r = await api.get("/outlook/list", { params: { limit: 500, status: "available" } });
+    outlookAvailable.value = (r.data?.items || []).map((x: any) => ({ email: x.email }));
+    // 若当前选中的 email 不在最新可用列表里, 清掉
+    if (form.value.outlook_email &&
+        !outlookAvailable.value.some(a => a.email === form.value.outlook_email)) {
+      form.value.outlook_email = "";
+    }
+  } catch (e: any) {
+    console.warn("[outlook] reload pool failed", e);
+  } finally {
+    outlookLoading.value = false;
+  }
+}
 
 const otpDialog = ref({
   open: false,
@@ -696,7 +970,7 @@ async function startAutoLoop() {
       gopay: true,
       pay_only: false,
       register_only: false,
-      register_mode: form.value.register_mode || "browser",
+      register_mode: form.value.register_mode,
     });
     message.success("Auto Loop 已启动");
     await refreshAutoLoop();
@@ -783,8 +1057,25 @@ async function setLinkState(phone: string, linked: boolean) {
 }
 
 function onGoPayToggle(v: boolean) {
-  if (v) form.value.paypal = false;
+  if (v) {
+    form.value.paypal = false;
+    form.value.qris = false;
+  }
 }
+
+function onQrisToggle(v: boolean) {
+  if (v) {
+    form.value.paypal = false;
+    form.value.gopay = false;
+  }
+}
+
+// QRIS PNG 走 nginx /webui/api/...（剥前缀后命中 /api/run/qris/qr.png）
+// 加 ready_at cache-bust 让浏览器换新 QR 不命中旧缓存
+const qrPngUrl = computed(() => {
+  const ra = status.value.qris?.ready_at || 0;
+  return `${import.meta.env.BASE_URL}api/run/qris/qr.png?t=${ra}`;
+});
 
 const status = ref<RunStatus>({
   running: false, pid: null, mode: null, cmd: null,
@@ -835,6 +1126,43 @@ let clockTimer: ReturnType<typeof setInterval> | undefined;
 let statusTimer: ReturnType<typeof setInterval> | undefined;
 let inventoryTimer: ReturnType<typeof setInterval> | undefined;
 let eventSource: EventSource | null = null;
+
+const inventoryExpanded = ref(false);
+
+const isFreeRegisterMode = computed(() => form.value.mode === "free_register");
+const isFreeBackfillMode = computed(() => form.value.mode === "free_backfill_rt");
+const modeSupportsPayment = computed(() => paymentModes.has(form.value.mode));
+const showRunModifiers = computed(() => modeSupportsPayment.value);
+const showPaymentSelector = computed(() => modeSupportsPayment.value && !form.value.register_only);
+const requiresRegistration = computed(() => !form.value.pay_only && !isFreeBackfillMode.value);
+const showRegisterPath = computed(() => requiresRegistration.value);
+const showMailSource = computed(() => requiresRegistration.value);
+const showOutlookSelector = computed(() => showMailSource.value && form.value.mail_source === "outlook");
+const showCatchAllHint = computed(() => showMailSource.value && form.value.mail_source === "catch_all");
+const showQrisPanel = computed(() => !!(form.value.qris && status.value.qris?.reference));
+const showAutoLoopTools = computed(() =>
+  form.value.gopay || form.value.mode === "daemon" || autoLoop.value.running
+);
+const showProxyTools = computed(() =>
+  form.value.gopay || form.value.qris || autoLoop.value.running
+);
+const showGopayLinkTools = computed(() =>
+  form.value.gopay || autoLoop.value.running
+);
+const inventoryAutoRelevant = computed(() =>
+  form.value.pay_only || isFreeRegisterMode.value || isFreeBackfillMode.value
+);
+const showInventoryContent = computed(() => inventoryExpanded.value);
+const showPayInventoryFields = computed(() => modeSupportsPayment.value || form.value.pay_only);
+const showRtInventoryFields = computed(() => isFreeRegisterMode.value || isFreeBackfillMode.value);
+const showCpaInventoryActions = computed(() => isFreeRegisterMode.value || isFreeBackfillMode.value);
+const showPayOnlyInventoryAction = computed(() =>
+  showPayInventoryFields.value && !form.value.register_only && !status.value.running
+);
+const showRtInventoryAction = computed(() =>
+  showRtInventoryFields.value && !status.value.running
+);
+const hasSelection = computed(() => selectedIds.value.size > 0);
 
 function tick() {
   const d = new Date();
@@ -1007,12 +1335,21 @@ const invFilters = ref({
   cpa: "",
 });
 
+const effectiveInvFilters = computed(() => ({
+  search: invFilters.value.search,
+  plan: invFilters.value.plan,
+  check: invFilters.value.check,
+  pay: showPayInventoryFields.value ? invFilters.value.pay : "",
+  rt: showRtInventoryFields.value ? invFilters.value.rt : "",
+  cpa: showCpaInventoryActions.value ? invFilters.value.cpa : "",
+}));
+
 const hasActiveFilter = computed(() =>
-  Object.values(invFilters.value).some(v => v !== "")
+  Object.values(effectiveInvFilters.value).some(v => v !== "")
 );
 
 const filteredAccounts = computed<InventoryAccount[]>(() => {
-  const f = invFilters.value;
+  const f = effectiveInvFilters.value;
   const s = (f.search || "").trim().toLowerCase();
   return inventory.value.accounts.filter(acc => {
     if (s && !(acc.email || "").toLowerCase().includes(s)) return false;
@@ -1070,6 +1407,12 @@ const unknownOrUncheckedIds = computed(() =>
     .filter(a => a.last_check_status === "" || a.last_check_status === "unknown")
     .map(a => a.id)
 );
+const rtRefreshableIds = computed(() =>
+  inventory.value.accounts.filter(a => a.has_refresh_token).map(a => a.id)
+);
+const planRefreshableIds = computed(() =>
+  inventory.value.accounts.filter(a => a.has_access_token).map(a => a.id)
+);
 
 async function runCheck(ids: number[], label: string) {
   if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
@@ -1078,7 +1421,10 @@ async function runCheck(ids: number[], label: string) {
   try {
     const r = await api.post("/inventory/accounts/check", { ids });
     const s = r.data?.summary || {};
-    message.success(`${label}完成：valid=${s.valid || 0}  invalid=${s.invalid || 0}  unknown=${s.unknown || 0}`);
+    message.success(
+      `${label}完成：valid=${s.valid || 0}  invalid=${s.invalid || 0}  unknown=${s.unknown || 0}` +
+      `  |  plus=${s.plus || 0}  team=${s.team || 0}  pro=${s.pro || 0}  free=${s.free || 0}`
+    );
     await refreshInventory();
   } catch (e: any) {
     message.error(`${label}失败：${e?.response?.data?.detail || e?.message || e}`);
@@ -1092,6 +1438,105 @@ function verifySelected() {
 }
 function verifyAllUnknown() {
   runCheck(unknownOrUncheckedIds.value, "验证未检/未知");
+}
+function refreshPlanAll() {
+  runCheck(planRefreshableIds.value, "实时 API 刷新全部 Plan");
+}
+
+async function runRtStatusRefresh(ids: number[], label: string) {
+  if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
+  inventoryBusy.value = true;
+  ids.forEach(id => checkingIds.value.add(id));
+  try {
+    const r = await api.post("/inventory/accounts/refresh-rt-status", {
+      ids,
+      timeout_s: 15,
+      max_workers: 3,
+    });
+    const s = r.data?.summary || {};
+    message.success(
+      `${label}完成：plus=${s.plus || 0}  team=${s.team || 0}  pro=${s.pro || 0}  free=${s.free || 0}  invalid=${s.invalid || 0}  no_rt=${s.no_rt || 0}`
+    );
+    await refreshInventory();
+  } catch (e: any) {
+    message.error(`${label}失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    ids.forEach(id => checkingIds.value.delete(id));
+    inventoryBusy.value = false;
+  }
+}
+function refreshRtStatusSelected() {
+  runRtStatusRefresh(Array.from(selectedIds.value), "RT刷新选中状态");
+}
+function refreshRtStatusAll() {
+  runRtStatusRefresh(rtRefreshableIds.value, "RT刷新全部有RT");
+}
+
+// 单账号快捷操作: 包成 list 复用批量入口, label 带 email 提高可读性
+function _emailOf(id: number): string {
+  const acc = inventory.value.accounts.find(a => a.id === id);
+  return acc?.email || `id=${id}`;
+}
+function verifyOne(id: number) {
+  runCheck([id], `验证 ${_emailOf(id)}`);
+}
+function refreshRtStatusOne(id: number) {
+  runRtStatusRefresh([id], `RT刷新 ${_emailOf(id)}`);
+}
+function pushOneToAutofill(id: number) {
+  pushCpaAutofill([id], `推送 ${_emailOf(id)} → 散户面板`);
+}
+async function payOnlyOne(id: number) {
+  const email = _emailOf(id);
+  if (!email || email.startsWith("id=")) { message.warning("找不到该账号 email"); return; }
+  if (!confirm(`对 ${email} 跑 pay-only？\n\n模式：${form.value.gopay ? "GoPay" : (form.value.paypal ? "PayPal" : "Card")}`)) return;
+  starting.value = true;
+  try {
+    await api.post("/run/start", {
+      mode: "single",
+      paypal: form.value.paypal,
+      gopay: form.value.gopay,
+      pay_only: true,
+      register_only: false,
+      register_mode: form.value.register_mode,
+      target_emails: [email],
+    });
+    message.success(`已对 ${email} 启动 pay-only`);
+    await refreshStatus();
+    if (status.value.running) openStream();
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || "启动失败");
+  } finally {
+    starting.value = false;
+  }
+}
+async function rtOnlyOne(id: number) {
+  const email = _emailOf(id);
+  if (!email || email.startsWith("id=")) { message.warning("找不到该账号 email"); return; }
+  if (!confirm(`对 ${email} 跑 rt-only（补 refresh_token，不付款）？`)) return;
+  starting.value = true;
+  try {
+    await api.post("/run/start", {
+      mode: "single",
+      paypal: false,
+      gopay: false,
+      pay_only: false,
+      register_only: false,
+      rt_only: true,
+      register_mode: form.value.register_mode,
+      target_emails: [email],
+    });
+    message.success(`已对 ${email} 启动 rt-only`);
+    await refreshStatus();
+    if (status.value.running) openStream();
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || "启动失败");
+  } finally {
+    starting.value = false;
+  }
+}
+function deleteOne(id: number) {
+  confirmAndDelete([id], `删除 ${_emailOf(id)}`);
 }
 
 function emailsForIds(ids: number[]): string[] {
@@ -1142,7 +1587,7 @@ async function payOnlySelected() {
       gopay: form.value.gopay,
       pay_only: true,
       register_only: false,
-      register_mode: form.value.register_mode || "browser",
+      register_mode: form.value.register_mode,
       target_emails: emails,
     });
     message.success(`已对 ${emails.length} 个账号启动 pay-only`);
@@ -1169,7 +1614,7 @@ async function rtOnlySelected() {
       pay_only: false,
       register_only: false,
       rt_only: true,
-      register_mode: form.value.register_mode || "browser",
+      register_mode: form.value.register_mode,
       target_emails: emails,
     });
     message.success(`已对 ${emails.length} 个账号启动 rt-only`);
@@ -1193,11 +1638,13 @@ function deleteAllInvalid() {
 function planLabel(p: string) {
   if (p === "team") return "team";
   if (p === "plus") return "plus";
-  return "free";
+  if (p === "pro") return "pro";
+  if (p === "free") return "free";
+  return p || "unknown";
 }
 function planBadgeClass(p: string) {
   if (p === "team") return "badge-team";
-  if (p === "plus") return "badge-plus";
+  if (p === "plus" || p === "pro") return "badge-plus";
   return "badge-ghost";
 }
 function cpaLabel(acc: InventoryAccount) {
@@ -1231,6 +1678,50 @@ async function pushCpa(ids: number[], label: string) {
 function pushOneToCpa(id: number) { pushCpa([id], "推送 CPA"); }
 function pushSelectedToCpa() { pushCpa(Array.from(selectedIds.value), "批量推送选中"); }
 function pushAllUnpushed() { pushCpa(unpushedIds.value, "推送所有未推送"); }
+
+async function pushCpaAutofill(ids: number[], label: string) {
+  if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
+  // 散户面板会做 RT-refresh 反双花,本地一旦推上去就别再用了 — 先确价再确认
+  const lastPriceRaw = localStorage.getItem("cpa_autofill_last_price") || "1.0";
+  const priceInput = window.prompt(
+    `${ids.length} 个账号挂到散户面板出售\n\n请输入本批挂单价 (元/号,卖家到手 = 此价 × 出号数):\n` +
+    `⚠ 服务端会立即 refresh 一次 OAuth token,推完这些号的本地 refresh_token 会失效,本地不能再用。`,
+    lastPriceRaw,
+  );
+  if (priceInput === null) return;
+  const price = parseFloat(priceInput.trim());
+  if (!Number.isFinite(price) || price < 0) {
+    message.error("挂单价必须是非负数字");
+    return;
+  }
+  localStorage.setItem("cpa_autofill_last_price", String(price));
+  inventoryBusy.value = true;
+  try {
+    const r = await api.post("/inventory/accounts/cpa-autofill-push", { ids, price });
+    const s = r.data?.summary || {};
+    const errs = (r.data?.api_errors || []) as string[];
+    const lines = [
+      `${label}完成 (price=${r.data?.price ?? "?"} 元/号, 分 ${r.data?.batches ?? 0} 批)`,
+      `accepted=${s.accepted || 0}  rejected=${s.rejected || 0}  missing_field=${s.missing_field || 0}  api_error=${s.api_error || 0}  missing=${s.missing || 0}`,
+    ];
+    if (errs.length) lines.push(`API 错误: ${errs.slice(0, 2).join(" | ")}`);
+    message.success(lines.join("\n"));
+    await refreshInventory();
+  } catch (e: any) {
+    message.error(`${label}失败：${e?.response?.data?.detail || e?.message || e}`);
+  } finally {
+    inventoryBusy.value = false;
+  }
+}
+function pushSelectedToAutofill() { pushCpaAutofill(Array.from(selectedIds.value), "批量推送选中到散户面板"); }
+function pushAllUnpushedToAutofill() { pushCpaAutofill(unpushedIds.value, "推送所有未推送到散户面板"); }
+
+function toggleInventoryContent() {
+  inventoryExpanded.value = !inventoryExpanded.value;
+  if (showInventoryContent.value) {
+    refreshInventory();
+  }
+}
 
 async function refreshInventory() {
   if (inventoryLoading.value) return;
@@ -1433,17 +1924,74 @@ function stopOtpPolling() {
   }
 }
 
-const isFreeMode = computed(() =>
-  form.value.mode === "free_register" || form.value.mode === "free_backfill_rt"
-);
+function setLinkPolling(enabled: boolean) {
+  if (enabled) {
+    refreshLinkStates();
+    if (!linkPollTimer) linkPollTimer = setInterval(refreshLinkStates, 5000);
+  } else if (linkPollTimer) {
+    clearInterval(linkPollTimer);
+    linkPollTimer = undefined;
+  }
+}
+
+function setAutoLoopPolling(enabled: boolean) {
+  if (enabled) {
+    refreshAutoLoop();
+    if (!autoLoopPollTimer) autoLoopPollTimer = setInterval(refreshAutoLoop, 4000);
+  } else if (autoLoopPollTimer) {
+    clearInterval(autoLoopPollTimer);
+    autoLoopPollTimer = undefined;
+  }
+}
+
+function setInventoryPolling(enabled: boolean) {
+  if (enabled) {
+    refreshInventory();
+    if (!inventoryTimer) inventoryTimer = setInterval(refreshInventory, 15000);
+  } else if (inventoryTimer) {
+    clearInterval(inventoryTimer);
+    inventoryTimer = undefined;
+  }
+}
 
 watch(
-  () => [form.value.mode, form.value.paypal, form.value.gopay, form.value.pay_only, form.value.register_only, form.value.batch, form.value.workers, form.value.self_dealer, form.value.count, form.value.register_mode],
+  () => [
+    form.value.mode,
+    form.value.paypal,
+    form.value.gopay,
+    form.value.qris,
+    form.value.pay_only,
+    form.value.register_only,
+    form.value.batch,
+    form.value.workers,
+    form.value.self_dealer,
+    form.value.count,
+    form.value.promo_plan,
+    form.value.promo_country,
+    form.value.promo_currency,
+    form.value.promo_campaign_id,
+    form.value.register_mode,
+    form.value.mail_source,
+    form.value.outlook_email,
+  ],
   () => {
     configHealth.value = null;
     refreshPreview();
   },
   { immediate: false }
+);
+
+watch(showGopayLinkTools, (enabled) => setLinkPolling(enabled));
+watch(showAutoLoopTools, (enabled) => setAutoLoopPolling(enabled));
+watch(showProxyTools, (enabled) => {
+  if (enabled && !proxyIp.value && !proxyError.value) loadCurrentProxy();
+});
+watch(inventoryAutoRelevant, (enabled) => {
+  if (enabled) inventoryExpanded.value = true;
+}, { immediate: true });
+watch(
+  () => showInventoryContent.value || status.value.running,
+  (enabled) => setInventoryPolling(enabled)
 );
 
 onMounted(async () => {
@@ -1467,17 +2015,18 @@ onMounted(async () => {
   await refreshStatus();
   await refreshPreview();
   await checkConfigHealth();
-  await refreshInventory();
+  if (form.value.mail_source === "outlook") {
+    reloadOutlookPool();
+  }
   if (status.value.running) {
     openStream();
   }
   statusTimer = setInterval(refreshStatus, 5000);
-  inventoryTimer = setInterval(refreshInventory, 15000);
-  refreshLinkStates();
-  linkPollTimer = setInterval(refreshLinkStates, 5000);
-  loadCurrentProxy();
-  refreshAutoLoop();
-  autoLoopPollTimer = setInterval(refreshAutoLoop, 4000);
+  setInventoryPolling(showInventoryContent.value || status.value.running);
+  await refreshAutoLoop();
+  setAutoLoopPolling(showAutoLoopTools.value);
+  setLinkPolling(showGopayLinkTools.value);
+  if (showProxyTools.value) loadCurrentProxy();
 });
 
 onBeforeUnmount(() => {
@@ -1529,6 +2078,39 @@ onBeforeUnmount(() => {
 .ctl-row.sub { padding-left: 8px; border-left: 2px solid var(--border-strong); }
 .ctl-row.toggles { margin-top: 4px; gap: 16px; flex-wrap: wrap; }
 .ctl-row.reg-mode { margin-top: 6px; gap: 12px; font-size: 12px; }
+.promo-region-box {
+  border: 1px dashed var(--border);
+  background: var(--bg-panel);
+  padding: 10px 12px;
+}
+.promo-region-fields {
+  margin-top: 10px;
+}
+.promo-select-wrap {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+}
+.promo-select-wrap span {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+}
+.promo-select {
+  border: 0;
+  background: transparent;
+  color: var(--fg-primary);
+  font: inherit;
+  padding: 9px 10px;
+  min-width: 90px;
+}
+.promo-select:focus { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
 .reg-mode-label { color: var(--fg-tertiary); }
 .reg-mode-opt {
   display: inline-flex;
@@ -1541,6 +2123,7 @@ onBeforeUnmount(() => {
 }
 .reg-mode-opt input { accent-color: var(--accent); }
 .reg-mode-opt.active { border-color: var(--accent); color: var(--accent); }
+.reg-mode-opt.static { cursor: default; background: var(--bg-panel); }
 
 .link-details {
   margin-top: 8px;
@@ -1703,6 +2286,41 @@ onBeforeUnmount(() => {
 
 .status-line { margin-top: 16px; padding: 10px 12px; background: var(--bg-panel); border: 1px solid var(--border); font-size: 12px; color: var(--fg-secondary); }
 .status-line.running { border-color: var(--accent); }
+
+.qris-panel {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.qris-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border);
+}
+.qris-title { font-size: 14px; font-weight: 600; color: var(--fg-primary); letter-spacing: 0.5px; }
+.qris-body { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.qris-img {
+  display: block;
+  width: 240px;
+  height: 240px;
+  background: white;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.qris-meta { flex: 1; min-width: 280px; font-size: 12px; line-height: 1.6; color: var(--fg-secondary); }
+.qris-meta p { margin: 4px 0; }
+.qris-meta strong { color: var(--fg-primary); margin-right: 6px; }
+.qris-meta code { font-size: 11px; padding: 1px 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 2px; }
+.qris-hint { margin-top: 10px !important; padding-top: 8px; border-top: 1px dashed var(--border); font-size: 11px; color: var(--fg-tertiary, var(--fg-secondary)); }
+.qris-meta a { color: var(--accent); text-decoration: none; }
+.qris-meta a:hover { text-decoration: underline; }
 .status-dot { color: var(--fg-tertiary); margin-right: 6px; }
 .status-line.running .status-dot { color: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 .status-dot.ok { color: var(--ok); }
@@ -1716,6 +2334,13 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+.inventory-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .inventory-meta {
   display: flex;
@@ -1742,6 +2367,19 @@ onBeforeUnmount(() => {
   padding: 10px 12px;
   font-size: 12px;
   line-height: 1.6;
+}
+.inventory-lazy {
+  border: 1px dashed var(--border);
+  background: var(--bg-panel);
+  color: var(--fg-tertiary);
+  padding: 14px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.inventory-lazy code {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
 }
 .inventory-stats {
   display: grid;
@@ -1830,6 +2468,23 @@ onBeforeUnmount(() => {
   gap: 6px;
   flex-wrap: wrap;
 }
+.inventory-multi-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  margin-top: 4px;
+  background: #fff7ec;
+  border: 1px dashed var(--accent);
+  border-radius: 2px;
+  font-size: 12px;
+}
+.inventory-multi-label {
+  margin-right: 4px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--accent);
+}
 .inventory-list {
   display: flex;
   flex-direction: column;
@@ -1904,8 +2559,14 @@ onBeforeUnmount(() => {
 .badge-ghost { border-color: var(--border); color: var(--fg-tertiary); }
 .badge-plus { border-color: #2563eb; color: #2563eb; }
 .badge-team { border-color: #7c3aed; color: #7c3aed; }
-.inventory-row-action {
+.inventory-row-actions {
   margin-left: auto;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.inventory-row-action {
   padding: 3px 9px;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 11px;
@@ -1922,6 +2583,14 @@ onBeforeUnmount(() => {
 .inventory-row-action:disabled {
   opacity: .5;
   cursor: not-allowed;
+}
+.inventory-row-action--danger {
+  border-color: #c75353;
+  color: #c75353;
+}
+.inventory-row-action--danger:hover:not(:disabled) {
+  background: #c75353;
+  color: #fff;
 }
 @keyframes pulse {
   0%, 100% { opacity: 0.4; }

@@ -147,6 +147,8 @@ def _payment_kind(req: dict) -> str:
     mode = _text(req.get("mode")) or "single"
     if mode in {"free_register", "free_backfill_rt"} or bool(req.get("register_only")):
         return "none"
+    if bool(req.get("qris")):
+        return "qris"
     if bool(req.get("gopay")):
         return "gopay"
     if bool(req.get("paypal", True)):
@@ -291,6 +293,14 @@ def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
     kind = _payment_kind(req)
     if kind == "none":
         _check(checks, "payment_config", "ok", "当前模式不走支付", blocking=False)
+        return
+
+    if kind == "qris":
+        # QRIS 不需要 phone/pin/email/card —— 只要 fresh_checkout.auth 能拿到
+        # access_token（ChatGPT checkout 创建必需）。account 检查由 _check_chatgpt_auth_or_register
+        # 兜底。这里只 OK 标记。
+        _check(checks, "qris_config", "ok",
+               "QRIS 支付不需要绑定/OTP/PIN，扫码即付", blocking=False)
         return
 
     if kind == "gopay":

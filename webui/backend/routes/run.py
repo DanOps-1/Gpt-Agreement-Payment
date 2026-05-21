@@ -1,6 +1,7 @@
 import asyncio
 import json
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 from ..auth import CurrentUser
@@ -11,7 +12,7 @@ router = APIRouter(prefix="/api/run", tags=["run"])
 
 
 class StartRequest(BaseModel):
-    mode: str = Field(pattern="^(single|batch|self_dealer|daemon|free_register|free_backfill_rt)$")
+    mode: str = Field(pattern="^(single|batch|self_dealer|daemon|free_register|free_backfill_rt|promo_link)$")
     paypal: bool = True
     batch: int = 0
     workers: int = 3
@@ -19,11 +20,18 @@ class StartRequest(BaseModel):
     register_only: bool = False
     pay_only: bool = False
     gopay: bool = False
+    qris: bool = False
     count: int = 0  # free_register 模式下注册次数（0 = 无限）
     register_mode: str = Field(default="browser", pattern="^(browser|protocol)$")
     # 选中账号定向操作：配合 pay_only 或 rt_only
     target_emails: list[str] = []
     rt_only: bool = False
+    # 邮箱来源 (二选一, 严格互斥, 不 fallback):
+    # - outlook   : Outlook 接码池 (4 段格式 import 到 /outlook 页), IMAP OAuth2 收 OTP
+    # - catch_all : 自有域名 catch-all + CF Email Worker → KV 收 OTP, persona 算法生成 alias
+    mail_source: str = Field(default="outlook", pattern="^(outlook|catch_all)$")
+    # 仅在 mail_source=outlook 时生效, 空 = 池里随便挑, 具体 email = 指定
+    outlook_email: str = ""
 
 
 class OTPRequest(BaseModel):
@@ -113,6 +121,24 @@ def preview(req: StartRequest, user: str = CurrentUser):
     """干跑：只返命令行不实际启动。"""
     cmd = runner.build_cmd(
         req.mode, req.paypal, req.batch, req.workers, req.self_dealer,
-        req.register_only, req.pay_only, gopay=req.gopay, count=req.count,
+        req.register_only, req.pay_only, gopay=req.gopay, qris=req.qris,
+        count=req.count,
     )
     return {"cmd": cmd, "cmd_str": " ".join(cmd)}
+
+
+# QRIS：前端轮询拿当前 QR artifacts + PNG bytes
+@router.get("/qris/state")
+def qris_state(user: str = CurrentUser):
+    """返回当前/最近一次 QRIS run 的 reference / 远端 URL / 过期时间 / settled。"""
+    return runner.qris_state()
+
+
+@router.get("/qris/qr.png")
+def qris_qr_png(user: str = CurrentUser):
+    """返回 QR PNG bytes。前端直接当 <img src> 用。"""
+    data = runner.qris_png_bytes()
+    if not data:
+        raise HTTPException(status_code=404, detail="no QR yet")
+    return Response(content=data, media_type="image/png",
+                    headers={"Cache-Control": "no-store"})

@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS registered_accounts (
   created_at REAL NOT NULL,
   last_check_at REAL DEFAULT 0,
   last_check_status TEXT DEFAULT '',
-  last_check_message TEXT DEFAULT ''
+  last_check_message TEXT DEFAULT '',
+  last_plan_type TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_registered_accounts_email_id
   ON registered_accounts(email, id);
@@ -127,6 +128,43 @@ CREATE TABLE IF NOT EXISTS oauth_status (
   ts TEXT NOT NULL,
   fail_reason TEXT DEFAULT ''
 );
+
+-- Outlook 账号池（接码买的 4 段格式：email----password----client_id----refresh_token）
+-- Run 时从池里 claim 一个 available outlook，注册到 ChatGPT 后 mark used
+CREATE TABLE IF NOT EXISTS outlook_accounts (
+  email TEXT PRIMARY KEY COLLATE NOCASE,
+  password TEXT DEFAULT '',
+  client_id TEXT DEFAULT '',
+  refresh_token TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'available',  -- available / in_use / used / dead
+  imported_at REAL DEFAULT 0,
+  claimed_at REAL DEFAULT 0,
+  used_at REAL DEFAULT 0,
+  chatgpt_email TEXT DEFAULT '',  -- 注册成功后等于自己 (现在 outlook 邮箱注册 ChatGPT 用同 email)
+  fail_reason TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_outlook_accounts_status ON outlook_accounts(status, imported_at);
+
+-- 优惠长链接池 (mode=promo_link 抓的): 注册/登录账号 → 调 ChatGPT checkout API
+-- 拿 promo 命中的 hosted long URL (https://checkout.stripe.com/c/pay/cs_live_...) 存这.
+CREATE TABLE IF NOT EXISTS promo_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL COLLATE NOCASE,
+  checkout_url TEXT NOT NULL,             -- 长链接 (hosted, 优惠命中)
+  cs_id TEXT DEFAULT '',                  -- cs_live_xxx
+  processor_entity TEXT DEFAULT '',       -- openai_llc / openai_ie / ...
+  plan_name TEXT DEFAULT '',              -- chatgptplusplan / chatgptteamplan
+  promo_campaign_id TEXT DEFAULT '',      -- plus-1-month-free 等
+  billing_country TEXT DEFAULT '',
+  billing_currency TEXT DEFAULT '',
+  amount_due_cents INTEGER DEFAULT 0,     -- 命中 promo 应该 ≤ 100 (1 currency unit)
+  status TEXT NOT NULL DEFAULT 'fresh',   -- fresh / used / expired
+  created_at REAL NOT NULL,
+  used_at REAL DEFAULT 0,
+  raw_response TEXT DEFAULT ''            -- ChatGPT checkout API 完整 response (debug)
+);
+CREATE INDEX IF NOT EXISTS idx_promo_links_email_id ON promo_links(email, id);
+CREATE INDEX IF NOT EXISTS idx_promo_links_status_created ON promo_links(status, created_at);
 """
 
 
@@ -179,6 +217,8 @@ class Database:
             c.execute("ALTER TABLE registered_accounts ADD COLUMN last_check_status TEXT DEFAULT ''")
         if "last_check_message" not in existing_acc:
             c.execute("ALTER TABLE registered_accounts ADD COLUMN last_check_message TEXT DEFAULT ''")
+        if "last_plan_type" not in existing_acc:
+            c.execute("ALTER TABLE registered_accounts ADD COLUMN last_plan_type TEXT DEFAULT ''")
 
     # ──────────────────────────────────────────
     # Runtime data store. SQLite is the only source of truth for runtime data.
@@ -271,6 +311,79 @@ class Database:
             ).fetchone()
         return row is not None
 
+    def add_promo_link(self, row: dict) -> int:
+        """写一条 promo 长链接记录, 返新 row id."""
+        email = _email(row.get("email"))
+        if not email or not row.get("checkout_url"):
+            return 0
+        import json as _json
+        with self._conn() as c:
+            cur = c.execute(
+                """
+                INSERT INTO promo_links(
+                  email, checkout_url, cs_id, processor_entity,
+                  plan_name, promo_campaign_id, billing_country, billing_currency,
+                  amount_due_cents, status, created_at, raw_response
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    email,
+                    _text(row.get("checkout_url")),
+                    _text(row.get("cs_id")),
+                    _text(row.get("processor_entity")),
+                    _text(row.get("plan_name")),
+                    _text(row.get("promo_campaign_id")),
+                    _text(row.get("billing_country")),
+                    _text(row.get("billing_currency")),
+                    int(row.get("amount_due_cents") or 0),
+                    _text(row.get("status") or "fresh"),
+                    time.time(),
+                    _json.dumps(row.get("raw_response") or {}, ensure_ascii=False)
+                        if isinstance(row.get("raw_response"), dict)
+                        else _text(row.get("raw_response")),
+                ),
+            )
+            return int(cur.lastrowid or 0)
+
+    def list_promo_links(self, status: str = "", limit: int = 200) -> list[dict]:
+        with self._conn() as c:
+            if status:
+                rows = c.execute(
+                    """SELECT id, email, checkout_url, cs_id, processor_entity,
+                       plan_name, promo_campaign_id, billing_country, billing_currency,
+                       amount_due_cents, status, created_at, used_at
+                       FROM promo_links WHERE status=? ORDER BY id DESC LIMIT ?""",
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = c.execute(
+                    """SELECT id, email, checkout_url, cs_id, processor_entity,
+                       plan_name, promo_campaign_id, billing_country, billing_currency,
+                       amount_due_cents, status, created_at, used_at
+                       FROM promo_links ORDER BY id DESC LIMIT ?""",
+                    (limit,),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    def promo_links_stats(self) -> dict:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT status, COUNT(*) AS n FROM promo_links GROUP BY status"
+            ).fetchall()
+        out = {"fresh": 0, "used": 0, "expired": 0, "total": 0}
+        for r in rows:
+            out[r["status"]] = r["n"]
+            out["total"] += r["n"]
+        return out
+
+    def mark_promo_link_used(self, link_id: int) -> bool:
+        with self._conn() as c:
+            cur = c.execute(
+                "UPDATE promo_links SET status='used', used_at=? WHERE id=? AND status='fresh'",
+                (time.time(), int(link_id)),
+            )
+            return cur.rowcount > 0
+
     def add_registered_account(self, row: dict) -> bool:
         email = _email(row.get("email"))
         if not email:
@@ -306,7 +419,8 @@ class Database:
                 """
                 SELECT id, email, ts, password, session_token, access_token, device_id,
                        csrf_token, id_token, refresh_token, cookie_header,
-                       last_check_at, last_check_status, last_check_message
+                       last_check_at, last_check_status, last_check_message,
+                       last_plan_type
                 FROM registered_accounts
                 ORDER BY id ASC
                 """
@@ -319,23 +433,80 @@ class Database:
                 """
                 SELECT id, email, ts, password, session_token, access_token, device_id,
                        csrf_token, id_token, refresh_token, cookie_header,
-                       last_check_at, last_check_status, last_check_message
+                       last_check_at, last_check_status, last_check_message,
+                       last_plan_type
                 FROM registered_accounts WHERE id = ?
                 """,
                 (int(account_id),),
             ).fetchone()
         return dict(row) if row else {}
 
-    def update_account_check(self, account_id: int, status: str, message: str = "") -> bool:
-        """Record validity probe outcome (status: 'valid' | 'invalid' | 'unknown')."""
+    def update_account_check(self, account_id: int, status: str, message: str = "",
+                              plan_type: str = "") -> bool:
+        """Record validity probe outcome (status: 'valid' | 'invalid' | 'unknown').
+
+        ``plan_type`` 可选: 当 caller 从实时 API (/backend-api/accounts/check)
+        拿到了订阅状态时一并写入,避免下次 inventory 渲染读到 stale JWT claim。
+        空字符串表示不更新 plan_type 字段(向后兼容)。
+        """
+        sets = [
+            "last_check_at = ?",
+            "last_check_status = ?",
+            "last_check_message = ?",
+        ]
+        args: list[Any] = [time.time(), _text(status), _text(message)[:500]]
+        if plan_type:
+            sets.append("last_plan_type = ?")
+            args.append(_text(plan_type)[:80])
+        args.append(int(account_id))
         with self._conn() as c:
             cur = c.execute(
-                """
-                UPDATE registered_accounts
-                SET last_check_at = ?, last_check_status = ?, last_check_message = ?
-                WHERE id = ?
-                """,
-                (time.time(), _text(status), _text(message)[:500], int(account_id)),
+                f"UPDATE registered_accounts SET {', '.join(sets)} WHERE id = ?",
+                args,
+            )
+        return cur.rowcount > 0
+
+    def update_account_rt_status(
+        self,
+        account_id: int,
+        *,
+        status: str,
+        message: str = "",
+        plan_type: str = "",
+        access_token: str = "",
+        refresh_token: str = "",
+        id_token: str = "",
+    ) -> bool:
+        """Persist the result of a refresh_token based status refresh.
+
+        Successful refreshes may rotate the access/refresh token and expose the
+        current ChatGPT plan in the access-token claims.  Keep the raw token
+        update and the derived status in one DB write so inventory never shows
+        a new plan with stale credentials, or vice versa.
+        """
+        sets = [
+            "last_check_at = ?",
+            "last_check_status = ?",
+            "last_check_message = ?",
+        ]
+        args: list[Any] = [time.time(), _text(status), _text(message)[:500]]
+        if plan_type:
+            sets.append("last_plan_type = ?")
+            args.append(_text(plan_type)[:80])
+        if access_token:
+            sets.append("access_token = ?")
+            args.append(_text(access_token))
+        if refresh_token:
+            sets.append("refresh_token = ?")
+            args.append(_text(refresh_token))
+        if id_token:
+            sets.append("id_token = ?")
+            args.append(_text(id_token))
+        args.append(int(account_id))
+        with self._conn() as c:
+            cur = c.execute(
+                f"UPDATE registered_accounts SET {', '.join(sets)} WHERE id = ?",
+                args,
             )
         return cur.rowcount > 0
 

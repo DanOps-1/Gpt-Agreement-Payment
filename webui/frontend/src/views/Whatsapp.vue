@@ -10,6 +10,8 @@
       <div class="run-nav">
         <RouterLink to="/wizard" class="nav-link">配置向导</RouterLink>
         <RouterLink to="/run" class="nav-link">运行</RouterLink>
+        <RouterLink to="/outlook" class="nav-link">Outlook 池</RouterLink>
+        <RouterLink to="/promo-links" class="nav-link">Promo 长链接</RouterLink>
         <button class="header-btn" @click="logout">退出</button>
       </div>
     </header>

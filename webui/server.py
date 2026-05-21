@@ -15,6 +15,8 @@ from .backend.routes import whatsapp as whatsapp_routes
 from .backend.routes import link_state as link_state_routes
 from .backend.routes import proxy as proxy_routes
 from .backend.routes import auto_loop as auto_loop_routes
+from .backend.routes import outlook as outlook_routes
+from .backend.routes import promo_links as promo_links_routes
 
 
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
@@ -35,6 +37,8 @@ def create_app() -> FastAPI:
     app.include_router(link_state_routes.router)
     app.include_router(proxy_routes.router)
     app.include_router(auto_loop_routes.router)
+    app.include_router(outlook_routes.router)
+    app.include_router(promo_links_routes.router)
 
     @app.get("/api/healthz")
     def healthz():

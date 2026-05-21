@@ -4,6 +4,21 @@
 
 ---
 
+## PayPal 协议支付收尾 Plus 订阅路径
+
+之前 `--paypal` 走的全是 Team 链路；Plus 在 modern 路径已支持，但 abcard + WebUI 导出 + CLI 都有遗漏，本次收尾。
+
+- **`pipeline.py`** 新增 `--plan {team,plus}`：在所有分支（单次 / pay-only / batch / daemon / self-dealer）前先做一次配置覆盖——生成临时 config 把 `fresh_checkout.plan.plan_name` / `entry_point` / `promo_campaign_id` 对齐目标计划，Plus 模式额外剥掉 `workspace_name` / `seat_quantity`，不动用户原文件，跑完 atexit 清理
+- **`card.py::_build_abcard_checkout_payload`**：识别 `plus` plan_name 时不再硬塞 `workspace_name` / `seat_quantity`。之前 Plus + access_token / abcard 链路会把 team 字段一起发出去，被 ChatGPT 后端 400
+- **`card.py::_provision_openai_auth_via_local_bundle`**：Plus 时同步剥掉 ab_cfg.team_plan 里 example 残留的 team 字段，避免 CTF-reg 新开号阶段的 plan_name 与 seat 字段错配
+- **`webui/backend/config_writer.py`**：导出 PayPal / Plus 配置时，主动剥 `fresh_checkout.plan` + `team_plan` 两段的 team-only 字段；之前 `_deep_merge` 会保留 example skeleton 默认的 `seat_quantity=5` / `workspace_name=MyWorkspace`，污染 Plus 导出
+- **`config.paypal.example.json`**：plan 段补 `_comment`，提示 Plus 切换需要改哪些字段或直接用 `--plan plus`
+- 测试覆盖：
+  - `webui/tests/test_pipeline_plan_override.py` 覆盖 `_apply_plan_override` 的 Plus / Team 行为 + `_build_abcard_checkout_payload` 的 Plus payload
+  - `webui/tests/test_config_writer.py` 加 `test_export_strips_team_only_fields_when_plan_is_plus` / `test_export_keeps_team_fields_when_plan_is_team`
+
+---
+
 ## GoPay 支付 429 风控 bypass
 
 `CTF-pay/gopay.py::_midtrans_init_linking` 增加风控绕过路径：
