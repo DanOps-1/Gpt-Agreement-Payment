@@ -10,6 +10,7 @@ from .backend.routes import sniff as sniff_routes
 from .backend.routes import config as config_routes
 from .backend.routes import inventory as inventory_routes
 from .backend.routes import run as run_routes
+from .backend.routes import run_parallel as run_parallel_routes
 from .backend.routes import cloudflare_kv as cf_kv_routes
 from .backend.routes import whatsapp as whatsapp_routes
 from .backend.routes import link_state as link_state_routes
@@ -32,6 +33,7 @@ def create_app() -> FastAPI:
     app.include_router(config_routes.router)
     app.include_router(inventory_routes.router)
     app.include_router(run_routes.router)
+    app.include_router(run_parallel_routes.router)
     app.include_router(cf_kv_routes.router)
     app.include_router(whatsapp_routes.router)
     app.include_router(link_state_routes.router)

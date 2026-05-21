@@ -394,6 +394,29 @@ class QrisCharger(GoPayCharger):
                 self.log(f"[qris] poll status 异常 (吃掉继续): {e}")
                 return {"transaction_status": "unknown", "_error": str(e)[:120]}
 
+    def _chatgpt_verify(self, cs_id: str, *, retries: int = 6,
+                        sleep: float = 1.5) -> dict:
+        """settle 后兜底 verify: 短期 retry _chatgpt_verify_once 拿 plan=plus,
+        包装成 dict 给上层. Stripe webhook → OpenAI 后台 → chatgpt_plan_type
+        通常几秒内, 偶发 5-10s 延迟; verify 失败不该 fail 整条支付链路.
+
+        返回: {state: "verified"|"not_verified"|"verify_error", attempts, [error]}
+        """
+        if not cs_id:
+            return {"state": "settled_no_verify"}
+        err = ""
+        for i in range(max(1, retries)):
+            try:
+                if self._chatgpt_verify_once(cs_id):
+                    return {"state": "verified", "attempts": i + 1}
+            except Exception as e:
+                err = f"{type(e).__name__}: {str(e)[:120]}"
+            if i < retries - 1:
+                time.sleep(sleep)
+        if err:
+            return {"state": "verify_error", "attempts": retries, "error": err}
+        return {"state": "not_verified", "attempts": retries}
+
     def _chatgpt_verify_once(self, cs_id: str) -> bool:
         """单次校验 ChatGPT plan 是否真升 plus。
         旧实现 return r.status_code == 200 是 bug：free 账号 hit 这个 endpoint 也返 200，
@@ -707,8 +730,15 @@ def _run_via_card(charger: "QrisCharger", config_path: str, cs_id_hint: str = ""
 
     charger._wait_for_settlement = _wait_with_adb_auto
 
-    card._drive_gopay_from_redirect = _hook
-    charger.log("[qris] monkey-patched card._drive_gopay_from_redirect → untokenized hook")
+    # Wave F (5/18) 后 card 是包: card/__init__.py + card/_monolith.py.
+    # card.run/manual_approval 内部裸调 `_drive_gopay_from_redirect(...)` 走的是
+    # card._monolith 模块作用域查找, patch `card.*` 命名空间不起作用 (会让 QRIS
+    # 降级到 GoPay tokenization OTP linking, 因 fallback 实现仍在原位).
+    # 必须 patch _monolith 模块作用域才能让 hook 真正接管.
+    import card._monolith as _card_inner
+    _card_inner._drive_gopay_from_redirect = _hook
+    card._drive_gopay_from_redirect = _hook  # 兼容: 任何走 `card.*` namespace 的引用
+    charger.log("[qris] monkey-patched card._monolith._drive_gopay_from_redirect → untokenized hook")
 
     try:
         card.run(

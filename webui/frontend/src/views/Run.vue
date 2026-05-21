@@ -97,6 +97,216 @@
             </p>
           </div>
 
+          <!-- no_card_plus 模式参数面板: 触发 scripts/no_card_paypal_plus.py -->
+          <div v-if="form.mode === 'no_card_plus'" class="promo-region-box">
+            <p class="ctl-hint">
+              用 promo_links 表里 fresh 的 plus 长链接 → Chromium RPA 走 PayPal guest signup → 0 元开 Plus。
+              SMS API URL 从 <code>config.paypal.json::paypal.sms_api_url</code> 读，不通过 cmdline。
+            </p>
+            <div class="ctl-row sub promo-region-fields">
+              <TermField
+                v-model.number="form.no_card_promo_link_id"
+                label="promo_link_id (0=自动挑最新 fresh plus)"
+                type="number"
+              />
+              <TermField
+                v-model="form.no_card_phone"
+                label="phone (E.164, 不带 +)"
+                placeholder="PHONE_REDACTED"
+              />
+              <TermField
+                v-model="form.no_card_sms_api_url"
+                label="SMS API URL (含 key, localStorage 持久化)"
+                placeholder="http://a.62-us.com/api/get_sms?key=..."
+              />
+              <TermField
+                v-model.number="form.no_card_otp_timeout"
+                label="OTP 超时 (s)"
+                type="number"
+              />
+              <TermField
+                v-model.number="form.no_card_signup_retries"
+                label="signup retries"
+                type="number"
+              />
+              <TermField
+                v-model.number="form.no_card_node_rpa_timeout"
+                label="node RPA 超时 (s)"
+                type="number"
+              />
+              <TermField
+                v-model.number="form.no_card_max_due"
+                label="max due (cents, 守门)"
+                type="number"
+              />
+            </div>
+            <div class="ctl-row toggles">
+              <TermToggle v-model="form.no_card_allow_already_paid">允许已 plus 账号再跑</TermToggle>
+              <TermToggle v-model="form.no_card_allow_full_price">允许全价 (没 promo 也跑)</TermToggle>
+            </div>
+            <div class="ctl-row reg-mode">
+              <span class="reg-mode-label">auto-gen 库存来源 ·</span>
+              <label class="reg-mode-opt" :class="{ active: form.no_card_inventory_mail_source === 'any' }">
+                <input type="radio" value="any" v-model="form.no_card_inventory_mail_source" />
+                不限
+              </label>
+              <label class="reg-mode-opt" :class="{ active: form.no_card_inventory_mail_source === 'outlook' }">
+                <input type="radio" value="outlook" v-model="form.no_card_inventory_mail_source" />
+                微软邮箱 (@outlook/@hotmail/@live/@msn)
+              </label>
+              <label class="reg-mode-opt" :class="{ active: form.no_card_inventory_mail_source === 'catch_all' }">
+                <input type="radio" value="catch_all" v-model="form.no_card_inventory_mail_source" />
+                域名邮箱 (catch_all_domain)
+              </label>
+            </div>
+            <p class="ctl-hint">
+              <code>allow_already_paid</code> 关闭时：账号 RT plan 已是 plus/team/pro 拒绝执行。
+              <code>allow_full_price</code> 关闭时：Stripe due > max_due 拒绝执行（避免无 promo 真扣卡）。
+              card 默认走 meiguodizhi 随机卡 (不传 fixed-card)。
+              <br />
+              <code>auto-gen 库存来源</code>：promo_links 库存空时，从 registered_accounts 自动生产新长链接；
+              选 <code>微软邮箱</code> 只挑 outlook 系账号；<code>域名邮箱</code> 只挑 CTF-reg config 里 catch_all_domain(s) 的 alias。
+            </p>
+          </div>
+
+          <!-- no_card_plus_parallel 模式: N worker 并发, phone 池 M 可少于 N -->
+          <div v-if="form.mode === 'no_card_plus_parallel'" class="promo-region-box">
+            <p class="ctl-hint">
+              并发跑 <b>N</b> 个 worker. Phone 池可比 N 少 — 多 worker 共用同一 phone 时, OTP
+              触发短信前会自动排队 (phone-lock), pre-OTP/post-OTP 阶段保持并行.
+              DB 用 atomic claim 防止两 worker 抢同一 promo_link.
+              当前共享同一出口 IP / gost 中继.
+            </p>
+            <div class="ctl-row sub promo-region-fields">
+              <TermField
+                v-model.number="parallel.concurrency"
+                label="并发数 N (worker 数, 可大于 phone 数)"
+                type="number"
+              />
+              <TermField
+                v-model="parallel.default_sms_url"
+                label="默认 SMS API URL (phone 行留空时兜底)"
+                placeholder="http://a.62-us.com/api/get_sms?key=..."
+              />
+              <TermField
+                v-model.number="parallel.otp_timeout"
+                label="OTP 超时 (s)"
+                type="number"
+              />
+              <TermField
+                v-model.number="parallel.signup_retries"
+                label="signup retries"
+                type="number"
+              />
+              <TermField
+                v-model.number="parallel.node_rpa_timeout"
+                label="node RPA 超时 (s)"
+                type="number"
+              />
+              <TermField
+                v-model.number="parallel.max_due"
+                label="max due (cents)"
+                type="number"
+              />
+              <TermField
+                v-model.number="parallel.stagger_s"
+                label="错开启动 (s, 防同一秒打到 gost)"
+                type="number"
+              />
+            </div>
+            <div class="ctl-row toggles">
+              <TermToggle v-model="parallel.allow_already_paid">允许已 plus 账号再跑</TermToggle>
+              <TermToggle v-model="parallel.allow_full_price">允许全价 (没 promo 也跑)</TermToggle>
+            </div>
+            <div class="ctl-row reg-mode">
+              <span class="reg-mode-label">auto-gen 库存来源 ·</span>
+              <label class="reg-mode-opt" :class="{ active: parallel.inventory_mail_source === 'any' }">
+                <input type="radio" value="any" v-model="parallel.inventory_mail_source" />
+                不限
+              </label>
+              <label class="reg-mode-opt" :class="{ active: parallel.inventory_mail_source === 'outlook' }">
+                <input type="radio" value="outlook" v-model="parallel.inventory_mail_source" />
+                微软邮箱
+              </label>
+              <label class="reg-mode-opt" :class="{ active: parallel.inventory_mail_source === 'catch_all' }">
+                <input type="radio" value="catch_all" v-model="parallel.inventory_mail_source" />
+                域名邮箱
+              </label>
+            </div>
+
+            <div class="term-divider" data-tail="──────────">Phone 池 ({{ parallel.workers.length }} 个)</div>
+            <div v-for="(w, idx) in parallel.workers" :key="idx" class="ctl-row sub promo-region-fields">
+              <TermField
+                v-model="w.phone"
+                :label="`slot${idx + 1} phone`"
+                placeholder="PHONE_REDACTED"
+              />
+              <TermField
+                v-model="w.sms_url"
+                :label="`slot${idx + 1} sms_url (空 = 用默认)`"
+                placeholder="http://...?key=..."
+              />
+              <TermField
+                v-model="w.tag"
+                :label="`slot${idx + 1} tag`"
+                placeholder="可选, 备注"
+              />
+              <TermBtn @click="removeParallelWorker(idx)" :disabled="parallel.workers.length <= 1">−</TermBtn>
+            </div>
+            <div class="ctl-row toggles">
+              <TermBtn @click="addParallelWorker">＋ 加 phone</TermBtn>
+            </div>
+            <p v-if="parallelMapping.length" class="ctl-hint">
+              <b>映射预览</b> (N={{ parallel.concurrency }} workers → {{ parallelMapping.length === parallel.concurrency ? parallel.workers.filter(w => (w.phone || '').trim()).length : 0 }} phone slots):
+              <span v-for="m in parallelMapping" :key="m.worker_id" style="margin-right: 0.8em">
+                <code>{{ m.worker_id }}</code>→<code>{{ m.phone || '(空)' }}</code>{{ m.tag ? ` ${m.tag}` : '' }}
+              </span>
+            </p>
+
+            <div class="ctl-row toggles">
+              <TermBtn @click="startParallel" :disabled="parallel.busy || parallelRunning">
+                {{ parallel.busy ? "..." : "并发启动" }}
+              </TermBtn>
+              <TermBtn @click="stopParallel" :disabled="!parallelRunning">
+                全部停止
+              </TermBtn>
+              <TermBtn @click="refreshParallelStatus" :disabled="parallel.statusBusy">
+                {{ parallel.statusBusy ? "..." : "刷新" }}
+              </TermBtn>
+              <TermBtn @click="clearParallel" :disabled="parallelRunning">
+                清掉已结束
+              </TermBtn>
+            </div>
+
+            <div v-if="parallel.summary" class="health-panel" :class="{ ok: parallel.summary.failed === 0, fail: parallel.summary.failed > 0 }">
+              <div class="health-head">
+                <span class="health-title">并发状态</span>
+                <span class="health-meta">
+                  total {{ parallel.summary.total_workers }}
+                  | running {{ parallel.summary.running }}
+                  | succeeded {{ parallel.summary.succeeded }}
+                  | failed {{ parallel.summary.failed }}
+                </span>
+              </div>
+              <div class="health-list">
+                <div v-for="w in parallel.summary.workers" :key="w.worker_id"
+                     class="health-row" :class="`health-${w.running ? 'running' : (w.exit_code === 0 ? 'ok' : 'fail')}`">
+                  <span class="health-status">
+                    {{ w.running ? "▶" : (w.exit_code === 0 ? "✓" : "✗") }}
+                  </span>
+                  <div class="health-body">
+                    <strong>{{ w.worker_id }}<span v-if="w.tag"> ({{ w.tag }})</span></strong>
+                    phone={{ w.phone }} sms={{ w.sms_url_redacted }}
+                    <div class="health-sub" v-if="w.current_event">{{ w.current_event }}</div>
+                  </div>
+                </div>
+              </div>
+              <p class="ctl-hint" style="margin-top: 0.4em">
+                每个 worker 的实时日志会按行带 <code>[worker_id]</code> 前缀汇入页面底部的「实时日志」区。
+              </p>
+            </div>
+          </div>
+
           <p class="ctl-hint">
             UI 已切成按需显示：只展开当前模式 / 支付方式真正会用到的配置和工具。
           </p>
@@ -174,10 +384,10 @@
           </p>
         </div>
 
-        <div class="term-divider" data-tail="──────────">命令</div>
-        <pre class="cmd-preview">{{ cmdPreview }}</pre>
+        <div v-if="form.mode !== 'no_card_plus_parallel'" class="term-divider" data-tail="──────────">命令</div>
+        <pre v-if="form.mode !== 'no_card_plus_parallel'" class="cmd-preview">{{ cmdPreview }}</pre>
 
-        <div v-if="configHealth" class="health-panel" :class="{ ok: configHealth.ok, fail: !configHealth.ok }">
+        <div v-if="form.mode !== 'no_card_plus_parallel' && configHealth" class="health-panel" :class="{ ok: configHealth.ok, fail: !configHealth.ok }">
           <div class="health-head">
             <span class="health-title">配置健康检查</span>
             <span class="badge" :class="configHealth.ok ? 'badge-ok' : 'badge-err'">
@@ -198,11 +408,14 @@
           </div>
         </div>
 
-        <div class="step-actions">
+        <div v-if="form.mode !== 'no_card_plus_parallel'" class="step-actions">
           <TermBtn variant="ghost" :loading="configHealthLoading" @click="checkConfigHealth">检查配置</TermBtn>
           <TermBtn v-if="!status.running" :loading="starting" @click="start">▶ 开始运行</TermBtn>
           <TermBtn v-else variant="danger" :loading="stopping" @click="stop">■ 停止</TermBtn>
         </div>
+        <p v-else class="ctl-hint">
+          并发模式下不走单 run 健康检查 / 命令行预览; 用上面的「并发启动」按钮。
+        </p>
 
         <div class="status-line" :class="{ running: status.running }">
           <span v-if="status.running">
@@ -640,6 +853,8 @@ const modes = [
   { value: "free_register", label: "free_register — 免费号+rt+CPA" },
   { value: "free_backfill_rt", label: "free_backfill_rt — 老号补rt" },
   { value: "promo_link", label: "promo_link — 抓优惠长链接存DB" },
+  { value: "no_card_plus", label: "no_card_plus — promo+PayPal RPA 0 元开 Plus" },
+  { value: "no_card_plus_parallel", label: "no_card_plus 并发 — N worker 各自 phone+sms" },
 ];
 const paymentModes = new Set(["single", "batch", "self_dealer", "daemon"]);
 const promoRegionPresets = [
@@ -777,6 +992,266 @@ const form = ref({
   // 邮箱来源 (二选一互斥), 默认 outlook
   mail_source: (localStorage.getItem("webui.mail_source") || "outlook") as "outlook" | "catch_all",
   outlook_email: "",  // 仅 mail_source=outlook 时生效, 空 = 池里随便挑
+  // no_card_plus 模式 (scripts/no_card_paypal_plus.py): promo+PayPal RPA 0 元开 plus
+  no_card_promo_link_id: 0, // 0 = 自动挑最新 fresh plus link
+  no_card_phone: localStorage.getItem("webui.no_card_phone") || "PHONE_REDACTED",
+  no_card_sms_api_url: localStorage.getItem("webui.no_card_sms_api_url") || "",
+  no_card_otp_timeout: 240,
+  no_card_signup_retries: 3,
+  no_card_node_rpa_timeout: 900,
+  no_card_max_due: 100,
+  no_card_allow_already_paid: false,
+  no_card_allow_full_price: false,
+  no_card_paypal_country: "US",
+  no_card_paypal_lang: "en",
+  no_card_inventory_mail_source:
+    (localStorage.getItem("webui.no_card_inventory_mail_source") as "any" | "outlook" | "catch_all") || "any",
+});
+
+watch(() => form.value.no_card_inventory_mail_source, (v) => {
+  try { localStorage.setItem("webui.no_card_inventory_mail_source", v || "any"); } catch {}
+});
+
+// 并发模式 (no_card_plus_parallel) 独立 state, 不污染 form
+type ParallelWorker = { phone: string; sms_url: string; tag: string };
+type ParallelSummary = {
+  total_workers: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  workers: Array<{
+    worker_id: string;
+    tag: string;
+    phone: string;
+    sms_url_redacted: string;
+    running: boolean;
+    exit_code: number | null;
+    current_event: string;
+  }>;
+};
+// 并发模式 worker 列表只从 localStorage 加载用户自己填过的;
+// 不预填任何敏感数据 (phone/SMS key 全部由用户手动输入, 防误泄露).
+const _loadParallelWorkers = (): ParallelWorker[] => {
+  try {
+    const raw = localStorage.getItem("webui.parallel_workers");
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length > 0) {
+        return arr.map((w: any) => ({
+          phone: String(w?.phone || ""),
+          sms_url: String(w?.sms_url || ""),
+          tag: String(w?.tag || ""),
+        }));
+      }
+    }
+  } catch {}
+  return [{ phone: "", sms_url: "", tag: "" }];
+};
+const parallel = ref({
+  concurrency: Number(localStorage.getItem("webui.parallel_concurrency") || "2") || 2,
+  default_sms_url: localStorage.getItem("webui.parallel_default_sms_url") || "",
+  otp_timeout: 240,
+  signup_retries: 3,
+  node_rpa_timeout: 900,
+  max_due: 100,
+  stagger_s: 1.0,
+  allow_already_paid: false,
+  allow_full_price: false,
+  inventory_mail_source: (localStorage.getItem("webui.parallel_inventory_mail_source") as "any" | "outlook" | "catch_all") || "any",
+  workers: _loadParallelWorkers() as ParallelWorker[],
+  busy: false,
+  statusBusy: false,
+  summary: null as ParallelSummary | null,
+  pollHandle: 0 as number | undefined as any,
+  // 每个 worker 的 stdout 增量游标; 新增行追加到全局 lines (复用单 run 实时日志区).
+  workerLogSeq: {} as Record<string, number>,
+});
+
+const parallelRunning = computed(() => (parallel.value.summary?.running || 0) > 0);
+
+// N worker → phone 池 round-robin 映射. 同 phone 多 worker 用时, phone-lock 在 OTP 阶段排队.
+const parallelMapping = computed(() => {
+  const pool = parallel.value.workers
+    .map((w) => ({ phone: (w.phone || "").trim(), sms_url: (w.sms_url || "").trim(), tag: (w.tag || "").trim() }))
+    .filter((w) => w.phone);
+  if (pool.length === 0) return [] as Array<{ worker_id: string; phone: string; sms_url: string; tag: string }>;
+  const n = Math.max(1, Math.floor(parallel.value.concurrency || 1));
+  const out: Array<{ worker_id: string; phone: string; sms_url: string; tag: string }> = [];
+  for (let i = 0; i < n; i++) {
+    const slot = pool[i % pool.length];
+    out.push({
+      worker_id: `w${i + 1}`,
+      phone: slot.phone,
+      sms_url: slot.sms_url || parallel.value.default_sms_url,
+      tag: slot.tag || `slot${(i % pool.length) + 1}`,
+    });
+  }
+  return out;
+});
+
+watch(() => parallel.value.workers, (v) => {
+  try { localStorage.setItem("webui.parallel_workers", JSON.stringify(v)); } catch {}
+}, { deep: true });
+watch(() => parallel.value.concurrency, (v) => {
+  try { localStorage.setItem("webui.parallel_concurrency", String(v || 1)); } catch {}
+});
+watch(() => parallel.value.default_sms_url, (v) => {
+  try { localStorage.setItem("webui.parallel_default_sms_url", v || ""); } catch {}
+});
+watch(() => parallel.value.inventory_mail_source, (v) => {
+  try { localStorage.setItem("webui.parallel_inventory_mail_source", v || "any"); } catch {}
+});
+
+function addParallelWorker() {
+  parallel.value.workers.push({ phone: "", sms_url: "", tag: "" });
+}
+function removeParallelWorker(idx: number) {
+  if (parallel.value.workers.length <= 1) return;
+  parallel.value.workers.splice(idx, 1);
+}
+async function startParallel() {
+  if (parallel.value.busy) return;
+  const mapping = parallelMapping.value;
+  if (mapping.length === 0) {
+    message.error("至少要 1 个 phone 行 (phone 非空)");
+    return;
+  }
+  if (!parallel.value.default_sms_url && mapping.some((m) => !m.sms_url)) {
+    message.error("某 slot sms_url 留空时必须设默认 SMS URL");
+    return;
+  }
+  // 后端拿到映射好的 worker list (N 条), 每条带具体 phone+sms_url+worker_id 提示;
+  // 后端会按这个顺序 spawn 等量 worker.
+  const ws = mapping.map((m) => ({
+    phone: m.phone,
+    sms_url: m.sms_url,
+    tag: m.tag,
+    worker_id: m.worker_id,
+  }));
+  parallel.value.busy = true;
+  try {
+    const body = {
+      workers: ws,
+      default_sms_url: parallel.value.default_sms_url,
+      otp_timeout: parallel.value.otp_timeout,
+      signup_retries: parallel.value.signup_retries,
+      node_rpa_timeout: parallel.value.node_rpa_timeout,
+      max_due: parallel.value.max_due,
+      stagger_s: parallel.value.stagger_s,
+      allow_already_paid: parallel.value.allow_already_paid,
+      allow_full_price: parallel.value.allow_full_price,
+      inventory_mail_source: parallel.value.inventory_mail_source,
+    };
+    const r = await api.post("/run/parallel/start", body);
+    message.success(`已启动 ${r.data?.spawned?.length || 0} workers`);
+    // 复用全局实时日志区: 清掉旧行, 重置每个 worker 的 seq 游标, 让 polling 从头拉
+    lines.value = [];
+    parallel.value.workerLogSeq = {};
+    startParallelPolling();
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || e?.message || "并发启动失败");
+  } finally {
+    parallel.value.busy = false;
+  }
+}
+async function stopParallel() {
+  try {
+    const r = await api.post("/run/parallel/stop");
+    message.success(`已停 ${r.data?.stopped?.length || 0} workers`);
+    refreshParallelStatus();
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || "停止失败");
+  }
+}
+async function clearParallel() {
+  try {
+    const r = await api.post("/run/parallel/clear");
+    message.success(`已清 ${r.data?.removed?.length || 0} 个已结束 worker`);
+    refreshParallelStatus();
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || "清理失败");
+  }
+}
+async function refreshParallelStatus() {
+  if (parallel.value.statusBusy) return;
+  parallel.value.statusBusy = true;
+  try {
+    const r = await api.get("/run/parallel/status");
+    parallel.value.summary = r.data as ParallelSummary;
+    // 并行拉每个 worker 的日志增量
+    await fetchAllWorkerLogs();
+  } catch (e: any) {
+    // 静默, 频繁轮询时不弹错
+  } finally {
+    parallel.value.statusBusy = false;
+  }
+}
+
+// 全局 lines.value 序号空间; 给并发 worker 的合并日志一个安全偏移, 不与单 run SSE seq 冲突.
+let _parallelSeqCursor = 1_000_000;
+async function fetchAllWorkerLogs() {
+  const ids = (parallel.value.summary?.workers || []).map((w) => w.worker_id);
+  if (ids.length === 0) return;
+  const allNew: Array<{ wid: string; seq: number; line: string }> = [];
+  await Promise.all(ids.map(async (wid) => {
+    try {
+      const since = parallel.value.workerLogSeq[wid] || 0;
+      const r = await api.get("/run/parallel/logs", { params: { worker_id: wid, since } });
+      const data = r.data || {};
+      const arr: Array<{ seq: number; line: string }> = data.lines || [];
+      if (arr.length === 0) return;
+      for (const ln of arr) {
+        allNew.push({ wid, seq: ln.seq, line: ln.line });
+      }
+      parallel.value.workerLogSeq[wid] = data.next_seq || since;
+    } catch {
+      // 静默
+    }
+  }));
+  if (allNew.length === 0) return;
+  // 按 (worker seq) 升序, 同 seq 按 worker_id 字典排序 → 确定性 ordering
+  allNew.sort((a, b) => (a.seq - b.seq) || a.wid.localeCompare(b.wid));
+  for (const item of allNew) {
+    const entry: any = {
+      seq: ++_parallelSeqCursor,
+      ts: Date.now() / 1000,
+      line: `[${item.wid}] ${item.line}`,
+    };
+    entry.cls = logClass(entry.line);
+    entry.tsLabel = formatTs(entry.ts);
+    Object.freeze(entry);
+    lines.value.push(entry);
+  }
+  if (lines.value.length > 1500) lines.value.splice(0, lines.value.length - 1500);
+  scheduleScrollToBottom();
+}
+function startParallelPolling() {
+  if (parallel.value.pollHandle) return;
+  refreshParallelStatus();
+  parallel.value.pollHandle = window.setInterval(() => {
+    refreshParallelStatus();
+  }, 3000);
+}
+function stopParallelPolling() {
+  if (parallel.value.pollHandle) {
+    clearInterval(parallel.value.pollHandle);
+    parallel.value.pollHandle = 0;
+  }
+}
+// 切到并发模式自动启动轮询; 切走停掉
+watch(() => form.value.mode, (m) => {
+  if (m === "no_card_plus_parallel") {
+    startParallelPolling();
+  } else {
+    stopParallelPolling();
+  }
+}, { immediate: true });
+
+watch(() => form.value.no_card_phone, (v) => {
+  try { localStorage.setItem("webui.no_card_phone", v || ""); } catch {}
+});
+watch(() => form.value.no_card_sms_api_url, (v) => {
+  try { localStorage.setItem("webui.no_card_sms_api_url", v || ""); } catch {}
 });
 
 watch(() => form.value.register_mode, (v) => {
@@ -1131,10 +1606,12 @@ const inventoryExpanded = ref(false);
 
 const isFreeRegisterMode = computed(() => form.value.mode === "free_register");
 const isFreeBackfillMode = computed(() => form.value.mode === "free_backfill_rt");
+const isNoCardPlusMode = computed(() => form.value.mode === "no_card_plus");
 const modeSupportsPayment = computed(() => paymentModes.has(form.value.mode));
 const showRunModifiers = computed(() => modeSupportsPayment.value);
 const showPaymentSelector = computed(() => modeSupportsPayment.value && !form.value.register_only);
-const requiresRegistration = computed(() => !form.value.pay_only && !isFreeBackfillMode.value);
+// no_card_plus 走 promo_link 已注册账号 + PayPal RPA, 不涉及 ChatGPT 注册环节
+const requiresRegistration = computed(() => !form.value.pay_only && !isFreeBackfillMode.value && !isNoCardPlusMode.value);
 const showRegisterPath = computed(() => requiresRegistration.value);
 const showMailSource = computed(() => requiresRegistration.value);
 const showOutlookSelector = computed(() => showMailSource.value && form.value.mail_source === "outlook");

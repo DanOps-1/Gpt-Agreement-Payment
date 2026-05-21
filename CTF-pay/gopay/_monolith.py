@@ -105,6 +105,13 @@ class OTPCancelled(GoPayError):
     pass
 
 
+class GoPayChargeDenied(GoPayError):
+    """midtrans/charge 返 status_code=404 "transaction denied" — GoPay 账号级
+    fraud (非 device-level). linking 已完成, Stripe webhook 可能稍后异步 trigger
+    plan 升级. 上层可选择 fail (要 plus 立即生效) vs treat-as-success (允许
+    Stripe webhook 异步处理, 适合一号多开 batch)."""
+
+
 class GoPayPINRejected(GoPayError):
     pass
 
@@ -995,7 +1002,13 @@ class GoPayCharger:
     # ───── Step 13: Midtrans charge initiation ─────
 
     def _midtrans_create_charge(self, snap_token: str) -> str:
-        """POST snap/v2/transactions/{snap}/charge → charge_ref like A12..."""
+        """POST snap/v2/transactions/{snap}/charge → charge_ref like A12...
+
+        Raises GoPayChargeDenied if midtrans returns status_code=404 "transaction
+        is denied" — 这表示 linking 完成但 GoPay 账号级 fraud 拒绝首笔 validation
+        charge. 上层可决定是否当 linking-only succeeded (Stripe webhook 异步处理
+        setup_intent 仍可能让 plan 升级) vs 整体 fail.
+        """
         url = f"https://app.midtrans.com/snap/v2/transactions/{snap_token}/charge"
         headers = {
             **self._midtrans_basic_auth(),
@@ -1010,6 +1023,14 @@ class GoPayCharger:
         )
         r.raise_for_status()
         data = r.json()
+        # GoPay account-level fraud: midtrans 返 404 + "transaction is denied"
+        # status_code 是 string, 不是 HTTP 状态 (HTTP 总是 200/201).
+        sc = str(data.get("status_code", "")).strip()
+        msg = str(data.get("status_message", "")).strip()
+        if sc in ("404", "401", "402", "403"):
+            raise GoPayChargeDenied(
+                f"midtrans charge denied (status_code={sc}): {msg[:200]}"
+            )
         link = data.get("gopay_verification_link_url", "")
         m = re.search(r"reference=([A-Za-z0-9]+)", link)
         if not m:
@@ -1131,7 +1152,18 @@ class GoPayCharger:
         self._gopay_validate_pin(reference_id, pin_token)
 
         # ── Charge: second PIN
-        charge_ref = self._midtrans_create_charge(snap_token)
+        # account-level fraud (charge deny) 不让整条 fail: linking 已完成,
+        # Stripe webhook 异步可能仍升级账号. 上层根据 state 决定是否继续 retry.
+        try:
+            charge_ref = self._midtrans_create_charge(snap_token)
+        except GoPayChargeDenied as e:
+            self.log(f"[gopay] {e} — linking complete, awaiting Stripe webhook")
+            return {
+                "state": "linking_only",
+                "snap_token": snap_token,
+                "charge_denied_message": str(e)[:300],
+                "stripe_webhook": "may_trigger_async",
+            }
         self._gopay_payment_validate(charge_ref)
         ch2_id, ch2_client = self._gopay_payment_confirm(charge_ref)
         pin_token2 = self._tokenize_pin(ch2_id, ch2_client)

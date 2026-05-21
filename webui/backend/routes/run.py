@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/run", tags=["run"])
 
 
 class StartRequest(BaseModel):
-    mode: str = Field(pattern="^(single|batch|self_dealer|daemon|free_register|free_backfill_rt|promo_link)$")
+    mode: str = Field(pattern="^(single|batch|self_dealer|daemon|free_register|free_backfill_rt|promo_link|no_card_plus)$")
     paypal: bool = True
     batch: int = 0
     workers: int = 3
@@ -22,7 +22,12 @@ class StartRequest(BaseModel):
     gopay: bool = False
     qris: bool = False
     count: int = 0  # free_register 模式下注册次数（0 = 无限）
-    register_mode: str = Field(default="browser", pattern="^(browser|protocol)$")
+    # promo_link 模式：自由选择 checkout billing 区域 / 币种 / 活动
+    promo_plan: str = Field(default="plus", pattern="^(plus|team)$")
+    promo_country: str = Field(default="ID", min_length=2, max_length=2)
+    promo_currency: str = Field(default="IDR", min_length=3, max_length=3)
+    promo_campaign_id: str = ""
+    register_mode: str = Field(default="protocol", pattern="^(browser|protocol)$")
     # 选中账号定向操作：配合 pay_only 或 rt_only
     target_emails: list[str] = []
     rt_only: bool = False
@@ -32,6 +37,25 @@ class StartRequest(BaseModel):
     mail_source: str = Field(default="outlook", pattern="^(outlook|catch_all)$")
     # 仅在 mail_source=outlook 时生效, 空 = 池里随便挑, 具体 email = 指定
     outlook_email: str = ""
+    # no_card_plus 模式: 调 scripts/no_card_paypal_plus.py 用 Chromium RPA 走 PayPal 0 元开 Plus
+    no_card_promo_link_id: int = 0  # 0 = 自动挑最新 fresh plus link
+    no_card_phone: str = "PHONE_REDACTED"
+    no_card_sms_api_url: str = ""  # 接码网关 URL+key, 走 form/env 不进 ps cmdline
+    no_card_otp_timeout: int = 240
+    no_card_signup_retries: int = 3
+    no_card_node_rpa_timeout: int = 900
+    no_card_max_due: int = 100
+    no_card_allow_already_paid: bool = False
+    no_card_allow_full_price: bool = False
+    no_card_paypal_country: str = Field(default="US", min_length=2, max_length=2)
+    no_card_paypal_lang: str = Field(default="en", min_length=2, max_length=5)
+    # auto-gen promo_link 时挑库存账号的邮箱来源过滤
+    # - any       : 不限
+    # - outlook   : 只挑 microsoft 系 (@outlook/@hotmail/@live/@msn)
+    # - catch_all : 只挑 CTF-reg config 里 catch_all_domain(s) 的 alias 账号
+    no_card_inventory_mail_source: str = Field(
+        default="any", pattern="^(any|outlook|catch_all)$"
+    )
 
 
 class OTPRequest(BaseModel):
@@ -49,6 +73,11 @@ def start(req: StartRequest, user: str = CurrentUser):
         raise HTTPException(status_code=400, detail="batch 模式下批次数必须 ≥ 1")
     if req.mode == "self_dealer" and req.self_dealer < 1:
         raise HTTPException(status_code=400, detail="self_dealer 模式下成员数必须 ≥ 1")
+    if req.mode == "no_card_plus_parallel":
+        raise HTTPException(
+            status_code=400,
+            detail="no_card_plus_parallel 模式请用 /api/run/parallel/start，而不是 /api/run/start（前者跳过单 run 健康检查、按 phone 池 + 并发数 N 启动）",
+        )
     health = build_config_health(req.model_dump())
     if not health.get("ok"):
         raise HTTPException(
@@ -123,6 +152,10 @@ def preview(req: StartRequest, user: str = CurrentUser):
         req.mode, req.paypal, req.batch, req.workers, req.self_dealer,
         req.register_only, req.pay_only, gopay=req.gopay, qris=req.qris,
         count=req.count,
+        promo_plan=req.promo_plan,
+        promo_country=req.promo_country,
+        promo_currency=req.promo_currency,
+        promo_campaign_id=req.promo_campaign_id,
     )
     return {"cmd": cmd, "cmd_str": " ".join(cmd)}
 
