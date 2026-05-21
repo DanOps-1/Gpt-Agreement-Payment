@@ -11,8 +11,8 @@ Replays the captured `/root/no_card_paypal_plus` flow as plain HTTPS:
 Inputs are the upstream merchant tokens (`ba_token`, optionally `ec_token`)
 produced by the Stripe -> PayPal handoff already implemented in
 `CTF-pay/card.py`. The signup persona is random data from meiguodizhi's
-`/fr-address`; the OTP arrives at the fixed sandbox number 13507505224
-via the `a.62-us.com` SMS gateway.
+`/fr-address`; the OTP arrives at a user-supplied phone via a user-supplied
+SMS gateway (env: PPS_PAYPAL_PHONE_E164 + PPS_SMS_API_URL).
 
 hCaptcha handling: pure-protocol only.  When PayPal serves authchallenge HTML,
 we replay `/auth/logclientdata`, obtain a pre-supplied / Node-passive /
@@ -55,8 +55,10 @@ PERSONA_URL = "https://www.meiguodizhi.com/api/v1/dz"
 # Keep the protocol replay aligned with that instead of the older /fr-address
 # capture helper.
 PERSONA_PATH = "/"
-SMS_PHONE_E164 = "+13507505224"
-SMS_API_URL = "http://a.62-us.com/api/get_sms?key=9d20324d87ce41685d244cb9f89d9d88"
+# Sensitive: 不要硬编码 phone / SMS gateway key 到源码. 由调用方 (scripts/
+# no_card_paypal_plus.py / webui runner) 通过 env 注入, 或上层 config 传进来.
+SMS_PHONE_E164 = os.environ.get("PPS_PAYPAL_PHONE_E164", "")  # e.g. "+1XXXXXXXXXX"
+SMS_API_URL = os.environ.get("PPS_SMS_API_URL", "")  # e.g. http://your-sms-gateway/api/get_sms?key=YOUR_KEY
 
 # ── PayPal hosts / paths ──────────────────────────────────────────────────────
 PP_ORIGIN = "https://www.paypal.com"
@@ -1385,7 +1387,7 @@ _CC_TABLE = (
 
 
 def _phone_split(e164: str) -> tuple[str, str]:
-    """Returns (calling_code, subscriber). +13507505224 -> ("1", "3507505224")."""
+    """Returns (calling_code, subscriber). e.g. +1XXXXXXXXXX -> ("1", "XXXXXXXXXX")."""
     raw = (e164 or "").strip()
     s = re.sub(r"\D", "", raw)
     # userscript CONFIG.phone is the US subscriber number only.

@@ -39,7 +39,7 @@ class StartRequest(BaseModel):
     outlook_email: str = ""
     # no_card_plus 模式: 调 scripts/no_card_paypal_plus.py 用 Chromium RPA 走 PayPal 0 元开 Plus
     no_card_promo_link_id: int = 0  # 0 = 自动挑最新 fresh plus link
-    no_card_phone: str = "3507505224"
+    no_card_phone: str = ""
     no_card_sms_api_url: str = ""  # 接码网关 URL+key, 走 form/env 不进 ps cmdline
     no_card_otp_timeout: int = 240
     no_card_signup_retries: int = 3
