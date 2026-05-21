@@ -1,0 +1,27 @@
+{
+  "qris": {
+    "_comment": "QRIS 支付不绑定/不 OTP/不 PIN — Midtrans 创建 charge 后返回 EMVCo QR，用户用任意 e-wallet/银行 app 扫码即付。本块只控制本地落盘和轮询节奏，金额/货币由 ChatGPT checkout 自身决定（IDR）。",
+    "output_dir": "./qris_artifacts",
+    "poll_interval_s": 3,
+    "poll_timeout_s": 600,
+    "verify_every_n_polls": 4,
+    "acquirer_preference": ["qris", "gopay"],
+    "allow_charge_when_coupon_ineligible": false
+  },
+  "fresh_checkout": {
+    "auth": {
+      "cookie_header": "",
+      "session_token": "",
+      "access_token": "",
+      "device_id": "",
+      "mode": "access_token"
+    }
+  },
+  "runtime": {
+    "confirm_mode": "shared_payment_method",
+    "version": "fed52f3bc6",
+    "js_checksum": "FILL_FROM_CURRENT_STRIPE_CHECKOUT",
+    "rv_timestamp": "FILL_FROM_CURRENT_STRIPE_CHECKOUT"
+  },
+  "proxy": ""
+}

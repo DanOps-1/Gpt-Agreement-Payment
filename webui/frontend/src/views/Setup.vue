@@ -35,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useMessage } from "naive-ui";
 import { api } from "../api/client";
@@ -45,6 +45,16 @@ const message = useMessage();
 const loading = ref(false);
 const form = ref({ username: "admin", password: "" });
 
+// 二次保险：router beforeEach 可能因为 fetch 失败把已初始化的用户也放进了
+// /setup。组件挂载后再确认一次，已经有账号就立刻送去登录页，避免用户填完表
+// 单点"创建"才看到 409 "already initialized"。
+onMounted(async () => {
+  try {
+    const r = await api.get<{ initialized: boolean }>("/setup/status");
+    if (r.data.initialized) router.replace("/login");
+  } catch { /* status 拿不到就维持当前页让用户看到表单 */ }
+});
+
 async function submit() {
   if (form.value.password.length < 8) { message.error("密码至少 8 字符"); return; }
   loading.value = true;
@@ -53,6 +63,12 @@ async function submit() {
     message.success("管理员已创建，跳转登录…");
     setTimeout(() => router.push("/login"), 600);
   } catch (e: any) {
+    // 409 already initialized 是常见的"用户走错路径"场景，直接送去登录
+    if (e.response?.status === 409) {
+      message.info("管理员已存在，转登录页…");
+      setTimeout(() => router.replace("/login"), 600);
+      return;
+    }
     message.error(e.response?.data?.detail || "创建失败");
   } finally { loading.value = false; }
 }

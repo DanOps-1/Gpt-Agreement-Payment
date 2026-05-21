@@ -52,6 +52,18 @@ _CHARGE_SETTLED_RE = re.compile(r"\[gopay\]\s+charge settled")
 # 不论后续重试是否成功，本地都应该 mark linked 来跟服务端对齐
 _LINK_406_RE = re.compile(r"\[gopay\]\s+midtrans linking 406")
 
+# QRIS：从 qris.py 的标准日志里抓 PNG 路径 + 远端 URL + reference + settled
+_QRIS_PNG_RE = re.compile(r"\[qris\]\s+PNG:\s+(\S+)")
+_QRIS_URL_RE = re.compile(r"\[qris\]\s+远端预览:\s+(\S+)")
+_QRIS_DEEPLINK_RE = re.compile(r"\[qris\]\s+DEEPLINK:\s+(\S+)")
+_QRIS_REF_RE = re.compile(r"\[qris\]\s+QR 已生成 reference=(\S+)")
+_QRIS_SETTLED_RE = re.compile(r"\[qris\]\s+settled")
+_QRIS_EXPIRY_RE = re.compile(r"\[qris\]\s+过期:\s+(\S.*)")
+
+# 当前 QRIS 跑的 artifacts：PNG / qr_image_url / reference / expiry。
+# 前端轮询 /api/qris/state 拿；status() 里也回传，避免多端点。
+_qris_state: dict = {}
+
 
 def _gopay_auto_otp_enabled() -> bool:
     """Return True when config has a non-manual gopay.otp provider.
@@ -88,12 +100,14 @@ def _gopay_auto_otp_enabled() -> bool:
 
 def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: int,
               register_only: bool, pay_only: bool, gopay: bool = False,
-              gopay_otp_file: str = "", count: int = 0,
-              target_emails: Optional[list] = None, rt_only: bool = False) -> list[str]:
+              gopay_otp_file: str = "", qris: bool = False, count: int = 0,
+              target_emails: Optional[list] = None, rt_only: bool = False,
+              promo_plan: str = "plus", promo_country: str = "ID",
+              promo_currency: str = "IDR", promo_campaign_id: str = "") -> list[str]:
     """根据参数拼出最终命令行。"""
     cmd = ["xvfb-run", "-a", "python", "-u", "pipeline.py",
            "--config", str(s.PAY_CONFIG_PATH)]
-    # free_only 两个子模式不需要 paypal / gopay 支付段
+    # free_only 两个子模式 + promo_link 都不走 paypal / gopay / qris 支付段
     if mode in ("free_register", "free_backfill_rt"):
         if mode == "free_register":
             cmd.append("--free-register")
@@ -102,7 +116,24 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
         else:
             cmd.append("--free-backfill-rt")
         return cmd
-    if gopay:
+    if mode == "promo_link":
+        cmd.append("--promo-link")
+        if count > 0:
+            cmd.extend(["--count", str(count)])
+        plan = (promo_plan or "plus").strip().lower()
+        if plan not in {"plus", "team"}:
+            plan = "plus"
+        country = (promo_country or "ID").strip().upper()
+        currency = (promo_currency or "IDR").strip().upper()
+        cmd.extend(["--promo-plan", plan])
+        cmd.extend(["--promo-country", country])
+        cmd.extend(["--promo-currency", currency])
+        if promo_campaign_id and promo_campaign_id.strip():
+            cmd.extend(["--promo-campaign-id", promo_campaign_id.strip()])
+        return cmd
+    if qris:
+        cmd.append("--qris")
+    elif gopay:
         cmd.append("--gopay")
         if gopay_otp_file:
             cmd.extend(["--gopay-otp-file", gopay_otp_file])
@@ -131,6 +162,22 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
     return cmd
 
 
+def qris_state() -> dict:
+    """当前/最近一次 QRIS run 抓到的 artifacts。前端用来渲染 QR + 状态。"""
+    return dict(_qris_state)
+
+
+def qris_png_bytes() -> Optional[bytes]:
+    """读最新 QR PNG 文件 bytes；没有/读失败返 None。"""
+    p = _qris_state.get("png_path")
+    if not p:
+        return None
+    try:
+        return Path(p).read_bytes()
+    except Exception:
+        return None
+
+
 def status() -> dict:
     global _proc
     is_running = _proc is not None and _proc.poll() is None
@@ -144,14 +191,19 @@ def status() -> dict:
         "pid": _proc.pid if is_running and _proc else None,
         "log_count": _seq_counter,
         "otp_pending": _otp_pending,
+        "qris": qris_state(),
     }
 
 
 def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
           self_dealer: int = 0, register_only: bool = False, pay_only: bool = False,
-          gopay: bool = False, count: int = 0, register_mode: str = "browser",
+          gopay: bool = False, qris: bool = False, count: int = 0,
+          promo_plan: str = "plus", promo_country: str = "ID",
+          promo_currency: str = "IDR", promo_campaign_id: str = "",
+          register_mode: str = "protocol",
           env_overrides: Optional[dict] = None,
-          target_emails: Optional[list] = None, rt_only: bool = False) -> dict:
+          target_emails: Optional[list] = None, rt_only: bool = False,
+          mail_source: str = "outlook", outlook_email: str = "") -> dict:
     global _proc, _started_at, _ended_at, _exit_code, _cmd, _mode
     global _log_lines, _seq_counter, _otp_file, _otp_to_db, _otp_pending, _otp_file_is_temp
     global _active_gopay_phone
@@ -164,8 +216,11 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
 
         cmd = build_cmd(mode, paypal, batch, workers, self_dealer,
                         register_only, pay_only, gopay=gopay,
-                        gopay_otp_file="", count=count,
-                        target_emails=target_emails, rt_only=rt_only)
+                        gopay_otp_file="", qris=qris, count=count,
+                        target_emails=target_emails, rt_only=rt_only,
+                        promo_plan=promo_plan, promo_country=promo_country,
+                        promo_currency=promo_currency,
+                        promo_campaign_id=promo_campaign_id)
 
         # GoPay link-state pre-flight: if the configured phone is currently
         # linked from a prior successful charge, GoPay will reject the next
@@ -197,13 +252,35 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
         _otp_file_is_temp = otp_p is not None
         _otp_pending = False
         _active_gopay_phone = active_phone
+        # 每次 run 开始前清 QRIS 上一次的 artifacts，避免前端拿到旧 QR
+        _qris_state.clear()
 
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         if gopay:
             env["WEBUI_GOPAY_OTP_URL"] = wa_relay.otp_url()
-        # 注册路径切换：browser=Camoufox/Playwright；protocol=auth_flow HTTP 直连
-        rm = (register_mode or "browser").strip().lower()
-        env["WEBUI_REG_MODE"] = "protocol" if rm == "protocol" else "browser"
+        # 注册/登录路径：尊重前端传入的 register_mode (protocol / browser)。
+        # protocol = AuthFlow HTTP 直连 + Node/QuickJS Sentinel；RT 补领走 AuthFlow.run_protocol_login。
+        # browser  = Camoufox/Playwright，会触发真浏览器；事后 RT 走 card._exchange_refresh_token_with_session。
+        # 两条路在 add-phone 强制场景下都过不去（OpenAI 风控），但其余场景能力等价。
+        rm = (register_mode or "protocol").strip().lower()
+        if rm not in ("protocol", "browser"):
+            print(f"[runner] register_mode={rm!r} 不识别，回退 protocol")
+            rm = "protocol"
+        env["WEBUI_REG_MODE"] = rm
+        env.setdefault("OPENAI_SENTINEL_REQUIRE_QUICKJS", "1")
+        # 邮箱来源 (二选一 strict) → CTF-reg/mail/provider.py:create_mailbox() 读
+        src = (mail_source or "outlook").strip().lower()
+        env["WEBUI_MAIL_SOURCE"] = "catch_all" if src == "catch_all" else "outlook"
+        env.pop("WEBUI_MAIL_MODE", None)  # 移除 legacy 防混淆
+        if outlook_email and outlook_email.strip() and src == "outlook":
+            env["WEBUI_OUTLOOK_EMAIL"] = outlook_email.strip().lower()
+        else:
+            env.pop("WEBUI_OUTLOOK_EMAIL", None)
+        # QRIS demo 模式：webui 启动时 set WEBUI_QRIS_FORCE_MOCK=1 让 qris=true 走
+        # 内置 mock charge（绕过 OpenAI/Stripe 风控演示前端 QR 渲染）。生产不要 set。
+        if qris and os.getenv("WEBUI_QRIS_FORCE_MOCK", "").strip().lower() in ("1", "true", "yes"):
+            env["QRIS_MOCK"] = "1"
+            print("[runner] WEBUI_QRIS_FORCE_MOCK=1 → 子进程 QRIS_MOCK=1 (demo 模式，绕过 OpenAI)")
         if env_overrides:
             for k, v in env_overrides.items():
                 if v is None:
@@ -311,6 +388,27 @@ def _drain(proc: subprocess.Popen) -> None:
                         )
                     except Exception:
                         pass
+
+                # QRIS artifacts —— 把 PNG 路径 / 远端 URL / reference 落到 _qris_state
+                # 给 GET /api/qris/state 和 /api/qris/qr.png 用
+                m_png = _QRIS_PNG_RE.search(line)
+                if m_png:
+                    _qris_state["png_path"] = m_png.group(1).strip()
+                    _qris_state["ready_at"] = time.time()
+                m_url = _QRIS_URL_RE.search(line)
+                if m_url:
+                    _qris_state["qr_image_url"] = m_url.group(1).strip()
+                m_dl = _QRIS_DEEPLINK_RE.search(line)
+                if m_dl:
+                    _qris_state["deeplink_url"] = m_dl.group(1).strip()
+                m_ref = _QRIS_REF_RE.search(line)
+                if m_ref:
+                    _qris_state["reference"] = m_ref.group(1).strip()
+                m_exp = _QRIS_EXPIRY_RE.search(line)
+                if m_exp:
+                    _qris_state["expiry"] = m_exp.group(1).strip()
+                if _QRIS_SETTLED_RE.search(line):
+                    _qris_state["settled"] = True
     finally:
         proc.wait()
         with _lock:

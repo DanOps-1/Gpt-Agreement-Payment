@@ -1,0 +1,33 @@
+"""GoPay tokenization 支付包。
+
+Wave D-1 (2026-05-18): 原 CTF-pay/gopay.py (1749 行) 整体进 `_monolith`,
+旧的 sibling 文件 (gopay_sign / gopay_sign_v2 / gopay_protocol_pay /
+gopay_protocol_client_v2 / gopay_client) 全部进 sign/ + protocol/ 子包。
+__init__.py 这里 re-export 所有外部 (qris.py / card.py / pipeline) 在用的符号,
+让现有 `from gopay import X` 不破。
+"""
+
+from gopay._monolith import (  # noqa: F401
+    DEFAULT_MIDTRANS_CLIENT_ID,
+    DEFAULT_STRIPE_PK,
+    DEFAULT_TIMEOUT,
+    DEFAULT_OTP_REGEX,
+    GoPayCharger,
+    GoPayError,
+    OTPCancelled,
+    GoPayPINRejected,
+    _new_session,
+    _build_chatgpt_session,
+    _load_cfg,
+    _extract_otp_from_payload,
+    _extract_otp_from_text,
+    _parse_payload_timestamp,
+    _json_path_get,
+    cli_otp_provider,
+    file_watch_otp_provider,
+    whatsapp_file_otp_provider,
+    whatsapp_http_otp_provider,
+    command_otp_provider,
+    build_configured_otp_provider,
+    main,
+)
