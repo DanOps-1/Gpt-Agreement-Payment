@@ -10,6 +10,18 @@ def test_login_sets_session_cookie(client):
     assert "session_id" in r.cookies
 
 
+def test_login_webui_prefixed_api(client):
+    client.post("/webui/api/setup", json={"username": "admin", "password": "hunter2hunter2"})
+    r = client.post("/webui/api/login", json={"username": "admin", "password": "hunter2hunter2"})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    assert "session_id" in r.cookies
+
+    r = client.get("/webui/api/me")
+    assert r.status_code == 200
+    assert r.json() == {"username": "admin"}
+
+
 def test_login_wrong_password(client):
     _setup(client)
     r = client.post("/api/login", json={"username": "admin", "password": "wrong"})
