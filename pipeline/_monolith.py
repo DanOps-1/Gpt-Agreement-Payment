@@ -69,10 +69,10 @@ _PLAN_OVERRIDE_DEFAULTS = {
 
 
 def _apply_plan_override(card_config_path: str, plan: str) -> str:
-    """```"""When `--plan plus/team` is used, do not modify the user's file——generate a temporary config,
+    """When `--plan plus/team` is used, do not modify the user's file — generate a temporary config,
     align the key fields of fresh_checkout.plan to the target plan, and return the temporary path
     to the pipeline for all subsequent branches to use. In Plus mode, also strip the default
-    workspace/seat fields from example. Clean up the temporary file using atexit."""```"""
+    workspace/seat fields from example. Clean up the temporary file using atexit."""
     plan = plan.lower()
     if plan not in _PLAN_OVERRIDE_DEFAULTS:
         return card_config_path

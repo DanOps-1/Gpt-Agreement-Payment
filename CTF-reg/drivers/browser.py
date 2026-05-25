@@ -14,7 +14,6 @@ Flow:
 
 Return: {email, password, session_token, access_token, device_id, cookie_header}
 """
-```"""
 import os
 import random
 import string
