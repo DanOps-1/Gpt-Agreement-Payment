@@ -12,13 +12,13 @@
 // @run-at       document-idle
 // ==/UserScript==
 
-// ========== 配置 (用户自填, 不要把真实卡 / phone / SMS gateway key 提交到 git) ==========
+// ========== Configuration (User must fill in, do not submit real card / phone / SMS gateway key to git) ==========
 var CONFIG = {
     phone: 'YOUR_US_SUBSCRIBER_NUMBER',          // e.g. 10-digit US local number
     cardNumber: 'YOUR_TEST_CARD_NUMBER',         // VISA/MasterCard test BIN
     cardExpiry: 'MM / YY',
     cardCvv: 'XXX',
-    smsKey: 'YOUR_SMS_GATEWAY_API_KEY'           // 配套 @connect 里的 SMS 接码网关
+    smsKey: 'YOUR_SMS_GATEWAY_API_KEY'           // Matching SMS gateway from @connect
 };
 // ========================
 
@@ -135,28 +135,28 @@ var CONFIG = {
 
     var findOTPGridIn = function(root) {
         try {
-            // 1) 标准 selector：单 input
+            // 1) Standard selector: single input
             var single = root.querySelector('input[autocomplete="one-time-code"]')
                       || root.querySelector('input[name="otp"]')
                       || root.querySelector('input[name="code"]')
                       || root.querySelector('input[type="tel"][maxlength="6"]');
             if (single) return { type: 'single', inputs: [single] };
 
-            // 2) 标准 selector：maxlength=1 的 6 格
+            // 2) Standard selector: 6 cells with maxlength=1
             var ml1 = root.querySelectorAll('input[maxlength="1"]');
             if (ml1.length >= 6) return { type: 'grid-ml1', inputs: Array.from(ml1).slice(0, 6) };
 
-            // 3) 文本 "Enter your code" 定位 modal 容器，找 modal 内的 input
+            // 3) Text "Enter your code" locates modal container, finds input within modal
             var allEls = root.querySelectorAll('h1, h2, h3, h4, div, p, span, label');
             for (var i = 0; i < allEls.length; i++) {
                 var t = (allEls[i].textContent || '').replace(/\s+/g, ' ').trim();
-                if (/^enter your code$/i.test(t) || /enter.{1,15}code|6.?digit code|security code|验证码/i.test(t)) {
+                if (/^enter your code$/i.test(t) || /enter.{1,15}code|6.?digit code|security code|verification code/i.test(t)) {
                     var p = allEls[i];
                     for (var d = 0; d < 10 && p; d++) {
                         var ins = p.querySelectorAll('input');
                         if (ins.length >= 6) {
                             var visible = Array.from(ins).filter(function(inp){ return inp.offsetParent !== null; });
-                            // 优先取尺寸小的（OTP 格子通常是 30-80px 宽）
+                            // Prefer smaller sizes (OTP cells usually 30-80px wide)
                             var small = visible.filter(function(inp){
                                 var r = inp.getBoundingClientRect();
                                 return r.width >= 10 && r.width <= 100 && r.height >= 10 && r.height <= 100;
@@ -369,7 +369,7 @@ var CONFIG = {
             setTimeout(function() {
                 var ca = Array.from(document.querySelectorAll('button, a, [role="button"]')).find(function(b) {
                     var t = (b.textContent || '').replace(/\s+/g, ' ').trim();
-                    return /^create an account$|创建.*[账帐][户号]|注册/i.test(t) && b.offsetParent !== null;
+                    return /^create an account$|create.*(account|user)|sign up/i.test(t) && b.offsetParent !== null;
                 });
                 if (ca) {
                     log('Clicking: ' + ca.textContent.trim());
@@ -419,7 +419,7 @@ var CONFIG = {
         return;
     }
 
-    // PayPal 其他页面（如 "Set up once. Pay faster next time" 等）→ 自动点 Agree and Continue
+    // PayPal other pages (such as "Set up once. Pay faster next time" etc.) → auto-click Agree and Continue
     if (host.includes('paypal.com')) {
         log('=== PayPal Generic Page ===');
         var watchAgree = function(retries) {

@@ -1,1 +1,1 @@
-"""PayPal 无卡 ChatGPT Plus 订阅注册 (纯 HTTP 协议, 复刻 no_card_paypal_plus mitm flow)。"""
+"""PayPal cardless ChatGPT Plus subscription registration (pure HTTP protocol, replicated no_card_paypal_plus mitm flow)."""

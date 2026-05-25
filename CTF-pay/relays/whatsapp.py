@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-# Wave G: whatsapp_otp_relay.py 从 CTF-pay/ 搬到 CTF-pay/relays/, parents 多了一层
+# Wave G: whatsapp_otp_relay.py moved from CTF-pay/ to CTF-pay/relays/, parents added one level
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))

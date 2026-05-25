@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""用 promo 长链接 + PayPal no-card 纯协议链路开通 ChatGPT Plus。
+"""Activate ChatGPT Plus using promo long links + PayPal no-card pure protocol flow.
 
-这个脚本把 Tampermonkey 里做的页面动作拆成纯 HTTP：
+This script breaks down page actions done in Tampermonkey into pure HTTP:
 
-1. 读取库存里的优惠长链接（promo_links.checkout_url / cs_live_xxx）。
-2. Stripe hosted checkout 侧：
+1. Read promo long links from inventory (promo_links.checkout_url / cs_live_xxx).
+2. Stripe hosted checkout side:
    - payment_pages/init
    - elements / link lookup / address update
-   - 创建 type=paypal 的 payment_method
+   - Create payment_method with type=paypal
    - payment_pages/<cs>/confirm
-3. PayPal 侧：
-   - 从 Stripe redirect 提取 BA token
-   - 复刻 /root/no_card_paypal_plus mitm dump 中的 no-card signup GraphQL：
+3. PayPal side:
+   - Extract BA token from Stripe redirect
+   - Replicate no-card signup GraphQL from /root/no_card_paypal_plus mitm dump:
      SMS OTP -> SignUpNewMember(no card) -> billing.authorize
-4. 回调 Stripe，轮询结果；成功后标记 promo link used，并用 RT 刷库存 plan。
+4. Callback to Stripe, poll results; after success, mark promo link as used and refresh inventory plan with RT.
 
-默认严格"纯协议"：不会启动 Camoufox/Playwright，也不会走 PayPal Web 登录。
-如果 PayPal DataDome 对当前出口拦 403，本脚本会直接失败并保留日志。
-"""
+Strict "pure protocol" by default: will not launch Camoufox/Playwright or go through PayPal Web login.
+If PayPal DataDome blocks 403 on current exit IP, this script will fail directly and preserve logs."""
 from __future__ import annotations
 
 import argparse
@@ -55,24 +54,24 @@ from webui.backend.db import get_db  # noqa: E402
 
 
 def _resolve_worker_id(args_worker_id: str = "") -> str:
-    """统一 worker 标识来源：CLI > env > 默认 'w<pid>'。
-    多 worker 并发跑时各 worker 必须有不同的 id，否则文件路径串、DB claim 自己抢自己。"""
+    """Unified worker identifier source: CLI > env > default 'w<pid>'.
+    When multiple workers run concurrently, each worker must have a different id, 
+    otherwise file paths and DB claims will conflict with themselves."""
     wid = (args_worker_id or "").strip()
     if not wid:
         wid = os.environ.get("NCPP_WORKER_ID", "").strip()
     if not wid:
         wid = f"w{os.getpid()}"
-    # 限制只能字母数字下划线短横线, 避免拼路径 / 进 SQL 时被破坏
+    # Restrict to only alphanumeric characters, underscores, and hyphens to avoid path traversal / SQL injection vulnerabilities
     wid = re.sub(r"[^A-Za-z0-9_\-]", "_", wid)[:32] or "w0"
     return wid
 
 
 def _tmp_path(suffix: str) -> str:
-    """Per-worker isolated /tmp path 防并发 worker 串文件.
+    """Per-worker isolated /tmp path to prevent concurrent worker file conflicts.
 
-    单 worker (NCPP_WORKER_ID 未设) → /tmp/paypal_node_rpa_<suffix> (向后兼容)
-    多 worker (env 已设) → /tmp/paypal_node_rpa_<worker>_<suffix>
-    """
+    Single worker (NCPP_WORKER_ID not set) → /tmp/paypal_node_rpa_<suffix> (backward compatible)
+    Multiple workers (env set) → /tmp/paypal_node_rpa_<worker>_<suffix>"""
     wid = re.sub(r"[^A-Za-z0-9_\-]", "", (os.environ.get("NCPP_WORKER_ID") or "").strip())
     base = "/tmp/paypal_node_rpa" + (f"_{wid}" if wid else "")
     return f"{base}_{suffix}"
@@ -143,7 +142,7 @@ def _split_full_name(value: str) -> tuple[str, str]:
     parts = [p for p in clean.split(" ") if p]
     if len(parts) >= 2:
         return parts[0].title(), " ".join(parts[1:]).title()
-    # meiguodizhi 偶尔返回单词姓名；兜底用本地随机英文姓名。
+    # occasionally return word names from meiguodizhi; use local random English names as fallback.
     fallback = _rand_name().title().split()
     return fallback[0], fallback[-1]
 
@@ -167,9 +166,9 @@ def _fetch_userscript_us_address(timeout: int = 20, *, require_card: bool = Fals
                                  attempts: int = 5) -> dict[str, str]:
     """Pure-protocol equivalent of userscript getAddr(path='/', method='address').
 
-    meiguodizhi 同一次响应里包含姓名/地址/电话/卡片字段。需要随机卡时
-    require_card=True，会重试直到 Credit_Card_Number/CVV2/Expires 可用。
-    """
+    meiguodizhi returns name/address/phone/card fields in a single response.
+    When random card is needed, set require_card=True, which will retry until
+    Credit_Card_Number/CVV2/Expires are available."""
     fallback = dict(COUNTRY_ADDRESS["US"])
     last_err = ""
     for i in range(max(1, attempts if require_card else 1)):
@@ -205,8 +204,8 @@ def _fetch_userscript_us_address(timeout: int = 20, *, require_card: bool = Fals
                 "city": str(a.get("City") or fallback["city"]),
                 "state": state,
                 "postal_code": str(a.get("Zip_Code") or fallback["postal_code"])[:5],
-                # 保留完整 persona 给 PayPal Node RPA 使用；Stripe 侧只读取
-                # line1/city/state/postal_code/country，额外键不会进请求字段。
+                # Retain complete persona for PayPal Node RPA use; Stripe side read-only
+                # line1/city/state/postal_code/country, extra keys will not be included in the request fields.
                 "first_name": first_name,
                 "last_name": last_name,
                 "full_name": f"{first_name} {last_name}",
@@ -320,8 +319,8 @@ def _pick_inventory_account_for_promo(
         "'plus','team','pro','chatgptplusplan','chatgptteamplan','chatgptproplan','deactivated'))",
         "(last_check_status IS NULL OR lower(last_check_status) NOT IN ("
         "'deactivated','invalid','account_deactivated'))",
-        # 已有 fresh 或 in_use 的 plus promo_link 都视为该 email 已被另一 worker 占着,
-        # 防止两个并发 worker 同时 pick 同一 inventory account 各自 fetch_promo_link 重复.
+        # Plus promo_link with fresh or in_use status are regarded as the email being occupied by another worker,
+        # Prevent two concurrent workers from simultaneously picking the same inventory account and each fetching promo_link duplicates.
         "NOT EXISTS ("
         " SELECT 1 FROM promo_links pl"
         " WHERE lower(pl.email) = lower(registered_accounts.email)"
@@ -379,9 +378,10 @@ def _reserve_promo_link_slot(
     billing_country: str,
     billing_currency: str,
 ) -> int:
-    """先 INSERT 一行 promo_link 占位 (status='in_use', checkout_url=''),
-    返回新行 id. picker SQL 排除 'fresh'+'in_use' 后并发 worker 立刻看不到这个 email,
-    fetch 期间不会被抢. 失败时调 release_promo_link(id, 'expired') 或 DELETE."""
+    """First INSERT a promo_link placeholder row (status='in_use', checkout_url=''),
+    return the new row id. picker SQL excludes 'fresh'+'in_use' so concurrent workers
+    immediately don't see this email. Won't be snatched during fetch. On failure, call
+    release_promo_link(id, 'expired') or DELETE."""
     import time as _t
     with get_db()._conn() as c:
         cur = c.execute(
@@ -407,7 +407,7 @@ def _reserve_promo_link_slot(
 
 
 def _release_reserved_slot(slot_id: int) -> None:
-    """fetch 失败时把占位行删掉 (区别于 expired: 这条根本没 fetch 出 url, 不该留)."""
+    """Delete the placeholder row when fetch fails (different from expired: this row didn't fetch the url at all, shouldn't be kept)."""
     if not slot_id:
         return
     try:
@@ -430,7 +430,7 @@ def _finalize_reserved_slot(
     amount_due_cents: int,
     raw_response: Any,
 ) -> bool:
-    """fetch 成功后把占位行的字段填上, 状态保持 in_use+claimed_by=自己, 让 _select_promo_link 直接 return."""
+    """After fetch succeeds, fill in the fields of the placeholder row, keep the status as in_use+claimed_by=self, and let _select_promo_link return directly."""
     if not slot_id:
         return False
     import json as _json
@@ -469,9 +469,9 @@ def _auto_generate_promo_link(
     the resulting promo long-URL to promo_links. Returns the inserted row dict
     or None on failure.
 
-    单账号 fetch_promo_link 失败 (网络/AT 失效/上游 proxy 没起) 时, 加入
-    exclude 重试下一个库存账号, 最多 max_attempts 次, 而不是直接放弃.
-    """
+    When a single account's fetch_promo_link fails (network/AT invalid/upstream
+    proxy not running), add it to exclude and retry with the next inventory account,
+    up to max_attempts times, instead of giving up directly."""
     base_cfg: dict[str, Any] = {}
     try:
         if args.config and Path(args.config).exists():
@@ -489,8 +489,8 @@ def _auto_generate_promo_link(
         print(f"[auto-gen] import pipeline.promo_link 失败: {e}")
         return None
 
-    # 关键: 传整个 base_cfg, 让 _ensure_gost_alive 看得到 webshare 段, 否则
-    # 拉不起 gost(127.0.0.1:18898) → fetch_promo_link 必然 ConnectionError.
+    # Key: Pass the entire base_cfg so that _ensure_gost_alive can see the webshare section, otherwise
+    # Unable to pull gost(127.0.0.1:18898) → fetch_promo_link will inevitably result in ConnectionError.
     _ensure_proxy_alive(base_cfg if base_cfg else ({"proxy": proxy_url} if proxy_url else {}))
 
     tried: set[str] = {(e or "").strip().lower() for e in (exclude_emails or set()) if e}
@@ -509,9 +509,9 @@ def _auto_generate_promo_link(
         email = acc.get("email") or ""
         tried.add(email.strip().lower())
 
-        # 关键: pick 完立刻 INSERT 占位 (status='in_use' + claimed_by=自己),
-        # 让别的 worker 的 picker NOT EXISTS check 立刻看到这个 email 已"被占",
-        # 避免两 worker fetch 同一 email 重复生成 promo_link.
+        # Key: immediately INSERT placeholder after pick (status='in_use' + claimed_by=self),
+        # Make other workers' picker NOT EXISTS check immediately see that this email has been "claimed",
+        # Avoid two workers fetching the same email and generating duplicate promo_link.
         slot_id = _reserve_promo_link_slot(
             email=email,
             worker_id=wid_for_slot,
@@ -541,9 +541,9 @@ def _auto_generate_promo_link(
             last_err = str(result.get("error") or "")[:200]
             _release_reserved_slot(slot_id)
             slot_id = 0
-            # access_token 失效 (401 / authentication invalidated) → 标记该邮箱
-            # last_check_status='invalid', picker 下次自动跳过. 这样多 worker 并发
-            # 不会反复 retry 同一个失效账号.
+            # access_token expired (401 / authentication invalidated) → mark that email
+            # last_check_status='invalid', picker will automatically skip next time. This way multiple workers can run concurrently
+            # Won't repeatedly retry the same failed account.
             if "401" in last_err or "authentication" in last_err.lower() or "invalidated" in last_err.lower():
                 try:
                     with get_db()._conn() as c:
@@ -560,14 +560,14 @@ def _auto_generate_promo_link(
                 print(f"[auto-gen] fetch_promo_link 失败: {last_err}; 换下一个邮箱重试")
             continue
         plan_name_final = result.get("plan_name") or "chatgptplusplan"
-        # 成功 → 跳出循环, 下面 finalize 占位行
+        # Success → break loop, finalize placeholder line below
         break
     else:
         print(f"[auto-gen] {max_attempts} 个邮箱全失败, 最后错误: {last_err}")
         return None
 
-    # 把 fetch 结果填回占位行 (status 保持 in_use, claimed_by 保持自己;
-    # _select_promo_link 收到该行直接 return, 不再二次 claim_by_id).
+    # Fill the fetch result back into the placeholder row (status remains in_use, claimed_by remains self;
+    # _select_promo_link receives this line and returns directly, no secondary claim_by_id).
     final_ok = _finalize_reserved_slot(
         slot_id,
         checkout_url=result.get("checkout_url") or "",
@@ -599,7 +599,7 @@ def _auto_generate_promo_link(
         "status": "in_use",
         "raw_response": result.get("raw") or {},
     }
-    # 占位行已经 finalize, slot_id 就是新 row 的 id; 不再调 add_promo_link 重复插入.
+    # The placeholder row has been finalized, slot_id is the id of the new row; do not call add_promo_link again to avoid duplicate insertion.
     print(
         f"[auto-gen] ✓ promo_links.id={slot_id} email={row_to_insert['email']} "
         f"due={row_to_insert['amount_due_cents']} url=...{(row_to_insert['checkout_url'] or '')[-40:]}"
@@ -609,8 +609,8 @@ def _auto_generate_promo_link(
 
 def _select_promo_link(args: argparse.Namespace) -> dict[str, Any]:
     """Resolve the checkout URL from CLI / DB. Auto-gen from inventory account
-    when DB has no fresh row available. 并发安全: 用 atomic claim 而不是 SELECT,
-    多 worker 不会抢同一条 promo_link."""
+    when DB has no fresh row available. Concurrency-safe: use atomic claim instead of SELECT,
+    multiple workers won't contend for the same promo_link."""
     if args.checkout_url:
         m = re.search(r"(cs_(?:live|test)_[A-Za-z0-9]+)", args.checkout_url)
         if not m:
@@ -632,7 +632,7 @@ def _select_promo_link(args: argparse.Namespace) -> dict[str, Any]:
     worker_id = _resolve_worker_id(getattr(args, "worker_id", ""))
     db = get_db()
 
-    # 显式 --promo-link-id：强制 claim 那一条
+    # Explicit --promo-link-id: force claim that one
     if args.promo_link_id:
         row = db.claim_promo_link_by_id(worker_id, int(args.promo_link_id))
         if not row:
@@ -641,7 +641,7 @@ def _select_promo_link(args: argparse.Namespace) -> dict[str, Any]:
             )
         return row
 
-    # 默认：迭代 claim, 跳过已 paid 账号 (claim 完发现是 paid -> release expired, 选下一条)
+    # Default: iterate through claims, skip already paid accounts (if claim is found to be paid after claiming -> release expired, select next one)
     excluded: list[int] = []
     max_attempts = 10
     for _ in range(max_attempts):
@@ -656,7 +656,7 @@ def _select_promo_link(args: argparse.Namespace) -> dict[str, Any]:
             break
         plan = _latest_account_plan(row.get("email") or "")
         if plan in {"plus", "team", "pro"} and not args.allow_already_paid:
-            # 已是 paid plan, expire 这条防其它 worker 再选, 继续找下一个
+            # Already a paid plan, expiration prevents other workers from selecting it, continue searching for the next one
             db.release_promo_link(int(row["id"]), "expired")
             excluded.append(int(row["id"]))
             print(
@@ -666,15 +666,15 @@ def _select_promo_link(args: argparse.Namespace) -> dict[str, Any]:
             continue
         return row
 
-    # 没拿到 → auto-gen 一条然后 claim 它
+    # Didn't get it → auto-gen one and then claim it
     print("[auto-gen] 没有可 claim 的 fresh promo_link，尝试从库存账号生产")
     generated = _auto_generate_promo_link(args, worker_id=worker_id)
     if generated and generated.get("id"):
-        # auto-gen 内部已 INSERT 占位行 status='in_use' + claimed_by=自己,
-        # 这里直接 return, 不再 claim_promo_link_by_id (那需要 status='fresh').
+        # auto-gen internal has already INSERT placeholder row status='in_use' + claimed_by=self,
+        # Here we directly return, no longer claim_promo_link_by_id (which requires status='fresh').
         return generated
 
-    # auto-gen 没产出 → 明确报错原因, 不再误导成 "已 paid"
+    # auto-gen no output → explicitly report error reason, no longer mislead as "already paid"
     if generated is None:
         raise SystemExit(
             "auto-gen 失败：库存里没有可用账号 (需要 access_token + cookie 且非 paid/deactivated)，"
@@ -817,8 +817,8 @@ def _build_temp_config(
 
     billing_name = args.billing_name or addr.get("full_name") or _rand_name()
     cfg["cards"] = [{
-        # PayPal payment_method 通常不会使用卡号；保留字段主要满足 card.run 的配置结构。
-        # 若后续流程切到卡字段/卡 fallback，则使用 CLI 显式传入的值。
+        # PayPal payment_method typically does not use card number; reserved field mainly satisfies the configuration structure of card.run.
+        # If the subsequent process switches to card field/card fallback, use the value explicitly passed in via CLI.
         "number": payment_card_number,
         "cvc": payment_card_cvv,
         "exp_month": exp_month,
@@ -850,11 +850,11 @@ def _build_temp_config(
     paypal.update({
         "mode": "signup_no_card",
         "signup_no_card": True,
-        # 默认严格纯协议；只有显式 --allow-camoufox-seed 才允许 seed。
+        # Default strict pure protocol; seed is only allowed with explicit --allow-camoufox-seed.
         "skip_camoufox_seed": not bool(args.allow_camoufox_seed),
-        # seed 失败后直接走纯 HTTP 基本会污染当前 BA/EC 并触发 hcaptchapassive。
-        # 因此 allow-camoufox-seed 模式下默认只重 seed，不再 fallback；需要复现
-        # 旧行为时显式加 --paypal-allow-http-fallback-on-seed-fail。
+        # After seed fails, directly using pure HTTP will generally pollute the current BA/EC and trigger hcaptchapassive.
+        # Therefore, in allow-camoufox-seed mode, only seed is re-weighted by default without fallback; needs to be reproduced
+        # Old behavior explicitly add --paypal-allow-http-fallback-on-seed-fail.
         "seed_retries": max(1, int(getattr(args, "paypal_seed_retries", 2) or 2)),
         "no_http_fallback_on_seed_fail": bool(
             args.allow_camoufox_seed
@@ -871,16 +871,16 @@ def _build_temp_config(
         "locale_lang": args.paypal_lang.lower(),
         "otp_timeout_s": int(args.otp_timeout),
         "signup_persona_retries": max(0, int(args.paypal_signup_retries)),
-        # v32 油猴脚本在 PayPal checkoutweb 页面的实际动作是：
+        # v32 Tampermonkey script's actual actions on the PayPal checkoutweb page are:
         #   fill('billingLine1'...) / fill('billingCity'...)
         #   fill('billingPostalCode'...) / fillSelect('billingState'...)
-        # 即隐藏/跳过 AddressAutocomplete，走手填 MANUAL。这里以脚本为
-        # 流程真值，默认不走 PayPal AddressAutocomplete；仅显式要求时才
-        # 复刻历史成功抓包里的 GOOGLE 地址支路。
+        # That is, hide/skip AddressAutocomplete and proceed with manual input MANUAL. Here taking the script as
+        # Process truth value, defaults to not going through PayPal AddressAutocomplete; only when explicitly requested
+        # Replicate the historical successful packet capture of the GOOGLE address branch.
         "signup_address_autocomplete": bool(args.paypal_autocomplete_address),
         "persist_to": str(args.persist_to or (OUTPUT_DIR / "no_card_paypal_plus_latest.json")),
     })
-    # 避免 run() 误以为要走已有 PayPal 登录。
+    # Avoid run() mistakenly thinking it needs to use the existing PayPal login.
     if paypal["signup_no_card"]:
         paypal.setdefault("email", "")
         paypal.setdefault("password", "")
@@ -889,14 +889,14 @@ def _build_temp_config(
 
     fresh = cfg.setdefault("fresh_checkout", {})
     fresh["enabled"] = True
-    # 库存长链接可能已被前几轮 OAS/PayPal requires_action 尝试置为 inactive。
-    # 允许 card.run 复用同一库存账号 auth 重新生成 fresh checkout；expected_due
-    # 仍会锁定 0，避免优惠消失后误按全价继续。
+    # The inventory long connection may have been set to inactive by previous rounds of OAS/PayPal requires_action attempts.
+    # Allow card.run to reuse the same inventory account auth to regenerate fresh checkout; expected_due
+    # Still locks 0 to prevent mistakenly continuing at full price after the discount expires.
     fresh["auto_refresh_on_inactive"] = True
     fresh["auto_refresh_on_due_mismatch"] = True
     fresh["max_due_mismatch_refreshes"] = int(fresh.get("max_due_mismatch_refreshes") or 2)
     fresh["expected_due"] = int(args.expected_due if args.expected_due is not None else row.get("amount_due_cents") or 0)
-    # 让 card_results 记录真实 ChatGPT 邮箱，而不是随机 billing email。
+    # Let card_results record the real ChatGPT email instead of random billing email.
     if row.get("email"):
         fresh["_chatgpt_email"] = row["email"]
         acc_auth = _latest_account_auth(str(row["email"]))
@@ -984,16 +984,15 @@ def _refresh_inventory_plan(row: dict[str, Any]) -> None:
 
 
 def _try_protocol_relogin(email: str, password: str) -> tuple[bool, str]:
-    """OpenAI 在 plan 变更 (plus 激活) 时把 access_token + session_token 都 revoke,
-    只有重 login 才能拿带新 plan claim 的 token. 走 AuthFlow.run_protocol_login
-    (sentinel + email OTP), 写回 DB. 30-60s 一次性 fix.
+    """When OpenAI changes plans (plus activation), it revokes both access_token and session_token.
+    Only re-login can obtain tokens with the new plan claim. Execute AuthFlow.run_protocol_login
+    (sentinel + email OTP), write to DB. One-time fix every 30-60s.
 
-    返回 (ok, reason).
-    ok=True  : 重 login 成功 + 新 token 已写库.
-    ok=False : 失败. reason 区分场景:
-       - "account_deactivated" : OpenAI 已注销账号 (RPA 触发风控), 不应再重试.
-       - 其它 : import/transient 失败, 上层可选 retry.
-    """
+    Returns (ok, reason).
+    ok=True  : re-login successful + new token written to database.
+    ok=False : failed. reason distinguishes scenarios:
+       - "account_deactivated" : OpenAI account deactivated (RPA triggered risk control), should not retry.
+       - others : import/transient failure, caller may optionally retry."""
     if not email or not password:
         return False, "no_credentials"
     try:
@@ -1019,7 +1018,7 @@ def _try_protocol_relogin(email: str, password: str) -> tuple[bool, str]:
     os.environ.setdefault("OPENAI_SENTINEL_REQUIRE_QUICKJS", "1")
 
     mail = MailProvider(cfg.mail.catch_all_domain)
-    # outlook 池 IMAP creds 注入 (跟 exchange_refresh_token_protocol 同套路)
+    # outlook pool IMAP creds injection (same pattern as exchange_refresh_token_protocol)
     try:
         with get_db()._conn() as c:
             row = c.execute(
@@ -1044,7 +1043,7 @@ def _try_protocol_relogin(email: str, password: str) -> tuple[bool, str]:
         result = flow.run_protocol_login(mail, email, password)
     except Exception as e:
         err = str(e)
-        # OpenAI 拒收 (RPA 风控触发后 deactivate 账号)
+        # OpenAI rejected (Account deactivated after RPA risk control triggered)
         if "account_deactivated" in err or "deleted or deactivated" in err:
             print(f"[relogin] OpenAI 已注销账号 (account_deactivated): {email}")
             return False, "account_deactivated"
@@ -1086,14 +1085,14 @@ def _try_protocol_relogin(email: str, password: str) -> tuple[bool, str]:
 def _wait_inventory_paid_plan(row: dict[str, Any], *, timeout_s: int = 90) -> str:
     """Poll inventory live plan after browser checkout return.
 
-    新 Outlook 注册当前常常没有 Codex refresh_token，单纯 refresh_rt_status 会
-    得到 invalid/空 plan；这里直接走 validate_account_by_id 的 access_token +
-    check/v4 实时 plan 分支，和前端"刷新账号状态"一致。
+    New Outlook registration currently often lacks Codex refresh_token, and simply
+    calling refresh_rt_status will get invalid/empty plan; here we directly use the
+    access_token + check/v4 real-time plan branch of validate_account_by_id, which
+    is consistent with the frontend "refresh account status".
 
-    OpenAI 在 plan 变更时把 access_token + session_token 都 revoke, validator
-    第一次返 401/token_revoked 时, 用 password 走 protocol re-login 拿新凭证
-    (one-shot), 然后继续 poll.
-    """
+    When OpenAI changes the plan, it revokes both access_token and session_token.
+    When the validator first returns 401/token_revoked, use password to perform
+    protocol re-login to obtain new credentials (one-shot), then continue polling."""
     email = (row.get("email") or "").strip()
     if not email:
         return ""
@@ -1118,8 +1117,8 @@ def _wait_inventory_paid_plan(row: dict[str, Any], *, timeout_s: int = 90) -> st
             print(f"[db] 实时刷新库存 plan: {result.get('status')} plan={last_plan or '-'}")
             if last_plan in {"plus", "team", "pro"}:
                 return last_plan
-            # session 全 revoke (401 token + 401 cookie + NextAuth 透出旧 token)
-            # → password 重 login 一次拿新凭证, 然后继续 poll
+            # session completely revoked (401 token + 401 cookie + NextAuth exposes old token)
+            # → password reset, login again to get new credentials, then continue polling
             session_revoked = (
                 ("token revoked" in msg or "session revoked" in msg or "401" in msg)
                 and result.get("status") == "invalid"
@@ -1131,9 +1130,9 @@ def _wait_inventory_paid_plan(row: dict[str, Any], *, timeout_s: int = 90) -> st
                     time.sleep(2)
                     continue
                 if reason == "account_deactivated":
-                    # OpenAI 风控注销账号: RPA 跑通但实际未激活 plus.
-                    # 写 DB 标记 last_plan_type='deactivated' + status='deactivated',
-                    # 不再 poll (节省时间), 让 webui 看到真实状态.
+                    # OpenAI risk control account cancellation: RPA runs through but actually not activated plus.
+                    # Write DB marker last_plan_type='deactivated' + status='deactivated',
+                    # No longer poll (save time), let webui see the real state.
                     try:
                         with get_db()._conn() as c:
                             c.execute(
@@ -1201,9 +1200,9 @@ def _run_node_full_checkout_rpa(row: dict[str, Any], tmp_config: Path,
         or "node"
     )
 
-    # 每次 PayPal signup/approval 都必须像无痕窗口一样从空 profile 开始。
-    # 不能复用 config 里的 node_rpa_profile_dir；否则上一轮 PayPal 新号、
-    # cookies、localStorage、风控缓存会影响下一轮 BA/EC。
+    # Each PayPal signup/approval must start from an empty profile like an incognito window.
+    # Cannot reuse node_rpa_profile_dir from config; otherwise the previous round PayPal new account,
+    # Cookies, localStorage, and risk control cache will affect the next round of BA/EC.
     profile_dir = tempfile.mkdtemp(prefix="paypal_full_checkout_rpa_")
     payload = {
         "checkoutUrl": row.get("checkout_url") or args.checkout_url,
@@ -1241,7 +1240,7 @@ def _run_node_full_checkout_rpa(row: dict[str, Any], tmp_config: Path,
         "keepProfile": bool(os.environ.get("PPS_PAYPAL_KEEP_PROFILE")),
     }
 
-    # 防止读取上一轮 PayPal RPA 的结构化结果。
+    # Prevent reading the structured results from the previous round of PayPal RPA.
     for p in (
         _tmp_path("result.json"),
         _tmp_path("state.json"),
@@ -1274,8 +1273,8 @@ def _run_node_full_checkout_rpa(row: dict[str, Any], tmp_config: Path,
         env.setdefault("HTTPS_PROXY", proxy_url)
         env.setdefault("HTTP_PROXY", proxy_url)
         env.setdefault("ALL_PROXY", proxy_url)
-    # 把当前 worker id 透传给 Node 子进程, 让它把 /tmp/paypal_node_rpa_*
-    # 写到独立的文件名 (T_BASE), 否则并发 worker 会串日志/结果.
+    # Pass the current worker id to the Node child process, so it puts /tmp/paypal_node_rpa_*
+    # Write to independent file names (T_BASE), otherwise concurrent workers will have interleaved logs/results.
     wid_env = os.environ.get("NCPP_WORKER_ID", "").strip()
     if wid_env:
         env["NCPP_WORKER_ID"] = wid_env
@@ -1401,14 +1400,14 @@ def _run_node_full_checkout_rpa(row: dict[str, Any], tmp_config: Path,
 def _node_rpa_retryable_failure(result: dict[str, Any]) -> tuple[bool, str]:
     """Return whether a full-checkout RPA failure should try a fresh persona/card."""
     result_hay = json.dumps(result or {}, ensure_ascii=False)
-    # 先看结构化结果。比如 INSTRUMENT_SHARING_LIMIT_EXCEEDED 只是 PayPal
-    # 进入 Hermes `/pay/billing` fallback 的前置 console error；如果后续已经
-    # 点过 Agree and Continue，真正失败原因应是 finalUrl 上的 generic-error /
-    # INVALID_REQUEST，而不是把前置 console error 当成终点。
+    # First check the structured result. For example, INSTRUMENT_SHARING_LIMIT_EXCEEDED is only a PayPal
+    # Prerequisites console error for entering Hermes `/pay/billing` fallback; if subsequently already
+    # After clicking Agree and Continue, the real failure reason should be the generic-error on the finalUrl /
+    # INVALID_REQUEST, rather than treating the preceding console error as the endpoint.
     prioritized = [
-        # meiguodizhi 卡池复用，PayPal 端记得已绑定 full account → 换 persona/card 重抽
+        # meiguodizhi card pool reuse, PayPal side remembers the bound full account → switch persona/card and re-draw
         ("paypal_cc_linked_to_full_account", r"paypal_cc_linked_to_full_account|CC_LINKED_TO_FULL_ACCOUNT"),
-        # PayPal createMember 校验拒 (persona/card combo 触发风控规则) → 换 persona 重抽
+        # PayPal createMember validation rejection (persona/card combo triggers risk control rules) → switch persona and retry
         ("paypal_create_card_account_validation_error", r"paypal_create_card_account_validation_error|CREATE_CARD_ACCOUNT_CANDIDATE_VALIDATION_ERROR"),
         ("paypal_generic_error_after_agree_continue", r"paypal_generic_error_after_agree_continue"),
         ("paypal_invalid_request_after_fallback", r"INVALID_REQUEST|SU5WQUxJRF9SRVFVRVNU|paypal generic-error|/pay/generic-error"),
@@ -1426,7 +1425,7 @@ def _node_rpa_retryable_failure(result: dict[str, Any]) -> tuple[bool, str]:
     except Exception:
         pass
     patterns = [
-        # 这些是中途未走到 finalUrl 的情况，才看完整 live log。
+        # These are cases where the finalUrl was not reached midway, so we need to view the complete live log.
         ("paypal_cc_linked_to_full_account", r"CC_LINKED_TO_FULL_ACCOUNT"),
         ("paypal_create_card_account_validation_error", r"CREATE_CARD_ACCOUNT_CANDIDATE_VALIDATION_ERROR"),
         ("paypal_onboarding_email_stuck", r"onboarding_email_stuck"),
@@ -1434,9 +1433,9 @@ def _node_rpa_retryable_failure(result: dict[str, Any]) -> tuple[bool, str]:
         ("paypal_invalid_request_after_fallback", r"INVALID_REQUEST|SU5WQUxJRF9SRVFVRVNU|paypal generic-error|/pay/generic-error"),
         ("issuer_decline", r"ISSUER_DECLINE"),
         ("paypal_card_generic", r"CARD_GENERIC_ERROR"),
-        # INSTRUMENT_SHARING_LIMIT_EXCEEDED 本身常常只是进入 Agree and
-        # Continue fallback 页的信号；只有没有更具体 final result 时才作为
-        # 可重试 funding-source 信号。
+        # INSTRUMENT_SHARING_LIMIT_EXCEEDED itself often just enters Agree and
+        # Continue fallback page signal; only serves as fallback when there is no more specific final result
+        # Retryable funding-source signal.
         ("instrument_sharing_limit_before_fallback", r"INSTRUMENT_SHARING_LIMIT_EXCEEDED"),
     ]
     for name, pat in patterns:
@@ -1508,7 +1507,7 @@ def main() -> int:
     )
     args = p.parse_args()
 
-    # Resolve worker id once and export to env, so 所有下游子进程 (Node RPA / gost) 都看到一致.
+    # Resolve worker id once and export to env, so all downstream child processes (Node RPA / gost) see consistent values.
     _worker_id = _resolve_worker_id(getattr(args, "worker_id", ""))
     os.environ["NCPP_WORKER_ID"] = _worker_id
     print(f"[worker] id={_worker_id} pid={os.getpid()}")
@@ -1519,7 +1518,7 @@ def main() -> int:
 
     row = _select_promo_link(args)
     def _bail_release(msg: str) -> None:
-        """SystemExit 前先 release 已 claim 的 promo_link, 不锁死."""
+        """Release already claimed promo_link before SystemExit to avoid deadlock."""
         try:
             link_id = int(row.get("id") or 0)
             if link_id > 0:
@@ -1557,7 +1556,7 @@ def main() -> int:
 
     if args.dry_run:
         print("[dry-run] 未执行支付。")
-        # 释放 claim, 防止 dry-run 锁住 promo_link
+        # Release claim to prevent dry-run from locking promo_link
         try:
             link_id = int(row.get("id") or 0)
             if link_id > 0:
@@ -1571,7 +1570,7 @@ def main() -> int:
     if args.paypal_node_rpa and not args.paypal_node_rpa_paypal_only:
         started = time.time()
         max_attempts = max(1, int(args.paypal_signup_retries or 1))
-        # 外层 promo_link 轮换上限 (stripe_due_mismatch_before_submit 触发时换下一个 fresh)
+        # Outer promo_link rotation limit (when stripe_due_mismatch_before_submit is triggered, switch to the next fresh one)
         max_rotations = max(1, int(getattr(args, "max_promo_rotations", 0) or 5))
         seen_link_ids: set[int] = set()
         seen_link_emails: set[str] = set()
@@ -1591,7 +1590,7 @@ def main() -> int:
                     f"id={link_id_cur} email={row.get('email')}"
                 )
 
-            # 内层: 同 promo_link 上的 signup retries (随机 persona/card)
+            # Inner layer: Same as signup retries on promo_link (random persona/card)
             for attempt in range(1, max_attempts + 1):
                 if attempt > 1:
                     print(f"[node-rpa-full] 第 {attempt}/{max_attempts} 次：上一张卡/PayPal 新号失败，重新随机 persona/card 后重试")
@@ -1618,16 +1617,16 @@ def main() -> int:
             if bool(result.get("success")):
                 break
 
-            # 检测 "promo 不命中" — guard 抛 stripe_due_mismatch_before_submit
+            # Detect "promo not matched" — guard throws stripe_due_mismatch_before_submit
             err_text = str(result.get("error") or "")
             due_mismatch = (
                 "stripe_due_mismatch_before_submit" in err_text
                 or "stripe_due_mismatch" in err_text
             )
             if not due_mismatch:
-                # 其他失败 (RESTRICTED_USER / DataDome / OTP 等), 换 promo_link 也救不了, 停
+                # Other failures (RESTRICTED_USER / DataDome / OTP etc.), switching promo_link won't help, stop
                 break
-            # 标 expired 防止下次再被 auto-pick 中
+            # Mark expired to prevent auto-pick next time
             if link_id_cur > 0 and not args.no_mark_used:
                 try:
                     ok = get_db().mark_promo_link_status(link_id_cur, "expired")
@@ -1638,13 +1637,13 @@ def main() -> int:
                 except Exception as e:
                     print(f"[rotate] mark_promo_link_status 失败: {e}")
             if args.promo_link_id:
-                # 用户显式指定单 link, 不自动轮询下一个
+                # User explicitly specified single link, no auto-poll to next
                 print("[rotate] 显式 --promo-link-id 模式, 不自动轮询下一个 fresh")
                 break
             if rotation >= max_rotations:
                 print(f"[rotate] 已达上限 {max_rotations}, 停止")
                 break
-            # 挑下一个 fresh 排除 seen, 用 atomic claim (并发 worker 不抢同一行)
+            # Pick next fresh one excluding seen, use atomic claim (concurrent workers don't contend same row)
             try:
                 next_row = get_db().claim_next_fresh_promo_link(
                     worker_id=_worker_id,
@@ -1660,7 +1659,7 @@ def main() -> int:
                 generated = _auto_generate_promo_link(
                     args, exclude_emails=seen_link_emails, worker_id=_worker_id,
                 )
-                # auto-gen 返的 row 已是 in_use + claimed_by=自己, 不再二次 claim
+                # auto-gen returned row is already in_use + claimed_by=self, no second claim
                 next_row = generated if (generated and generated.get("id")) else None
                 if not next_row:
                     print("[rotate] auto-gen 失败, 停止")
@@ -1687,13 +1686,13 @@ def main() -> int:
         if state == "succeeded":
             if not args.no_mark_used:
                 _mark_link_used(row)
-            # 等 webhook / accounts check 侧 plan 刷新落地。
+            # Wait for webhook / accounts check side plan refresh to land.
             plan = _wait_inventory_paid_plan(row, timeout_s=120)
             if not plan:
                 _refresh_inventory_plan(row)
             return 0
-        # 失败: 把 in_use 退回 fresh 让别的 worker (或下一次 run) 复用同一长链接,
-        # 但 stripe_due_mismatch 已在 rotation 里标过 expired, 这里只对仍是 in_use 的当前 row 释放.
+        # Failure: revert in_use back to fresh so other workers (or next run) can reuse same long link,
+        # But stripe_due_mismatch already marked expired in rotation, here only release current row that still in_use.
         try:
             link_id = int(row.get("id") or 0)
             if link_id > 0:

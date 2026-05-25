@@ -55,8 +55,8 @@ PERSONA_URL = "https://www.meiguodizhi.com/api/v1/dz"
 # Keep the protocol replay aligned with that instead of the older /fr-address
 # capture helper.
 PERSONA_PATH = "/"
-# Sensitive: 不要硬编码 phone / SMS gateway key 到源码. 由调用方 (scripts/
-# no_card_paypal_plus.py / webui runner) 通过 env 注入, 或上层 config 传进来.
+# Sensitive: Do not hardcode phone / SMS gateway key into source code. Inject via env variables or pass through upper-layer config from the caller (scripts/
+# no_card_paypal_plus.py / webui runner).
 SMS_PHONE_E164 = os.environ.get("PPS_PAYPAL_PHONE_E164", "")  # e.g. "+1XXXXXXXXXX"
 SMS_API_URL = os.environ.get("PPS_SMS_API_URL", "")  # e.g. http://your-sms-gateway/api/get_sms?key=YOUR_KEY
 
@@ -3796,11 +3796,11 @@ def seed_via_camoufox(
         humanize=False,
         os="windows",
         screen=Screen(max_width=1920, max_height=1080),
-        # 与 _mint_recaptcha_v3_token_via_camoufox 保持一致 (line 2839-2845):
-        # 本地 gost 中继是短命的, geoip=True 会让 Camoufox 在启动前 fetch
-        # 出口公网 IP, 跟 relay startup/shutdown 竞态 → 抛 InvalidIP. 浏览器
-        # 流量仍走 caller proxy, Camoufox 端 timezone/geo 推断 (en-US locale)
-        # 已经 hardcode 不依赖 IP lookup.
+        # Keep consistent with _mint_recaptcha_v3_token_via_camoufox (line 2839-2845):
+        # Local gost relay is short-lived; geoip=True causes Camoufox to fetch
+        # outbound public IP before startup, racing with relay startup/shutdown → throws InvalidIP. Browser
+        # traffic still goes through caller proxy; Camoufox-side timezone/geo inference (en-US locale)
+        # is already hardcoded without relying on IP lookup.
         geoip=False,
         locale="en-US",
     )
@@ -3907,9 +3907,9 @@ def seed_via_camoufox(
             )
 
         def _slider_visible() -> bool:
-            # Team/PayPal 原逻辑只查 ddc/captcha/datadome URL 的 frame；
-            # no-card seed 实测会出现 URL 为空的 DataDome iframe，所以这里所有
-            # frame 都扫，同时允许滑块直接渲染在主文档。
+            # Original Team/PayPal logic only checks frame for ddc/captcha/datadome URL;
+            # no-card seed testing found DataDome iframe with empty URL, so here we scan all
+            # frames and allow slider to render directly in main document.
             if any(kw in _ctx_text(page) for kw in _SLIDER_KWS) or _ctx_has_slider_dom(page):
                 return True
             for fr in page.frames:
@@ -4059,8 +4059,8 @@ def seed_via_camoufox(
                 candidates.append((page, None, "main"))
 
             boxes = _visible_iframe_boxes()
-            # 粗略按 frame 顺序匹配 iframe 元素；若 PayPal 给 frame.url=""，
-            # 仍可通过文本/DOM 判断它是不是 DataDome 滑块。
+            # Coarsely match iframe elements by frame order; if PayPal gives frame.url="",
+            # we can still determine if it's a DataDome slider via text/DOM.
             child_frames = [fr for fr in page.frames if (fr.url or "") != (page.url or "")]
             for idx, fr in enumerate(child_frames):
                 u = fr.url or ""
@@ -4075,8 +4075,8 @@ def seed_via_camoufox(
                 box = boxes[idx][1] if idx < len(boxes) else None
                 candidates.append((fr, box, f"frame[{idx}] url={u[:80]!r}"))
             if not candidates and boxes:
-                # 最后兜底：主文档已有滑块文案但 Playwright frame.url 为空/未映射时，
-                # 对所有可见 iframe 尝试一次通用拖拽。
+                # Final fallback: when main document has slider text but Playwright frame.url is empty/unmapped,
+                # attempt generic drag on all visible iframes.
                 for idx, (_, box, label) in enumerate(boxes):
                     candidates.append((page, box, f"fallback-{label}"))
             return candidates
@@ -4153,8 +4153,8 @@ def seed_via_camoufox(
                         except Exception:
                             hb = None
                         if hb:
-                            # Playwright 通常返回主 frame 绝对坐标；旧 Team 逻辑按 iframe
-                            # 相对坐标处理。两种都保留，按合理性排序尝试。
+                            # Playwright normally returns main frame absolute coordinates; old Team logic handled
+                            # iframe relative coordinates. Both are retained, sorted by reasonableness for attempts.
                             sx = hb["x"] + hb["width"] / 2
                             sy = hb["y"] + hb["height"] / 2
                             if iframe_box:

@@ -17,17 +17,17 @@ const router = createRouter({
 });
 
 /**
- * 抽成纯函数便于单测。两个 IO 用 callback 注入：
- * - fetchInitialized: 调 /api/setup/status，返回是否已建管理员
- * - fetchAuthed: 调 /api/me，返回 session 是否有效
- * 任一抛错都视为后端不可达，按"放过 /login，其它跳 /login"兜底。
+ * Extract as a pure function for easier unit testing. Two IO operations are injected via callbacks:
+ * - fetchInitialized: calls /api/setup/status, returns whether admin has been initialized
+ * - fetchAuthed: calls /api/me, returns whether session is valid
+ * If either throws an error, it is treated as backend unavailable, with fallback behavior: allow /login, redirect others to /login.
  *
- * 历史 bug：
- *   1) /login 永远放行：没账号的人直接打 /login → 登录框 + admin 占位 → 试登录
- *      401 → 看着像"密码错"。修复：未 init 时所有路径强制跳 /setup。
- *   2) /setup 永远放行：已 init 的人若停在 /setup（书签 / 旧 history）会看到
- *      创建表单 → POST /api/setup 返 409 "already initialized" → 弹"创建失败"。
- *      修复：已 init 时 /setup 跳 /login。
+ * Historical bugs:
+ *   1) /login was always allowed: users without an account could access /login directly → login form + admin placeholder → attempt login
+ *      → 401 error looks like "wrong password". Fix: force all paths to /setup when not initialized.
+ *   2) /setup was always allowed: initialized users who landed on /setup (via bookmark / old history) would see
+ *      creation form → POST /api/setup returns 409 "already initialized" → popup "creation failed".
+ *      Fix: redirect /setup to /login when already initialized.
  */
 export async function decideRouteTarget(
   toPath: string,
@@ -38,12 +38,12 @@ export async function decideRouteTarget(
   try {
     initialized = await fetchInitialized();
   } catch {
-    // setup status 拿不到，后端可能挂了——放过 /login / /setup 让用户至少看到错误
+    // Cannot fetch setup status, backend may be down — allow /login / /setup so users can at least see the error
     if (toPath === "/login" || toPath === "/setup") return true;
     return "/login";
   }
   if (!initialized) return toPath === "/setup" ? true : "/setup";
-  // 已初始化：拒绝再进 setup 页（创建会 409）
+  // Already initialized: reject further access to setup page (creation would return 409)
   if (toPath === "/setup") return "/login";
   if (toPath === "/login") return true;
   try {

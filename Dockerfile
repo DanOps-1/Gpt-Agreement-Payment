@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
 #
-# 多阶段构建：
-#   1) frontend-builder: node 20 + npm 装依赖 + vue-tsc + vite build → dist/
-#   2) runtime: ubuntu 24.04 + python3 + xvfb + GTK 系统库 + camoufox + playwright + gost
+# Multi-stage build:
+#   1) frontend-builder: node 20 + npm install dependencies + vue-tsc + vite build → dist/
+#   2) runtime: ubuntu 24.04 + python3 + xvfb + GTK system libraries + camoufox + playwright + gost
 #
-# 镜像里 cook 全部依赖 + 浏览器二进制 + 前端 dist；用户代码与配置由 docker-compose
-# 通过 bind mount 注入（host 的 git working tree 当 SOURCE OF TRUTH，方便 git pull）。
+# Image bakes all dependencies + browser binaries + frontend dist; user code and config injected
+# by docker-compose via bind mount (host git working tree as SOURCE OF TRUTH for easy git pull).
 
 # ─────────────── frontend-builder ───────────────
 FROM node:20-bookworm-slim AS frontend-builder
@@ -30,10 +30,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
     NODE_PATH=/app/webui/frontend/node_modules:/usr/local/lib/node_modules
 
-# 系统依赖：python3 + python-is-python3 软链 + xvfb（虚拟 X server）
-# + curl/ca-certificates（拉 gost）+ locale（playwright 启动会查）。
-# Node 不从 Ubuntu apt 装：runtime 直接复用 frontend-builder 的官方 node:20，
-# 避免 apt 源版本漂移 / nodejs 只提供 nodejs 不提供 node 的兼容坑。
+# System dependencies: python3 + python-is-python3 symlink + xvfb (virtual X server)
+# + curl/ca-certificates (fetch gost) + locale (playwright startup checks).
+# Node not installed from Ubuntu apt: runtime directly reuses official node:20 from frontend-builder,
+# avoiding apt source version drift / nodejs-only compatibility quirks.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python-is-python3 python3-venv \
         xvfb \
@@ -43,9 +43,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
-# OpenAI Sentinel QuickJS 路径必须能在 runtime 里执行 `node`。
-# 只需要 node + npm/npx shim；项目运行时不依赖 npm install，但保留 npm
-# 便于容器内临时诊断/重建前端。
+# OpenAI Sentinel QuickJS path must be able to execute `node` in runtime.
+# Only need node + npm/npx shims; project runtime doesn't depend on npm install, but keep npm
+# for convenience in-container diagnostics/frontend rebuild.
 COPY --from=frontend-builder /usr/local/bin/node /usr/local/bin/node
 COPY --from=frontend-builder /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
@@ -55,7 +55,7 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 
 WORKDIR /app
 
-# Python 依赖：先 webui requirements（layer cache 友好），再 pipeline 用的
+# Python dependencies: webui requirements first (layer cache friendly), then pipeline deps
 COPY webui/requirements.txt /tmp/webui-requirements.txt
 RUN pip install -r /tmp/webui-requirements.txt \
         'qrcode[pil]' \
@@ -63,17 +63,17 @@ RUN pip install -r /tmp/webui-requirements.txt \
         browserforge mitmproxy pybase64 \
     && rm /tmp/webui-requirements.txt
 
-# 浏览器系统库：playwright 知道当前版本要的所有 deps（libgtk-3 / libdbus-glib / libasound2 …）
-# Chromium 供 Node/Playwright PayPal RPA 使用；Firefox 供旧 sniff/bridge 路径使用。
+# Browser system libraries: playwright knows all current version deps (libgtk-3 / libdbus-glib / libasound2 …)
+# Chromium for Node/Playwright PayPal RPA; Firefox for legacy sniff/bridge paths.
 RUN playwright install-deps chromium firefox
 
-# 浏览器二进制：playwright 自身的 chromium（Node PayPal RPA 用）+ firefox（stripe_sniff_worker.py 用）
-# + camoufox antidetect firefox（CTF-reg/browser_register.py + PayPal Camoufox 用）
+# Browser binaries: playwright's chromium (Node PayPal RPA) + firefox (stripe_sniff_worker.py)
+# + camoufox antidetect firefox (CTF-reg/browser_register.py + PayPal Camoufox)
 RUN playwright install chromium firefox \
     && camoufox fetch
 
-# gost socks5 中继 v3（webshare 走它，pipeline._ensure_gost_alive 自动拉起）。
-# 用 linux_amd64.tar.gz（GOAMD64=v1）而非 amd64v3.tar.gz，保证老 CPU 也能跑。
+# gost socks5 relay v3 (webshare uses it, pipeline._ensure_gost_alive auto-starts).
+# Use linux_amd64.tar.gz (GOAMD64=v1) not amd64v3.tar.gz to support older CPUs.
 ARG GOST_VERSION=3.2.6
 RUN curl -fsSL "https://github.com/go-gost/gost/releases/download/v${GOST_VERSION}/gost_${GOST_VERSION}_linux_amd64.tar.gz" \
         | tar -xz -C /tmp/ \
@@ -81,30 +81,30 @@ RUN curl -fsSL "https://github.com/go-gost/gost/releases/download/v${GOST_VERSIO
     && chmod +x /usr/local/bin/gost \
     && /usr/local/bin/gost -V
 
-# 项目代码（运行时 docker-compose 会用 bind mount 覆盖，方便 git pull 即时生效；
-# 镜像 baked 一份是为了让 `docker run` 不挂载也能裸启）
+# Project code (runtime docker-compose will override via bind mount for immediate git pull effect;
+# baking in image allows bare `docker run` without mount to still work)
 COPY pipeline.py ./
 COPY CTF-pay/ ./CTF-pay/
 COPY CTF-reg/ ./CTF-reg/
 COPY scripts/ ./scripts/
 COPY webui/ ./webui/
 
-# 前端 dist 来自 frontend-builder 阶段
+# Frontend dist from frontend-builder stage
 COPY --from=frontend-builder /build/dist /app/webui/frontend/dist
-# 运行时 Node 协议 helper（PayPal DataDome / hCaptcha 实验路径）会复用
-# 前端构建阶段的纯 JS 依赖，例如 happy-dom。docker-compose 给
-# /app/webui/frontend/node_modules 挂了匿名 volume；镜像里预置该目录后，
-# 首次创建容器时 volume 会自动带上依赖，避免运行期 `require("happy-dom")`
-# 失败。
+# Runtime Node protocol helpers (PayPal DataDome / hCaptcha experimental paths) reuse
+# pure JS dependencies from frontend build stage, e.g. happy-dom. docker-compose mounts
+# /app/webui/frontend/node_modules as anonymous volume; image pre-bakes this directory so
+# first container creation auto-includes dependencies, preventing runtime `require("happy-dom")`
+# failure.
 COPY --from=frontend-builder /build/node_modules /app/webui/frontend/node_modules
 
-# 启动脚本：bootstrap 用户配置（首次 host 上没 config.*.json 时从 .example 拷一份）
+# Startup script: bootstrap user config (copy from .example on first run if host lacks config.*.json)
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8765
 
-# 默认 webui bind 0.0.0.0:8765；外部 docker port mapping 控制是否暴露公网
+# Default webui binds 0.0.0.0:8765; external docker port mapping controls public exposure
 ENV WEBUI_BIND_HOST=0.0.0.0 \
     WEBUI_BIND_PORT=8765
 

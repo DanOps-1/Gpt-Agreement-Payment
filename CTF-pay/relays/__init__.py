@@ -1,1 +1,1 @@
-"""HTTP relay 进程: WhatsApp OTP 中转 + 本地 mock payment gateway。"""
+"""HTTP relay process: WhatsApp OTP forwarding + local mock payment gateway."""

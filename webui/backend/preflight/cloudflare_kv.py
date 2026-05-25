@@ -1,13 +1,12 @@
 """Preflight check for Cloudflare KV-backed OTP path.
 
-替代原 IMAP preflight。OTP 现在走 CF Email Routing → otp-relay Worker → KV
-（见 scripts/setup_cf_email_worker.py 一键部署 + scripts/otp_email_worker.js）。
+Replaces the original IMAP preflight. OTP now goes through CF Email Routing → otp-relay Worker → KV
+(see scripts/setup_cf_email_worker.py for one-click deployment + scripts/otp_email_worker.js).
 
-校验三件事：
-  1. token 能访问指定 account（也是 setup 脚本的最低门槛）
-  2. KV namespace ID 在该 account 下确实存在 + 可读
-  3. (可选) worker 名字下确实有 script 部署着
-"""
+Validates three things:
+  1. token can access the specified account (also the minimum threshold for setup script)
+  2. KV namespace ID actually exists under that account + is readable
+  3. (optional) worker name actually has a script deployed under it"""
 from __future__ import annotations
 
 import json
@@ -30,7 +29,7 @@ class CloudflareKVInput(BaseModel):
 
 
 def _http_get(token: str, path: str) -> Tuple[int, dict]:
-    """GET 不经过 http_proxy，避开本机 mitm 代理。"""
+    """GET bypasses http_proxy to avoid local MITM proxy."""
     req = urllib.request.Request(
         CF + path,
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
@@ -65,7 +64,7 @@ def check(body: dict) -> PreflightResult:
     cfg = CloudflareKVInput.model_validate(body)
     checks: list[CheckResult] = []
 
-    # 1) token + account 访问
+    # 1) token + account access
     code, data = _http_get(cfg.api_token, f"/accounts/{cfg.account_id}")
     if not data.get("success"):
         checks.append(
@@ -81,7 +80,7 @@ def check(body: dict) -> PreflightResult:
         CheckResult(name="account", status="ok", message=f"account: {aname}")
     )
 
-    # 2) KV namespace ID 可读
+    # 2) KV namespace ID is readable
     code, data = _http_get(
         cfg.api_token,
         f"/accounts/{cfg.account_id}/storage/kv/namespaces/{cfg.kv_namespace_id}",
@@ -104,7 +103,7 @@ def check(body: dict) -> PreflightResult:
             )
         )
 
-    # 3) Worker 存在 — 用 list scripts 间接判断（GET script 单条返回 multipart 不便解析）
+    # 3) Worker exists — use list scripts to determine indirectly (GET script single returns multipart which is inconvenient to parse)
     code, data = _http_get(
         cfg.api_token,
         f"/accounts/{cfg.account_id}/workers/scripts?per_page=100",

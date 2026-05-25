@@ -1,22 +1,15 @@
-"""
-OpenAI Sentinel Token 生成（纯 Python 方案）。
+"""OpenAI Sentinel Token generation (pure Python solution).
 
-集成自 https://github.com/zc-zhangchen/any-auto-register
-（platforms/chatgpt/sentinel_token.py，MIT License）。
+Integrated from https://github.com/zc-zhangchen/any-auto-register
+(platforms/chatgpt/sentinel_token.py, MIT License).
 
-旧实现见 sentinel_v1_legacy.py：先在本地 SHA3-512 算 PoW 再发，被 OpenAI 服务端
-silent-drop（200 OK 但不下发 OTP）。新实现的关键区别：
-  1. 第一次 POST /sentinel/req 发 `requirements_token`（不带真 PoW），仅声明
-     config schema。
-  2. 服务端返回 `{token, proofofwork: {required, seed, difficulty}}`，
-     我们用 **服务端给的 seed/difficulty** 跑 FNV-1a 32-bit PoW。
-  3. 第二次 PoW 解出来的 token 拼进 `{p, t:"", c: server_token, id, flow}` 才合法。
-  4. SDK 版本字符串从旧的 `prod-f501fe...` 升级到当前的
-     `https://sentinel.openai.com/sentinel/20260124ceb8/sdk.js`。
+Legacy implementation see sentinel_v1_legacy.py: compute PoW locally via SHA3-512 first then send, but OpenAI server-side silent-drop (200 OK but no OTP issued). Key differences in the new implementation:
+  1. First POST /sentinel/req sends `requirements_token` (without real PoW), only declares config schema.
+  2. Server returns `{token, proofofwork: {required, seed, difficulty}}`, we run FNV-1a 32-bit PoW using **server-provided seed/difficulty**.
+  3. Second PoW solved token is spliced into `{p, t:"", c: server_token, id, flow}` to be valid.
+  4. SDK version string upgraded from legacy `prod-f501fe...` to current `https://sentinel.openai.com/sentinel/20260124ceb8/sdk.js`.
 
-公开 API `get_sentinel_token(session, device_id, flow, user_agent)` 保持不变，
-auth_flow.py 的 4 处调用点不需要改。
-"""
+Public API `get_sentinel_token(session, device_id, flow, user_agent)` remains unchanged, 4 call sites in auth_flow.py need no modification."""
 
 from __future__ import annotations
 
@@ -47,11 +40,10 @@ DEFAULT_SEC_CH_UA = (
 
 
 class SentinelTokenGenerator:
-    """Sentinel Token 纯 Python 生成器。
+    """Pure Python Sentinel Token generator.
 
-    - 不依赖 Node / JS。
-    - `t` 字段固定空串；上游接口（`/sentinel/req`）的返回会判定能否接受。
-    """
+    - Does not depend on Node / JS.
+    - `t` field is fixed to empty string; upstream interface (`/sentinel/req`) return will determine acceptability."""
 
     MAX_ATTEMPTS = 500000
     ERROR_PREFIX = "wQ8Lk5FbGpA2NcR9dShT6gYjU7VxZ4D"
@@ -151,7 +143,7 @@ def fetch_sentinel_challenge(
     impersonate: str | None = None,
     request_p: str | None = None,
 ) -> dict | None:
-    """POST `/sentinel/req` 并返回响应 JSON。失败返回 None。"""
+    """POST `/sentinel/req` and return response JSON. Return None on failure."""
     generator = SentinelTokenGenerator(device_id=device_id, user_agent=user_agent)
     req_body = {
         "p": str(request_p or "").strip() or generator.generate_requirements_token(),
@@ -194,10 +186,9 @@ def build_sentinel_token(
     sec_ch_ua: str | None = None,
     impersonate: str | None = None,
 ) -> str | None:
-    """完整 Sentinel token：fetch challenge → 用 server-given seed/difficulty 解 PoW → 拼装。
+    """Complete Sentinel token: fetch challenge → solve PoW using server-given seed/difficulty → assemble.
 
-    返回 JSON 字符串，失败返回 None。
-    """
+    Return JSON string, None on failure."""
     challenge = fetch_sentinel_challenge(
         session,
         device_id,
@@ -240,19 +231,16 @@ def get_sentinel_token(
     flow: str = "authorize_continue",
     user_agent: str = DEFAULT_UA,
 ) -> str:
-    """auth_flow.py 复用的入口；返回 JSON 字符串，永远不抛异常。
+    """Entry point reused by auth_flow.py; return JSON string, never throw exceptions.
 
-    优先级:
-      1. QuickJS 路径 (`sentinel_quickjs.get_sentinel_token_via_quickjs`)
-         在 Node 子进程里跑 OpenAI 真实 sdk.js，返回服务端可深层校验的 token。
-         这是 OTP 邮件能下发的关键。
-      2. 纯 Python 路径 (`build_sentinel_token`) — 只做表层 PoW，能通过
-         200 OK 但 OpenAI 服务端 OTP 派发会 silent-drop。仅作为 Node 不可用
-         或 sdk.js 下载失败时的兜底。
-      3. 无 challenge 模式 — 最后兜底，保证返回可解析字符串避免阻塞。
+    Priority:
+      1. QuickJS path (`sentinel_quickjs.get_sentinel_token_via_quickjs`)
+         runs OpenAI real sdk.js in Node subprocess, returns token with deep server-side validation.
+         This is key for OTP email delivery.
+      2. Pure Python path (`build_sentinel_token`) — only surface-level PoW, passes 200 OK but OpenAI server-side OTP dispatch will silent-drop. Fallback only when Node unavailable or sdk.js download fails.
+      3. No-challenge mode — final fallback, ensures returning parseable string to avoid blocking.
 
-    禁用 QuickJS：`export OPENAI_SENTINEL_DISABLE_QUICKJS=1`。
-    """
+    Disable QuickJS: `export OPENAI_SENTINEL_DISABLE_QUICKJS=1`."""
     if not os.environ.get("OPENAI_SENTINEL_DISABLE_QUICKJS"):
         try:
             from sentinel_quickjs import get_sentinel_token_via_quickjs

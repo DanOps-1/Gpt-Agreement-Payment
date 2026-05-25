@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""兼容 shim: 旧调用 `python CTF-pay/gopay.py …` 透传到 gopay/ 包。
+"""Compatibility shim: Old calls `python CTF-pay/gopay.py …` pass through to the gopay/ package.
 
-新写法是 `cd CTF-pay && python -m gopay …`。
-实际代码在 gopay/_monolith.py + gopay/sign/* + gopay/protocol/*。
-"""
+New usage is `cd CTF-pay && python -m gopay …`.
+Actual code is in gopay/_monolith.py + gopay/sign/* + gopay/protocol/*."""
 
 import sys
 from pathlib import Path
 
-# 让 `import gopay` 解析到旁边的 gopay/ 包 (而不是这个文件本身)
+# Make `import gopay` resolve to the adjacent gopay/ package (not this file itself)
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))

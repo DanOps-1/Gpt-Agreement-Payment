@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""一次性脚本：用 outlook.jp 接码账号 + 当前 gost (JP IP) 注册一个 ChatGPT 账号
-+ 把 access_token/session_token 写进 webui registered_accounts 表，
-让 webui pay-only --qris 直接复用。
+"""One-time script: use outlook.jp OTP reception account + current gost (JP IP) to register a ChatGPT account + write access_token/session_token to webui registered_accounts table, so webui pay-only --qris can directly reuse it.
 
-接码账号 4 段格式（用 ---- 分隔）：
+OTP reception account 4-segment format (separated by ----):
     email----password----client_id----microsoft_refresh_token
 
-用法：
-    python scripts/import_outlook_chatgpt.py 'CharlesXxx@outlook.jp----wnwuc...----9e5f94bc-...----M.C538_...'
-"""
+Usage:
+    python scripts/import_outlook_chatgpt.py 'CharlesXxx@outlook.jp----wnwuc...----9e5f94bc-...----M.C538_...'"""
 from __future__ import annotations
 
 import base64
@@ -43,7 +40,7 @@ logging.basicConfig(
 
 
 class OutlookMailProvider(MailProvider):
-    """复用一个固定 outlook 邮箱 + IMAP OAuth2 拉 OpenAI OTP。"""
+    """Reuse a fixed outlook mailbox + IMAP OAuth2 to pull OpenAI OTP."""
 
     def __init__(self, email: str, refresh_token: str, client_id: str):
         super().__init__(catch_all_domain=email.split("@", 1)[1])
@@ -55,7 +52,7 @@ class OutlookMailProvider(MailProvider):
         self._cached_at: float = 0.0
 
     def _outlook_access_token(self) -> str:
-        # outlook access_token 1 天有效，缓存避免每次刷
+        # outlook access_token valid for 1 day, cache to avoid refreshing every time
         if self._cached_access and time.time() - self._cached_at < 3000:
             return self._cached_access
         body = urllib.parse.urlencode({
@@ -75,7 +72,7 @@ class OutlookMailProvider(MailProvider):
         self._cached_access = data["access_token"]
         self._cached_at = time.time()
         if data.get("refresh_token"):
-            # outlook 滚动 refresh_token，更新缓存（不重写 disk）
+            # outlook rolling refresh_token, update cache (don't rewrite disk)
             self.refresh = data["refresh_token"]
         return self._cached_access
 
@@ -85,13 +82,13 @@ class OutlookMailProvider(MailProvider):
         timeout: int = 180,
         issued_after: Optional[float] = None,
     ) -> str:
-        # outlook 偶发投递 60-180s（特别 OpenAI → outlook 路径）；
-        # auth_flow 调用方传 60s 太严，至少给 240s
+        # outlook occasionally delivers emails in 60-180s (especially OpenAI → outlook path);
+        # auth_flow caller sets 60s which is too strict, need at least 240s
         timeout = max(int(timeout), 240)
         deadline = time.time() + timeout
         if issued_after is None:
             issued_after = time.time()
-        # 接受最近 5 分钟内的邮件作为本轮 OTP（IMAP 时间精度差，给冗余）
+        # accept emails from the past 5 minutes as this round's OTP (IMAP time precision is poor, so provide redundancy)
         threshold = issued_after - 300
         last_seen_uids: set[str] = set()
         logger.info(f"[outlook] 等 OTP key={email_addr} timeout={timeout}s threshold={threshold:.0f}")
@@ -105,14 +102,14 @@ class OutlookMailProvider(MailProvider):
                 if typ != "OK":
                     raise RuntimeError("imap XOAUTH2 失败")
                 M.select("INBOX")
-                # 搜最近 OpenAI/ChatGPT 来的邮件
+                # search for recent emails from OpenAI/ChatGPT
                 typ, data = M.search(None, '(OR FROM "openai" FROM "chatgpt")')
                 ids = data[0].split()
-                # 也兜底搜全部最新（防 sender 不匹配）
+                # also fallback to search all latest (prevent sender mismatch)
                 if not ids:
                     typ, data = M.search(None, "ALL")
                     ids = data[0].split()
-                # 倒序看最近 8 封
+                # check in reverse order the last 8 emails
                 for mid in reversed(ids[-8:]):
                     if mid in last_seen_uids:
                         continue
@@ -123,7 +120,7 @@ class OutlookMailProvider(MailProvider):
                     msg_ts = _parse_imap_date(date_str)
                     if msg_ts and msg_ts < threshold:
                         continue
-                    # 拿 multipart 里的 text/plain 或 text/html，避开 SMTP headers + base64 编码段
+                    # get text/plain or text/html from multipart, avoid SMTP headers + base64 encoded segments
                     text_body = ""
                     for part in msg.walk():
                         ct = part.get_content_type()
@@ -135,8 +132,8 @@ class OutlookMailProvider(MailProvider):
                                 continue
                     if not text_body:
                         continue
-                    # OTP 抽取：先 semantic（"code is 123456" / chatgpt / openai 上下文），
-                    # 然后 fallback \b\d{6}\b 但排除 OpenAI 品牌色 hex（#353740 / #10A37F 之类）
+                    # OTP extraction: first semantic ("code is 123456" / chatgpt / openai context),
+                    # then fallback \b\d{6}\b but exclude OpenAI brand hex colors (#353740 / #10A37F etc)
                     otp = _extract_otp_from_html(text_body)
                     if otp:
                         logger.info(f"[outlook] 收到 OTP={otp} from msg uid={mid.decode()} date={date_str[:30]}")
@@ -156,7 +153,7 @@ class OutlookMailProvider(MailProvider):
 
 
 def _is_hex_color_context(haystack: str, idx: int) -> bool:
-    """跟 worker.js 同款：6-digit 紧跟 #xxxxxx 或 css color/background 上下文 → 当 hex"""
+    """Same as worker.js: 6-digit immediately followed by #xxxxxx or css color/background context → treat as hex"""
     if idx > 0 and haystack[idx - 1] == "#":
         return True
     before = haystack[max(0, idx - 30):idx]
@@ -166,7 +163,7 @@ def _is_hex_color_context(haystack: str, idx: int) -> bool:
 
 
 def _extract_otp_from_html(body: str) -> Optional[str]:
-    """从 HTML/纯文本 body 抽 6-digit OTP，排除 hex 色 + SMTP header 数字。"""
+    """Extract 6-digit OTP from HTML/plain text body, exclude hex colors + SMTP header numbers."""
     semantic = [
         r"(?:code(?:\s*is)?|verification|one[-\s]*time|verify|kode|verifikasi|代码|验证码|驗證碼)[^\d<>]{0,80}(\d{6})\b",
         r"chatgpt[^\d<>]{0,80}(\d{6})",
@@ -175,11 +172,11 @@ def _extract_otp_from_html(body: str) -> Optional[str]:
     for pat in semantic:
         for m in re.finditer(pat, body, re.IGNORECASE | re.DOTALL):
             cand = m.group(1)
-            # 找 candidate 在原文里的位置
+            # find candidate position in original text
             cand_pos = m.start(1)
             if not _is_hex_color_context(body, cand_pos):
                 return cand
-    # fallback：纯文本里 \b\d{6}\b 排除 hex
+    # fallback: pure text \b\d{6}\b exclude hex
     for m in re.finditer(r"\b(\d{6})\b", body):
         cand = m.group(1)
         if _is_hex_color_context(body, m.start(1)):
@@ -210,7 +207,7 @@ def main():
     email, password, client_id, refresh = parts
     logger.info(f"账号: {email}  client_id={client_id[:8]}…  refresh_token len={len(refresh)}")
 
-    # 切 JP IP（promo 命中关键）
+    # switch to JP IP (promo hit key)
     from pipeline import _read_card_cfg, _rotate_webshare_ip
     pay_cfg = _read_card_cfg(str(ROOT / "CTF-pay" / "config.paypal.json"))
     px = _rotate_webshare_ip(pay_cfg, force=True)
@@ -218,8 +215,8 @@ def main():
 
     cardw = Config.from_file(str(ROOT / "CTF-reg" / "config.paypal-proxy.json"))
     mail = OutlookMailProvider(email, refresh, client_id)
-    # 走 Camoufox 真浏览器路径（Turnstile / DataDome / 反欺诈视为真用户行为
-    # 比 auth_flow 纯协议更易过 OpenAI 风控）
+    # use Camoufox real browser path (Turnstile / DataDome / anti-fraud treated as genuine user behavior
+    # easier to pass OpenAI risk control than pure auth_flow protocol)
     use_browser = bool(int(__import__("os").environ.get("REG_VIA_BROWSER", "1")))
     if use_browser:
         logger.info("[browser_register] Camoufox 启动 (outlook 邮箱 + JP IP) ...")
@@ -235,13 +232,13 @@ def main():
         f"session_token=len{len(d.get('session_token') or '')}"
     )
 
-    # 写 webui registered_accounts 表
+    # write webui registered_accounts table
     db = get_db()
     if hasattr(db, "save_registered_account"):
         db.save_registered_account(d)
         logger.info("[db] save_registered_account 已写")
     else:
-        # fallback：直接 SQL insert
+        # fallback: direct SQL insert
         con = db._conn()
         con.execute(
             "INSERT INTO registered_accounts (email, ts, password, session_token, access_token, "

@@ -1,40 +1,42 @@
-CTF 场景下当前协议主链，按真实抓包整理如下：
+# CTF Scenario Current Protocol Main Chain
+
+Based on real packet captures, organized as follows:
 
 - `init`
 - `elements/sessions`
 - `consumers/sessions/lookup`
-- `payment_pages/<session>` 地址 / tax_region 更新
+- `payment_pages/<session>` address / tax_region update
 - `confirm`
-  - 优先走 `inline_payment_method_data`
-  - 兼容 `shared_payment_method`
+  - Prioritize `inline_payment_method_data`
+  - Compatible with `shared_payment_method`
 - `3ds2/authenticate`
 - `poll`
 
-几个容易误判的点：
+## Several Easy-to-Misinterpret Points:
 
-- `setatt_` / `source` 有值，只代表拿到了 3DS authenticate 的 source，不代表已经成功。
-- `state = challenge_required` 且 `ares.transStatus = C`，表示 **需要浏览器侧继续完成 challenge**，不是“废卡”。
-- 只有浏览器把 challenge 真正做完，后面的 intent / setup_intent 状态才会继续推进。
+- `setatt_` / `source` having values only means 3DS authenticate source was obtained, not that it succeeded.
+- `state = challenge_required` and `ares.transStatus = C` means **browser side needs to continue completing the challenge**, not a "dead card".
+- Only after the browser truly completes the challenge will the intent / setup_intent status continue to advance.
 
-当前脚本行为：
+## Current Script Behavior:
 
-- 会在 `three_ds_result` 里记录：
+- Will record in `three_ds_result`:
   - `state`
   - `trans_status`
   - `source`
   - `acs_url`
   - `creq`
   - `three_ds_server_trans_id`
-- 如果进入 `challenge_required`，脚本会停在这里，等待后续浏览器侧 challenge。
+- If entering `challenge_required`, the script will pause here, waiting for subsequent browser-side challenge.
 
-无图形环境下的 challenge 调试：
+## Challenge Debugging in Headless Environment:
 
-- `card.py` 现在会把最新 bridge 信息写到 `/tmp/stripe_hcaptcha_bridge_latest.json`
-- 如果机器没有 `DISPLAY`，`card.py` 不再直接崩；可回退为 headless Playwright 或只输出 bridge URL
-- 已提供本地 helper：`CTF-pay/hcaptcha_bridge_helper.py`
-  - 用法：
+- `card.py` now writes the latest bridge info to `/tmp/stripe_hcaptcha_bridge_latest.json`
+- If the machine has no `DISPLAY`, `card.py` no longer crashes directly; can fall back to headless Playwright or only output bridge URL
+- Local helper provided: `CTF-pay/hcaptcha_bridge_helper.py`
+  - Usage:
     - `python hcaptcha_bridge_helper.py http://127.0.0.1:PORT/index.html`
-  - 常用命令：
+  - Common commands:
     - `TEXT`
     - `SHOT /tmp/bridge.png`
     - `CHSHOT /tmp/challenge.png`
@@ -42,40 +44,40 @@ CTF 场景下当前协议主链，按真实抓包整理如下：
     - `VERIFY`
     - `STATE`
 
-`config.auto.json` 中和运行时最相关的字段：
+## Most Relevant Fields in `config.auto.json`:
 
 - `runtime.confirm_mode`
-  - `inline_payment_method_data`：更贴近当前真实前端链路
-  - `shared_payment_method`：兼容旧的先建 `payment_method` 再 confirm
+  - `inline_payment_method_data`: Closer to current real frontend flow
+  - `shared_payment_method`: Compatible with older flow of creating `payment_method` then confirming
 - `runtime.version`
 - `runtime.js_checksum`
 - `runtime.rv_timestamp`
 
-注意：
+**Note:**
 
-- `runtime.js_checksum` 与 `runtime.rv_timestamp` 必须和当前 checkout runtime 对齐。
-- `top_checkout_config_id` / `payment_method_checkout_config_id` 可以先留空，脚本会用当前会话上下文回填。
-- 默认 `load_config()` 会优先读传入路径；如果没找到，会自动回退到 `CTF-pay/config.auto.json`。
+- `runtime.js_checksum` and `runtime.rv_timestamp` must align with current checkout runtime.
+- `top_checkout_config_id` / `payment_method_checkout_config_id` can be left empty; script will auto-fill from current session context.
+- Default `load_config()` prioritizes reading the passed path; if not found, automatically falls back to `CTF-pay/config.auto.json`.
 
-## fresh checkout 自动生成
+## Fresh Checkout Auto-Generation
 
-现在 `card.py` 支持在 session 失活前，先从 ChatGPT 侧重新生成新的 checkout：
+`card.py` now supports regenerating a new checkout from ChatGPT side before session expires:
 
-- 命令：
+- Commands:
   - `python card.py fresh --fresh-only`
   - `python card.py auto`
   - `python card.py --fresh`
-  - 也可直接用预置方案1配置：
+  - Or directly use preset scheme 1 config:
     - `python card.py auto --config config.auto-register.json`
-- 默认推荐 **ABCard / access_token 模式**，不再依赖从 `flows` 提取登录态：
+- **ABCard / access_token mode recommended by default**, no longer relies on extracting login state from `flows`:
   - `Authorization: Bearer <access_token>`
-  - 可选 `__Secure-next-auth.session-token`
-  - 可选 `oai-device-id`
-  - 先调 `GET /api/auth/session` 刷新 / 校验 access token
-  - 再按 ABCard 兼容链路依次尝试：
+  - Optional `__Secure-next-auth.session-token`
+  - Optional `oai-device-id`
+  - First call `GET /api/auth/session` to refresh / validate access token
+  - Then sequentially try ABCard compatible flow:
     - `POST /backend-api/payments/checkout`
     - `POST /backend-api/subscriptions/checkout`
-- ABCard 风格 payload：
+- ABCard style payload:
   - `plan_type`
   - `payment_lower_bound_amount_cents`
   - `payment_upper_bound_amount_cents`
@@ -84,132 +86,103 @@ CTF 场景下当前协议主链，按真实抓包整理如下：
   - `workspace_name`
   - `seat_quantity`
   - `promo_campaign_id`
-- `flows` 现在只作为 **可选模板来源**：
-  - 当 `request_style=modern` 或显式启用 `use_flows_for_templates` 时
-  - 才会去读取 `../flows` 里的 sentinel/body 模板
-- `config.auto.json` 已新增 `fresh_checkout` 段：
-  - 默认：
+- `flows` now serves only as **optional template source**:
+  - When `request_style=modern` or explicitly enabling `use_flows_for_templates`
+  - Will only read sentinel/body templates in `../flows`
+- `config.auto.json` added new `fresh_checkout` section:
+  - Defaults:
     - `fresh_checkout.auth.mode = "access_token"`
     - `fresh_checkout.request_style = "abcard"`
     - `fresh_checkout.bootstrap_from_flows = false`
-  - 主要填写：
+  - Main fields to fill:
     - `fresh_checkout.auth.access_token`
-    - `fresh_checkout.auth.session_token`（可选，但推荐；脚本可自动刷新 access token）
-    - `fresh_checkout.auth.device_id` / `oai_device_id`（可选）
+    - `fresh_checkout.auth.session_token` (optional but recommended; script can auto-refresh access token)
+    - `fresh_checkout.auth.device_id` / `oai_device_id` (optional)
     - `fresh_checkout.plan.plan_name`
     - `fresh_checkout.plan.promo_campaign_id`
-  - 方案1（推荐闭环）：
+  - Scheme 1 (recommended closed-loop):
     - `fresh_checkout.auth.auto_register.enabled = true`
     - `fresh_checkout.auth.auto_register.project_dir = "./CTF-reg"`
     - `fresh_checkout.auth.auto_register.config_path = "./CTF-reg/config.example.json"`
-    - `CTF-reg` 是本仓库内置的注册流程代码目录，不再依赖外部项目路径
-    - 如果 `mode = "auto_register"`，脚本会先调用本地注册流程拿到
-      `access_token / session_token / device_id`，再生成 fresh checkout
-    - 如果保留 `mode = "access_token"`，但开启了 `auto_register.enabled = true`，
-      当现有 token 过期 / 失效 / 账号停用时，也会自动注册新号后重试
-  - `auto_refresh_on_inactive: true` 时，如果 Stripe 返回 `checkout_not_active_session`，脚本会先自动生成 fresh checkout 再继续
-  - 如果你需要把优惠 checkout 跑稳，建议再开启：
+    - `CTF-reg` is the built-in registration flow code directory in this repo, no longer depends on external project paths
+    - If `mode = "auto_register"`, script will first call local registration flow to get `access_token / session_token / device_id`, then generate fresh checkout
+    - If keeping `mode = "access_token"` but enabling `auto_register.enabled = true`, when existing token expires / becomes invalid / account is deactivated, will also auto-register new account and retry
+  - When `auto_refresh_on_inactive: true`, if Stripe returns `checkout_not_active_session`, script will auto-generate fresh checkout and continue
+  - If you need to stabilize discount checkout, recommend also enabling:
     - `fresh_checkout.check_coupon_after_checkout = true`
-      - 创建 checkout 后补打一遍
-        `GET /backend-api/promo_campaign/check_coupon`
-      - 仅用于观测 `eligible / not_eligible`，**不**把它当成真正的 redeem 流程
+      - After creating checkout, additionally call `GET /backend-api/promo_campaign/check_coupon`
+      - Only for observing `eligible / not_eligible`, **not** treated as actual redeem flow
     - `fresh_checkout.expected_due = 0`
-      - 不看 ChatGPT checkout preview，而是以 Stripe `init.total_summary.due`
-        为准校验是否命中优惠
+      - Don't check ChatGPT checkout preview, instead use Stripe `init.total_summary.due` as truth for validating discount hit
     - `fresh_checkout.auto_refresh_on_due_mismatch = true`
-      - 如果 fresh checkout 创建成功，但 Stripe `due` 不是预期金额，
-        脚本会自动重新生成 fresh checkout 再试
+      - If fresh checkout created successfully but Stripe `due` is not expected amount, script will auto-regenerate fresh checkout and retry
     - `fresh_checkout.max_due_mismatch_refreshes = 3`
-      - 控制金额不匹配时最多重刷几次
+      - Controls max number of refreshes on amount mismatch
   - `pre_solve_passive_captcha = true`
-    - 更贴近真实 `flows`：confirm 前先拿 `passive_captcha_token`
-    - 历史 `due=0` 流里，confirm 请求里是带了 `passive_captcha_token` 的
+    - More aligned with real `flows`: get `passive_captcha_token` before confirming
+    - In historical `due=0` flow, confirm request included `passive_captcha_token`
   - `browser_challenge.use_for_passive_captcha = true`
-    - 会优先尝试用本地 headless 浏览器执行 Stripe invisible hCaptcha，
-      尽量拿到和真实前端更接近的 passive token
-    - 如果浏览器方案没拿到 token，再回退到打码平台
+    - Will prioritize trying local headless browser to execute Stripe invisible hCaptcha, maximizing getting passive token closer to real frontend
+    - If browser approach doesn't get token, falls back to captcha service
   - `browser_challenge.passive_headless = true`
-    - 在无 DISPLAY 的环境里也能跑 passive captcha 浏览器链路
+    - Can run passive captcha browser flow even in headless environments without DISPLAY
   - `browser_challenge.passive_timeout_ms = 45000`
-    - 控制 invisible/passive captcha 的浏览器等待时长
+    - Controls browser wait duration for invisible/passive captcha
 
-注意：
+**Note:**
 
-- 如果 `/api/auth/session` 还能返回用户信息，但 checkout 返回：
-  - `401[token_invalidated]`：当前 access_token / session_token 登录态已被撤销；
-  - `401[account_deactivated]`：当前账号本身已被停用；
-  - 这两种情况都不是 Stripe 协议问题，而是 ChatGPT 侧凭证 / 账号状态问题。
+- If `/api/auth/session` still returns user info, but checkout returns:
+  - `401[token_invalidated]`: Current access_token / session_token login state revoked;
+  - `401[account_deactivated]`: Current account itself deactivated;
+  - Both cases are not Stripe protocol issues, but ChatGPT side credential / account status issues.
 
-## 纯本地 CTF mock gateway
+## Pure Local CTF Mock Gateway
 
-如果当前目标是继续压实 **本地 challenge / 3DS 状态机**，而不希望依赖任何外部网络，可直接使用：
+If current target is to further solidify **local challenge / 3DS state machine** without relying on any external network, directly use:
 
 - `python card.py auto --config config.local-mock.json --local-mock`
 
-行为：
+Behavior:
 
-- 自动从本地 `flows` 重建 fresh checkout 参数；
-- 在 `127.0.0.1` 启动一个本地 HTTP mock gateway；
-- 由 `card.py` 对本地 gateway 发起真实 HTTP 请求，回放：
+- Auto rebuild fresh checkout parameters from local `flows`;
+- Start a local HTTP mock gateway on `127.0.0.1`;
+- `card.py` initiates real HTTP requests to local gateway, replaying:
   - `fresh checkout`
   - `confirm`
   - `verify_challenge`
   - `3ds2/authenticate`
   - `poll`
 
-默认场景：
+Default scenario:
 
 - `challenge_pass_then_decline`
-  - 本地模拟 `network_checkcaptcha(pass=true)`
+  - Local mock `network_checkcaptcha(pass=true)`
   - `verify_challenge -> requires_action`
   - `3DS2 -> succeeded`
-  - 最终 `card_declined`
+  - Finally `card_declined`
 
-也支持：
+Also supports:
 
 - `challenge_failed`
 - `no_3ds_card_declined`
 
-回放工件默认写到：
+Replay artifacts written to by default:
 
 - `/tmp/ctf_local_mock_latest.json`
 
-## GoPay WhatsApp OTP 自动接收
+## GoPay WhatsApp OTP Auto-Receive
 
-GoPay linking 会把 OTP 发到 WhatsApp。旧流程只支持 CLI / WebUI 手动输入；
-现在 `gopay.py` 支持自动从 WebUI WhatsApp 登录 sidecar、本地 HTTP relay、
-state/log 文件或命令取码。
+GoPay linking sends OTP to WhatsApp. Old flow only supported CLI / WebUI manual input; now `gopay.py` supports auto-receiving from WebUI WhatsApp login sidecar, local HTTP relay, state/log file or command.
 
-### 1. WebUI 推荐路径：只暴露一个 WhatsApp 登录入口
+### 1. WebUI Recommended Path: Only Expose One WhatsApp Login Entry
 
-WebUI GoPay 配置页只显示一个入口：
-
-```text
-WhatsApp 登录 / 扫码接收 GoPay OTP
-```
-
-点击后进入 `/whatsapp`，扫码登录 WhatsApp。登录页可以自由选择
-`baileys` 或 `wwebjs` 引擎：默认推荐 Baileys（`@whiskeysockets/baileys`）
-直接监听 WhatsApp multi-device socket；如需回退到旧的
-`whatsapp-web.js`/Chromium 路径，在页面下拉选择 `whatsapp-web.js`
-并重启 sidecar 即可。`WEBUI_WA_ENGINE=wwebjs` 仍可作为首次启动默认值。
-sidecar 会监听新消息，提取 GoPay OTP，并写入：
-
-```text
+WebUI GoPay config page shows only one entry:```text
+WhatsApp Login / QR Code Scanning to Receive GoPay OTP
+```Click to enter `/whatsapp`, then scan the QR code to log in to WhatsApp. On the login page, you can freely choose between the `baileys` or `wwebjs` engine: Baileys (`@whiskeysockets/baileys`) is recommended by default, which directly listens to the WhatsApp multi-device socket. If you need to fall back to the legacy `whatsapp-web.js`/Chromium path, simply select `whatsapp-web.js` from the dropdown on the page and restart the sidecar. `WEBUI_WA_ENGINE=wwebjs` can still be used as the default value on first startup. The sidecar will listen for new messages, extract GoPay OTP, and write to:```text
 SQLite runtime_meta[wa_state] / HTTP relay
-```
+```Note: The GoPay/WhatsApp OTP template is sometimes marked as a sensitive message by WhatsApp. Linked devices (WhatsApp Web) can only see placeholder hints like "You received a one-time password, which can only be viewed on the primary device", and cannot retrieve the OTP message content. This is not a regex parsing issue, but rather WhatsApp Web not delivering the OTP message content. The WebUI runner will automatically pop up a GoPay OTP fallback input box when `[gopay] waiting WhatsApp OTP from file: ...` appears in the payment log; after entering the verification code seen on the mobile primary device, it will be written to the same `SQLite runtime_meta[wa_state] / HTTP relay`, and the payment process continues.
 
-注意：GoPay/WhatsApp 的 OTP 模板有时会被 WhatsApp 标记为敏感消息，
-linked device（WhatsApp Web）只能看到类似“你收到了一次性密码，只能在主要
-设备上查看”的占位提示，拿不到验证码正文。这不是解析正则问题，而是
-WhatsApp Web 不下发 OTP 正文。WebUI runner 会在支付日志出现
-`[gopay] waiting WhatsApp OTP from file: ...` 时自动弹出 GoPay OTP 兜底
-输入框；把手机主设备上看到的验证码填进去后，会写入同一个
-`SQLite runtime_meta[wa_state] / HTTP relay`，支付流程继续。
-
-WebUI 导出 GoPay 配置时会自动写入：
-
-```json
+When exporting the GoPay configuration via WebUI, it will automatically write:```json
 {
   "gopay": {
     "otp": {
@@ -220,54 +193,35 @@ WebUI 导出 GoPay 配置时会自动写入：
     }
   }
 }
-```
-
-sidecar 依赖在 `webui/whatsapp_relay/`：
-
-```bash
+```sidecar dependency in `webui/whatsapp_relay/`:```bash
 cd webui/whatsapp_relay
 npm install
-```
+```Current dependencies include:
 
-当前依赖包含：
+- `@whiskeysockets/baileys`: default engine;
+- `whatsapp-web.js`: fallback engine.
 
-- `@whiskeysockets/baileys`：默认引擎；
-- `whatsapp-web.js`：备用引擎。
+### 2. Optional: Standalone HTTP relay
 
-### 2. 可选：独立 HTTP relay
-
-仓库内置一个很小的 HTTP relay，只负责接收你自己控制的 WhatsApp webhook /
-通知转发内容，提取 6 位 OTP，写入 `SQLite runtime_meta[wa_state]`，并暴露 `/latest`
-给支付流程轮询：
-
-```bash
+The repository includes a minimal HTTP relay that only receives WhatsApp webhooks / notification forwarding content under your own control, extracts the 6-digit OTP, writes it to `SQLite runtime_meta[wa_state]`, and exposes `/latest` for the payment flow to poll:```bash
 python CTF-pay/whatsapp_otp_relay.py --port 8765
-```
-
-本地快速自测：
-
-```bash
+```# Local Quick Self-Testing:```bash
 curl -X POST http://127.0.0.1:8765/ingest \
   -H 'Content-Type: application/json' \
   -d '{"from":"gopay","text":"Kode verifikasi GoPay Anda adalah 123456"}'
 
 curl http://127.0.0.1:8765/latest
-```
-
-`/webhook` 兼容 Meta WhatsApp Cloud API 常见 webhook 形态：
+````/webhook` is compatible with common Meta WhatsApp Cloud API webhook formats:
 
 - `GET /webhook?hub.mode=subscribe&hub.verify_token=...&hub.challenge=...`
-  用于 webhook 校验；
-- `POST /webhook` 接收 `entry[].changes[].value.messages[]` 消息。
+  Used for webhook verification;
+- `POST /webhook` receives messages from `entry[].changes[].value.messages[]`.
 
-如果你用 Android 通知转发、已有 WhatsApp Web bridge 或其他自建 relay，只要把
-消息文本 POST 到 `/ingest`，或自己提供一个返回最新 OTP 的 `/latest` 接口即可。
+If you use Android notification forwarding, already have a WhatsApp Web bridge, or other self-built relay, you can simply POST message text to `/ingest`, or provide your own `/latest` endpoint that returns the latest OTP.
 
-### 3. 手动配置 `gopay.otp`
+### 3. Manual configuration of `gopay.otp`
 
-示例见 `CTF-pay/config.gopay.example.json`：
-
-```json
+See example in `CTF-pay/config.gopay.example.json`:```json
 {
   "gopay": {
     "country_code": "62",
@@ -283,11 +237,7 @@ curl http://127.0.0.1:8765/latest
     }
   }
 }
-```
-
-也支持文件轮询：
-
-```json
+```Also supports file polling:```json
 {
   "gopay": {
     "otp": {
@@ -298,11 +248,7 @@ curl http://127.0.0.1:8765/latest
     }
   }
 }
-```
-
-HTTP relay 轮询：
-
-```json
+```HTTP relay polling:```json
 {
   "gopay": {
     "otp": {
@@ -313,11 +259,7 @@ HTTP relay 轮询：
     }
   }
 }
-```
-
-或命令轮询：
-
-```json
+```Or command polling:```json
 {
   "gopay": {
     "otp": {
@@ -328,20 +270,10 @@ HTTP relay 轮询：
     }
   }
 }
-```
+```### 4. Running
 
-### 4. 运行
-
-CLI / pipeline 只要不传 `--gopay-otp-file`，就会优先使用 `gopay.otp`：
-
-```bash
+CLI / pipeline will prioritize using `gopay.otp` as long as `--gopay-otp-file` is not passed:```bash
 python CTF-pay/gopay.py --config CTF-pay/config.gopay.example.json
 python CTF-pay/card.py auto --config CTF-pay/config.paypal.json --gopay
 python pipeline.py --config CTF-pay/config.paypal.json --gopay
-```
-
-WebUI 模式下，如果配置里存在非手动 `gopay.otp`，runner 会跳过旧的
-`--gopay-otp-file` 手动弹窗，让 `gopay.py` 直接轮询自动 OTP provider。
-如果自动 provider 等待的是文件路径，runner 也会识别等待日志并打开同一个
-手动兜底弹窗，用于处理 WhatsApp Web “主要设备可见”占位消息。如果没有配置
-`gopay.otp`，行为保持不变：运行页弹窗手动输入 WhatsApp OTP。
+```In WebUI mode, if the configuration contains a non-manual `gopay.otp`, the runner will skip the old `--gopay-otp-file` manual popup and let `gopay.py` directly poll the automatic OTP provider. If the automatic provider is waiting for a file path, the runner will also recognize the wait log and open the same manual fallback popup to handle WhatsApp Web's "primary device visible" placeholder message. If `gopay.otp` is not configured, the behavior remains unchanged: a manual input popup appears on the run page for WhatsApp OTP.

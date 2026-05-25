@@ -1,4 +1,4 @@
-"""`python -m gopay` 入口 (cwd=CTF-pay)。"""
+"""Entry point for `python -m gopay` (cwd=CTF-pay)."""
 
 from gopay._monolith import main
 

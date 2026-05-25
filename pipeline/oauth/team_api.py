@@ -1,13 +1,12 @@
 """OpenAI Codex refresh-token exchange + ChatGPT Team invite/accept API.
 
-从 pipeline._monolith 抽出, 五个 fn 自包含, 仅依赖 stdlib + curl_cffi + webui.db.
+Extracted from pipeline._monolith, five self-contained functions, dependencies on stdlib + curl_cffi + webui.db only.
 
-- `_oai_exchange_refresh_to_access_token`: refresh_token grant → 完整 token dict
-- `_oai_team_id_from_access_token`: 解 access_token JWT, 拿 chatgpt_account_id
-- `_oai_send_team_invite`: Owner 推团队邀请
-- `_oai_accept_team_invite`: Member 接受邀请
-- `_find_team_id_from_results`: 倒查 webui.db 的支付记录找 team_id
-"""
+- `_oai_exchange_refresh_to_access_token`: refresh_token grant → complete token dict
+- `_oai_team_id_from_access_token`: parse access_token JWT, extract chatgpt_account_id
+- `_oai_send_team_invite`: Owner sends team invitation
+- `_oai_accept_team_invite`: Member accepts invitation
+- `_find_team_id_from_results`: reverse lookup webui.db payment records to find team_id"""
 
 from __future__ import annotations
 
@@ -21,8 +20,8 @@ _OAI_CODEX_CLIENT_ID = "YOUR_OPENAI_CODEX_CLIENT_ID"
 
 def _oai_exchange_refresh_to_access_token(refresh_token: str,
                                           client_id: str = _OAI_CODEX_CLIENT_ID) -> dict:
-    """refresh_token grant → 完整 token dict (access_token/id_token/refresh_token)。
-    走环境 HTTPS_PROXY；若没有，走 urllib 默认（可能直连 auth.openai.com 失败）。"""
+    """refresh_token grant → complete token dict (access_token/id_token/refresh_token).
+Uses environment HTTPS_PROXY; if not set, falls back to urllib default (may fail with direct connection to auth.openai.com)."""
     import urllib.request as _urlreq, urllib.parse as _urlparse, urllib.error as _urlerr
     data = _urlparse.urlencode({
         "grant_type": "refresh_token",
@@ -50,7 +49,7 @@ def _oai_exchange_refresh_to_access_token(refresh_token: str,
 
 
 def _oai_team_id_from_access_token(access_token: str) -> str:
-    """解 access_token JWT → chatgpt_account_id（= workspace id）。"""
+    """Parse access_token JWT → chatgpt_account_id (= workspace id)."""
     import base64 as _b64
     parts = access_token.split(".")
     if len(parts) < 2:
@@ -63,9 +62,9 @@ def _oai_team_id_from_access_token(access_token: str) -> str:
 
 def _oai_send_team_invite(owner_at: str, team_id: str, member_email: str,
                           owner_device_id: str = "", proxy_url: str = "") -> dict:
-    """Owner 向 member_email 发送团队邀请。
-    调 POST https://chatgpt.com/backend-api/accounts/{team_id}/invites，body 沿用 gpt-team 的写法。
-    Returns: {"status": int, "body": str, "invite_id": str or ""}"""
+    """Owner sends team invitation to member_email.
+Calls POST https://chatgpt.com/backend-api/accounts/{team_id}/invites, request body follows gpt-team convention.
+Returns: {"status": int, "body": str, "invite_id": str or ""}"""
     import curl_cffi.requests as cr
     s = cr.Session(impersonate="chrome136")
     if proxy_url:
@@ -102,8 +101,8 @@ def _oai_send_team_invite(owner_at: str, team_id: str, member_email: str,
 
 def _oai_accept_team_invite(member_at: str, team_id: str,
                             member_device_id: str = "", proxy_url: str = "") -> dict:
-    """Member 接受邀请：POST https://chatgpt.com/backend-api/accounts/{team_id}/invites/accept。
-    该 endpoint 是从 chatgpt 前端 JS (auth.login/_accept_account_id cookie handler) 逆出来的。"""
+    """Member accepts invitation: POST https://chatgpt.com/backend-api/accounts/{team_id}/invites/accept.
+This endpoint was reverse-engineered from chatgpt frontend JS (auth.login/_accept_account_id cookie handler)."""
     import curl_cffi.requests as cr
     s = cr.Session(impersonate="chrome136")
     if proxy_url:
@@ -124,7 +123,7 @@ def _oai_accept_team_invite(member_at: str, team_id: str,
 
 
 def _find_team_id_from_results(email: str) -> str:
-    """倒序扫支付记录，找 chatgpt_email=email 的 team_account_id。"""
+    """Scan payment records in reverse order, find team_account_id where chatgpt_email=email."""
     try:
         return get_db().find_team_id_from_results(email)
     except Exception as e:

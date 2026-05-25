@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""兼容 shim: 旧调用 `python CTF-pay/card.py …` 透传到 card/ 包。
+"""Compatibility shim: old calls `python CTF-pay/card.py …` pass through to card/ package.
 
-新写法是 `cd CTF-pay && python -m card …`。实际 9050 行实现在 card/_monolith.py。
-"""
+New usage is `cd CTF-pay && python -m card …`. Actual 9050 lines implementation in card/_monolith.py."""
 
 import sys
 from pathlib import Path

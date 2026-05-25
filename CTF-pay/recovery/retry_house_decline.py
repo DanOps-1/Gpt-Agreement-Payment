@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""重复尝试家宽链路，优先命中“直接终态拒卡”。
+"""Repeatedly attempt with residential links, prioritizing hits on "direct terminal decline state".
 
-用途：
-- 目标不是做 challenge，而是优先刷出：
+Purpose:
+- The goal is not to perform a challenge, but to prioritize triggering:
   3DS2/authenticate -> setup_intent requires_payment_method -> card_declined/generic_decline
-- 一旦检测到进入 Stripe challenge，本脚本会立刻终止本轮并重试下一轮
+- Once detecting entry into Stripe challenge, this script will immediately terminate the current round and retry the next round
 
-示例：
+Example:
     python retry_house_decline.py "https://chatgpt.com/checkout/openai_llc/cs_live_xxx"
-    python retry_house_decline.py "cs_live_xxx" --attempts 5
-"""
+    python retry_house_decline.py "cs_live_xxx" --attempts 5"""
 
 from __future__ import annotations
 
@@ -40,7 +39,7 @@ def _stop_process(proc: subprocess.Popen[str]) -> None:
 
 
 def _prepare_attempt_config(config: Path, attempt: int) -> Path:
-    """按 attempt 生成临时配置，避免每轮 time_on_page 都固定在同一个值。"""
+    """Generate temporary configuration by attempt to avoid time_on_page being fixed to the same value in each round."""
     data = json.loads(config.read_text(encoding="utf-8"))
     behavior = data.setdefault("behavior", {})
     base_min = int(behavior.get("min_time_on_page_ms", 0) or 0)

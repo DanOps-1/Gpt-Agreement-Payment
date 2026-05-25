@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""兼容 shim: 旧调用 `python CTF-pay/qris.py …` 透传到 qris/ 包。
+"""Compatibility shim: old calls `python CTF-pay/qris.py …` pass through to qris/ package.
 
-新写法是 `cd CTF-pay && python -m qris …`。实际代码在 qris/_monolith.py。
-"""
+New usage is `cd CTF-pay && python -m qris …`. Actual code is in qris/_monolith.py."""
 
 import sys
 from pathlib import Path

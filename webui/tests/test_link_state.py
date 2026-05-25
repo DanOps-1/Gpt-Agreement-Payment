@@ -157,7 +157,7 @@ def test_link_state_unlink_empty_phone_returns_400(client):
 
 
 def test_link_state_set_with_session_marks_linked(client):
-    """WebUI 用 session 鉴权能强制 mark linked（外部回调失败时手动覆盖）。"""
+    """WebUI can use session authentication to forcefully mark linked (manually override when external callback fails).."""
     _login(client)
     from webui.backend import link_state
     link_state.reset()
@@ -174,7 +174,7 @@ def test_link_state_set_with_session_marks_linked(client):
 
 
 def test_link_state_set_with_session_marks_unlinked(client):
-    """同一 endpoint 也支持反向（unlink）。"""
+    """The same endpoint also supports reverse (unlink).."""
     _login(client)
     from webui.backend import link_state
     link_state.reset()
@@ -198,7 +198,7 @@ def test_link_state_set_requires_auth(client):
 
 
 def test_link_state_set_with_token(client):
-    """relay token 也能调（外部服务也复用这条入口）。"""
+    """relay token can also be called (external services also reuse this entry point).."""
     from webui.backend import link_state, wa_relay
     link_state.reset()
     token = wa_relay.relay_token()

@@ -87,10 +87,9 @@ def unlink(req: UnlinkRequest, _auth: str = Depends(_require_token)):
 
 @router.post("/set")
 def set_state(req: SetStateRequest, _auth: str = Depends(_require_session_or_token)):
-    """双向写入：linked=True 强制标记为 linked，False 标记 unlinked。
+    """Bidirectional write: linked=True forces marking as linked, False marks as unlinked.
 
-    session 鉴权（WebUI 手动覆盖）或 relay token（外部服务）都可。
-    """
+    Either session authentication (WebUI manual override) or relay token (external service) is acceptable."""
     try:
         return link_state.set_status(
             req.phone,

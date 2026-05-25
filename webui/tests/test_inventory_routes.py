@@ -108,7 +108,7 @@ def test_inventory_summarizes_pay_and_rt_states(client):
     assert by_email["noauth@example.com"]["pay_state"] == "no_auth"
     assert by_email["hasrt@example.com"]["rt_state"] == "has_rt"
     assert by_email["dead@example.com"]["rt_state"] == "dead"
-    # 新字段：每个 item 都暴露 id 和 last_check_*
+    # New field: each item exposes id and last_check_*
     for acc in body["accounts"]:
         assert "id" in acc and isinstance(acc["id"], int)
         assert acc["last_check_status"] == ""

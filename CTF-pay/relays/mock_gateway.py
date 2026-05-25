@@ -1,12 +1,10 @@
-"""
-本地 CTF mock gateway。
+"""Local CTF mock gateway.
 
-用途：
-- 不访问外部网络；
-- 在本机起一个极简 HTTP 服务；
-- 模拟 fresh checkout / confirm / verify_challenge / 3DS2 / poll 这条状态机；
-- 便于 `card.py` 走“真实 HTTP 请求 -> 本地服务”的可回放链路。
-"""
+Purpose:
+- No access to external network;
+- Start a minimal HTTP service on the local machine;
+- Simulate the state machine of fresh checkout / confirm / verify_challenge / 3DS2 / poll;
+- Facilitate `card.py` to follow a reproducible "real HTTP request -> local service" path."""
 
 from __future__ import annotations
 

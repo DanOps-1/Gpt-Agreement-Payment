@@ -33,7 +33,7 @@ class RefreshRtStatusRequest(IdsRequest):
 
 
 class CpaAutofillPushRequest(IdsRequest):
-    """ids 来自前端选中;price 可临时覆盖配置里默认值,不传则用 cpa_autofill.price。"""
+    """ids selected from frontend; price can temporarily override the default value in config, if not passed then use cpa_autofill.price."""
     price: float | None = None
 
 
@@ -52,15 +52,13 @@ def _load_cpa_cfg() -> dict:
 
 
 def _load_cpa_autofill_cfg() -> dict:
-    """读 cpa_autofill 配置, 优先 PAY_CONFIG.cpa_autofill;PAY_CONFIG 里
-    enabled 没开或字段空时 fallback 到 wizard state (wizard Step11 改字段
-    只会写 wizard state 不会自动写盘, 这里兜底让用户改完不用重导出)。"""
+    """Read cpa_autofill config, prioritizing PAY_CONFIG.cpa_autofill; when enabled in PAY_CONFIG is not turned on or the field is empty, fallback to wizard state (wizard Step11 only writes to wizard state and won't auto write to disk, here we cover the gap so users don't need to re-export after making changes)."""
     try:
         cfg = json.loads(s.PAY_CONFIG_PATH.read_text(encoding="utf-8"))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"读 PAY_CONFIG_PATH 失败: {e}")
     af = dict(cfg.get("cpa_autofill") or {})
-    # wizard state fallback — Step11 的实时输入存这里
+    # wizard state fallback — Step11's real-time input is stored here
     if not (af.get("enabled") and af.get("base_url") and af.get("api_token")):
         try:
             wiz = get_db().get_runtime_json("wizard_state") or {}
@@ -104,7 +102,7 @@ def _do_cpa_push(account: dict, cpa_cfg: dict) -> dict:
     except Exception as e:
         status = f"error: {type(e).__name__}: {str(e)[:120]}"
 
-    # 记一条 pipeline_results 让 inventory 的 cpa_status 能反映本次推送
+    # record one pipeline_results entry so inventory's cpa_status can reflect this push
     try:
         get_db().add_pipeline_result({
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -126,15 +124,14 @@ def get_accounts(user: str = CurrentUser):
 
 @router.post("/accounts/check")
 def check_accounts(req: CheckRequest, user: str = CurrentUser):
-    """Probe each account's session + 实时 plan via OpenAI APIs.
+    """Probe each account's session + real-time plan via OpenAI APIs.
 
     Body: {ids: [account_id, ...], timeout_s?, max_workers?}.
 
-    每个账号会同时:
-      - validate_account: 探活 (rt/at/cookie 三档)
-      - /backend-api/accounts/check/v4-2023-04-27: 拿实时 subscription_plan
-        (覆盖 JWT claim 的 stale 状态; 写回 DB.last_plan_type)
-    """
+    Each account will simultaneously:
+      - validate_account: probe liveness (rt/at/cookie three tiers)
+      - /backend-api/accounts/check/v4-2023-04-27: get real-time subscription_plan
+        (override the stale state from JWT claim; write back to DB.last_plan_type)"""
     if not req.ids:
         raise HTTPException(status_code=400, detail="ids 不能为空")
     if len(req.ids) > 500:
@@ -147,7 +144,7 @@ def check_accounts(req: CheckRequest, user: str = CurrentUser):
         "valid": sum(1 for r in results if r.get("status") == "valid"),
         "invalid": sum(1 for r in results if r.get("status") == "invalid"),
         "unknown": sum(1 for r in results if r.get("status") == "unknown"),
-        # plan 分布: 实时 /backend-api/accounts/check 拿到的, 写回 last_plan_type
+        # plan distribution: real-time from /backend-api/accounts/check, written back to last_plan_type
         "free": sum(1 for r in results if r.get("plan_type") == "free"),
         "plus": sum(1 for r in results if r.get("plan_type") == "plus"),
         "team": sum(1 for r in results if r.get("plan_type") == "team"),
@@ -196,17 +193,14 @@ def delete_accounts(req: IdsRequest, user: str = CurrentUser):
 
 @router.post("/accounts/cpa-autofill-push")
 def cpa_autofill_push(req: CpaAutofillPushRequest, user: str = CurrentUser):
-    """把选中账号推到 cpa_autofill 散户面板 (POST /api/supplier/upload)。
+    """Push selected accounts to cpa_autofill retail panel (POST /api/supplier/upload).
 
-    每行需要 access_token / refresh_token / id_token 都齐全,缺一会标
-    missing_field。服务端会自己再 RT-refresh 一次做 anti-double-spend,
-    所以本地账号上传后,本地的 refresh_token 就废了 — 调用方应自己评估。
-    """
+    Each row needs access_token / refresh_token / id_token all complete, missing any will be marked as missing_field. Server will self RT-refresh once more to do anti-double-spend, so after local accounts are uploaded, the local refresh_token becomes invalid — callers should self-assess."""
     if not req.ids:
         raise HTTPException(status_code=400, detail="ids 不能为空")
     if len(req.ids) > 1000:
         raise HTTPException(status_code=400, detail="单次最多 1000 个 (散户面板单批上限)")
-    # 挂单价不预设, 调用方必须本批显式传 — 防止误打默认价
+    # listing price not preset, caller must explicitly pass for this batch — prevent accidentally using default price
     if req.price is None:
         raise HTTPException(status_code=400, detail="必须传 price (元/号);前端推送按钮会弹窗输入")
     if req.price < 0:
@@ -221,7 +215,7 @@ def cpa_autofill_push(req: CpaAutofillPushRequest, user: str = CurrentUser):
     import pipeline  # type: ignore
 
     db = get_db()
-    # 拉本地账号,缺失的标 missing 但不调上传
+    # pull local accounts, mark missing ones as missing but don't call upload
     accounts: list[dict] = []
     missing_ids: list[int] = []
     for aid in req.ids:
@@ -241,8 +235,8 @@ def cpa_autofill_push(req: CpaAutofillPushRequest, user: str = CurrentUser):
         accounts, cfg, price_override=req.price,
     )
 
-    # 写 pipeline_results,让 inventory 的 cpa_status 反映本次推送
-    # (跟 cpa-push 共用 mode 字段,只是用前缀区分)
+    # write pipeline_results, so inventory's cpa_status reflects this push
+    # (shares mode field with cpa-push, just use prefix to distinguish)
     try:
         for r in upload_result.get("results", []):
             email = r.get("email", "")

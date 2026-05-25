@@ -1,20 +1,18 @@
-"""
-基于 Camoufox 真浏览器的 ChatGPT 注册流程。
-目的：让 Turnstile/反欺诈指纹通过真实浏览器执行，避免账号被内部风控标记
-（导致注册 OK 但后续 Team 邀请功能被禁用）。
+"""ChatGPT registration flow based on Camoufox real browser.
+Purpose: Let Turnstile/anti-fraud fingerprints pass through real browser execution, avoid account being flagged by internal risk control
+(resulting in successful registration but subsequent Team invite feature being disabled).
 
-流程：
-  1. Camoufox 启动 → goto https://chatgpt.com/
-  2. 点击 Sign up → 跳转到 auth.openai.com
-  3. 填邮箱 → Continue
-  4. 填密码 → Continue（可能触发 Turnstile，Camoufox 指纹可通过）
-  5. IMAP 取 OTP → 填入 → Continue
-  6. 填姓名/生日 → Continue
-  7. 回到 chatgpt.com → 从 /api/auth/session 拿 access_token
-  8. 从 Cookie 拿 session_token / oai-did
+Flow:
+  1. Camoufox startup → goto https://chatgpt.com/
+  2. Click Sign up → redirect to auth.openai.com
+  3. Fill email → Continue
+  4. Fill password → Continue (may trigger Turnstile, Camoufox fingerprint can pass)
+  5. IMAP fetch OTP → fill in → Continue
+  6. Fill name/birthday → Continue
+  7. Return to chatgpt.com → get access_token from /api/auth/session
+  8. Get session_token / oai-did from Cookie
 
-返回：{email, password, session_token, access_token, device_id, cookie_header}
-"""
+Return: {email, password, session_token, access_token, device_id, cookie_header}"""
 import os
 import random
 import string
@@ -42,7 +40,7 @@ def _gen_name() -> tuple[str, str]:
 
 
 def _gen_birthday() -> tuple[str, str, str]:
-    # 成年，1980-2000 随机
+    # Adult, 1980-2000 random
     year = random.randint(1980, 2000)
     month = random.randint(1, 12)
     day = random.randint(1, 28)
@@ -60,7 +58,7 @@ def _build_pkce_pair(raw_bytes: int = 64) -> tuple[str, str]:
 
 
 def _parse_proxy(proxy_url: str):
-    """Camoufox 需要 socks5 + 无 auth 的格式。socks5 + auth 需要走 gost 中继。"""
+    """Camoufox requires socks5 + no-auth format. socks5 + auth needs to go through gost relay."""
     if not proxy_url:
         return None
     pp = urlparse(proxy_url)
@@ -124,17 +122,15 @@ def _raise_if_blocking_challenge(page, *, stage: str, screenshot_path) -> None:
 
 
 def browser_register(cfg, mail_provider) -> dict:
-    """
-    用真实浏览器走注册流程。
-    cfg: Config 实例（需要 proxy 字段）
-    mail_provider: MailProvider 实例（调 create_mailbox + wait_for_otp）
-    返回 dict：与 AuthResult.to_dict() 格式兼容
-    """
+    """Use real browser to go through registration flow.
+    cfg: Config instance (needs proxy field)
+    mail_provider: MailProvider instance (call create_mailbox + wait_for_otp)
+    Return dict: compatible with AuthResult.to_dict() format"""
     from camoufox.sync_api import Camoufox
     from browserforge.fingerprints import Screen
 
     email = mail_provider.create_mailbox()
-    # 优先复用 mail_provider 算法生成的同源 persona（邮箱前缀与 first/last 一致 + 密码=local 倒序）
+    # Prioritize reusing mail_provider algorithm-generated same-origin persona (email prefix matches first/last + password=local reversed)
     persona = getattr(mail_provider, "last_persona", None)
     if persona is not None:
         password = persona.password
@@ -142,7 +138,7 @@ def browser_register(cfg, mail_provider) -> dict:
         last_name = persona.last
         logger.info(f"[browser-reg] 使用 mail_provider 同源 persona")
     else:
-        # 兼容 resume / 老路径：邮箱去 @ 当密码 + 独立挑名字
+        # Backward compatible with resume / old path: email without @ as password + independently pick name
         password = email.replace("@", "")
         if len(password) < 8:
             password = f"{password}2026OpenAI"
@@ -183,7 +179,7 @@ def browser_register(cfg, mail_provider) -> dict:
         ) as ctx:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
-            # [1] 打开 ChatGPT 首页，点 "Sign up for free"
+            # [1] Open ChatGPT homepage, click "Sign up for free"
             logger.info("[browser-reg] 打开 ChatGPT 首页 ...")
             page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=60000)
             _raise_if_blocking_challenge(
@@ -191,7 +187,7 @@ def browser_register(cfg, mail_provider) -> dict:
                 stage="opening ChatGPT home",
                 screenshot_path="/tmp/browser_reg_cloudflare_challenge.png",
             )
-            # 等 React 渲染完成 + Sign up 按钮可交互
+            # Wait for React rendering complete + Sign up button interactive
             try:
                 page.wait_for_selector('button[data-testid="signup-button"], a[data-testid="signup-button"]',
                                        state='visible', timeout=20000)
@@ -204,7 +200,7 @@ def browser_register(cfg, mail_provider) -> dict:
                 pass
             time.sleep(3)
 
-            # 点击 Sign up 按钮 — 找右上角的 "Sign up for free"
+            # Click Sign up button — find "Sign up for free" in top right corner
             clicked_signup = False
             for sel in ['a[data-testid="signup-button"]',
                         'button[data-testid="signup-button"]',
@@ -223,11 +219,11 @@ def browser_register(cfg, mail_provider) -> dict:
                         text = btn.inner_text().lower()
                         if "sign up" not in text:
                             continue
-                        # 用 5s 超时的 click，防止卡 30s
+                        # Use 5s timeout click, prevent 30s hang
                         try:
                             btn.click(timeout=5000)
                         except Exception:
-                            # click 卡住就用 JS 触发
+                            # If click hangs, trigger with JS
                             btn.evaluate("el => el.click()")
                         clicked_signup = True
                         logger.info(f"[browser-reg] 点击 Sign up ({sel}): {text[:40]}")
@@ -242,13 +238,13 @@ def browser_register(cfg, mail_provider) -> dict:
                 page.screenshot(path="/tmp/browser_reg_no_signup.png")
                 raise RuntimeError(f"未找到 Sign up 按钮, URL={page.url[:120]}")
 
-            # 等待跳转到 auth.openai.com 或 modal 加载（含重试点击）
+            # Wait for redirect to auth.openai.com or modal loading (with retry click)
             pre_url = page.url
             for i in range(20):
                 time.sleep(1)
                 if "auth.openai.com" in page.url or page.query_selector('input[type="email"]'):
                     break
-                # 如果 5s 后还没变化，重试点击 Sign up
+                # If still no change after 5s, retry clicking Sign up
                 if i == 5 and page.url == pre_url:
                     logger.info("[browser-reg] Sign up 点击未生效，重试")
                     try:
@@ -268,14 +264,14 @@ def browser_register(cfg, mail_provider) -> dict:
                 screenshot_path="/tmp/browser_reg_cloudflare_challenge.png",
             )
 
-            # [2a] 新版 OpenAI（2026-05 起）: 点 Sign up 后不跳 auth.openai.com，
-            # 而是在 chatgpt.com 上弹「Log in or sign up」modal，里面是
+            # [2a] New OpenAI (from 2026-05): after clicking Sign up, don't redirect to auth.openai.com,
+            # instead pop "Log in or sign up" modal on chatgpt.com, inside it is
             # Continue with Google / Apple / Phone + OR + Continue with email。
-            # 旧脚本直接等 input[type=email] 会 30s 超时，所以先识别 modal、
-            # 关掉 Google One-Tap、再点「Continue with email」。
+            # Old script directly waits for input[type=email] will timeout in 30s, so first identify modal,
+            # close Google One-Tap, then click "Continue with email".
             try:
-                # Google One-Tap iframe（标题含 "Sign in with Google"）会盖在 modal 上面，
-                # 先关掉以免拦截点击。
+                # Google One-Tap iframe (title contains "Sign in with Google") covers modal,
+                # close it first to prevent blocking clicks.
                 for ot_sel in [
                     'iframe[src*="accounts.google.com/gsi"]',
                     'div#credential_picker_container button[aria-label*="Close"]',
@@ -285,7 +281,7 @@ def browser_register(cfg, mail_provider) -> dict:
                         f = page.query_selector(ot_sel)
                         if f and f.is_visible():
                             if "iframe" in ot_sel:
-                                # iframe 自己点不到，直接 JS 删掉容器
+                                # iframe can't be clicked directly, use JS to delete the container
                                 page.evaluate(
                                     "() => document.querySelectorAll("
                                     "'iframe[src*=\"accounts.google.com/gsi\"]')"
@@ -302,8 +298,8 @@ def browser_register(cfg, mail_provider) -> dict:
                 pass
 
             if not page.query_selector('input[type="email"], input[name="email"]'):
-                # 如果当前没看到 email 输入框，找 modal 里的 email 入口按钮再点一次。
-                # 顺序：先精确匹配 "Continue with email"，再宽松到包含 email 的按钮。
+                # If email input box not visible now, find email entry button in modal and click again.
+                # Order: first exact match "Continue with email", then relax to buttons containing email.
                 modal_email_clicked = False
                 for sel in [
                     'button:has-text("Continue with email")',
@@ -322,7 +318,7 @@ def browser_register(cfg, mail_provider) -> dict:
                             if not b.is_visible():
                                 continue
                             label = (b.inner_text() or "").lower().strip()
-                            # 排除 Google/Apple/Phone 这些社交按钮里碰巧含 "email" 的字样
+                            # Exclude social buttons like Google/Apple/Phone that happen to contain "email" text
                             if any(skip in label for skip in ("google", "apple", "phone")):
                                 continue
                             try:
@@ -341,7 +337,7 @@ def browser_register(cfg, mail_provider) -> dict:
                     if modal_email_clicked:
                         break
 
-            # [2] 填邮箱（click + fill 分步，React 重渲染可能让 handle 失效 → 每步重新 query）
+            # [2] Fill email (click + fill in steps, React re-render may invalidate handle → re-query each step)
             logger.info("[browser-reg] 填邮箱 ...")
             page.wait_for_selector('input[type="email"], input[name="email"]', timeout=30000)
             for _try in range(4):
@@ -372,7 +368,7 @@ def browser_register(cfg, mail_provider) -> dict:
                     break
             time.sleep(3)
 
-            # [3] 填密码（新账号会看到密码框）
+            # [3] Fill password (new account will see password field)
             logger.info("[browser-reg] 等待密码框 ...")
             try:
                 page.wait_for_selector(
@@ -398,12 +394,12 @@ def browser_register(cfg, mail_provider) -> dict:
             time.sleep(3)
             logger.info(f"[browser-reg] 密码后 URL: {page.url[:120]}")
 
-            # [4] Turnstile / hCaptcha 等待（Camoufox 指纹通常可自动通过）
+            # [4] Turnstile / hCaptcha wait (Camoufox fingerprint usually auto-passes)
             logger.info("[browser-reg] 等待反欺诈检查 ...")
             for wait_i in range(30):
                 time.sleep(1)
                 cur = page.url
-                # 到达 OTP 输入或继续步骤 → 通过
+                # Reach OTP input or continue step → pass
                 if page.query_selector('input[autocomplete="one-time-code"]') or \
                    page.query_selector('input[name="code"]') or \
                    page.query_selector('input[inputmode="numeric"]'):
@@ -416,7 +412,7 @@ def browser_register(cfg, mail_provider) -> dict:
                     page.screenshot(path="/tmp/browser_reg_wait15.png")
                     logger.info(f"[browser-reg] 15s 等待中: {cur[:80]}")
 
-            # [5] OTP 步骤
+            # [5] OTP step
             if page.query_selector('input[autocomplete="one-time-code"]') or \
                page.query_selector('input[inputmode="numeric"]'):
                 logger.info("[browser-reg] 等待 IMAP OTP ...")
@@ -427,9 +423,9 @@ def browser_register(cfg, mail_provider) -> dict:
                     otp_timeout = 180
                 otp_code = mail_provider.wait_for_otp(email, timeout=otp_timeout, issued_after=otp_sent_at)
                 logger.info(f"[browser-reg] 收到 OTP: {otp_code}")
-                # 填 OTP
+                # Fill OTP
                 otp_filled = False
-                # 可能是单框 / 多框两种
+                # May be single box / multiple boxes
                 single = page.query_selector('input[autocomplete="one-time-code"]') or \
                          page.query_selector('input[name="code"]') or \
                          page.query_selector('input[inputmode="numeric"]:not([maxlength="1"])')
@@ -461,8 +457,8 @@ def browser_register(cfg, mail_provider) -> dict:
                         break
                 time.sleep(4)
 
-                # OpenAI 在 OTP 错误时会显示 "Incorrect code" 红字，反复点
-                # Continue 会触发 max_check_attempts 风控（永久卡死）。早退。
+                # OpenAI shows red "Incorrect code" on OTP error, repeatedly clicking
+                # Continue triggers max_check_attempts rate limit (permanently stuck). Exit early.
                 try:
                     err = page.query_selector(
                         'text=/incorrect code|invalid code|wrong code|验证码不正确|验证码错误/i'
@@ -477,21 +473,21 @@ def browser_register(cfg, mail_provider) -> dict:
                 except Exception:
                     pass
 
-            # [6] /about-you：Full name + Age（单框）
+            # [6] /about-you: Full name + Age (single box)
             logger.info(f"[browser-reg] OTP 后 URL: {page.url[:120]}")
-            time.sleep(5)  # 等重定向到 /about-you
+            time.sleep(5)  # Wait for redirect to /about-you
             logger.info(f"[browser-reg] 稳定后 URL: {page.url[:120]}")
 
-            # 等 /about-you 表单加载完成。先等 URL 稳定
+            # Wait for /about-you form to fully load. First wait for URL to stabilize
             for _ in range(20):
                 time.sleep(1)
                 if "about-you" in page.url or "chatgpt.com" in page.url:
                     break
 
-            # OpenAI about-you 变种：
-            #   老版：Full name + Age（数字框）
-            #   新版（2026-04 起）：Full name + Birthday（日期框，预填今日）
-            # 用 JS 一次性把所有 input 的元数据导出，避免 visibility 检测不一致
+            # OpenAI about-you variants:
+            #   Old version: Full name + Age (number box)
+            #   New version (from 2026-04): Full name + Birthday (date box, pre-filled today)
+            # Use JS to export metadata of all inputs at once, avoid visibility detection inconsistency
             def _enum_inputs():
                 try:
                     return page.evaluate('''() => {
@@ -526,13 +522,13 @@ def browser_register(cfg, mail_provider) -> dict:
             def _is_name_input(meta: dict) -> bool:
                 blob = " ".join([meta.get("name",""), meta.get("placeholder",""),
                                   meta.get("ariaLabel",""), meta.get("label","")]).lower()
-                # 老版 about-you 用 "age" 数字框；新版用 "Full name" + "Birthday"
+                # Old about-you uses "age" number box; new version uses "Full name" + "Birthday"
                 return any(kw in blob for kw in ("name", "first", "last", "full",
                                                   "given", "family", "age"))
 
             def _looks_like_chat_ui() -> bool:
-                """chatgpt.com 主页的特征：右下角 chat 输入框 + sidebar 上的「New chat」。
-                这种页面不是 about-you 表单，看到 2 个 input 也不能瞎填。"""
+                """chatgpt.com home page characteristics: chat input box in the bottom-right corner + "New chat" on the sidebar.
+                This type of page is not an about-you form; seeing 2 inputs doesn't mean you can fill them randomly."""
                 try:
                     return bool(page.evaluate('''() => {
                         const url = location.href;
@@ -557,7 +553,7 @@ def browser_register(cfg, mail_provider) -> dict:
                 visible_metas = [m for m in metas if m["visible"]
                                   and m["type"] not in ("hidden","submit","button",
                                                          "checkbox","radio","password")]
-                # 先挑 Birthday + 关键字命中的 name input — 双方关键字都要命中才认。
+                # First pick Birthday + name input with keyword matches — both keywords must match to count.
                 bd = next((m for m in visible_metas if _is_birthday(m)), None)
                 name_m = next((m for m in visible_metas
                                 if m is not bd
@@ -572,8 +568,8 @@ def browser_register(cfg, mail_provider) -> dict:
                                 f"birthday.idx={bd['idx']} type={bd['type']} "
                                 f"placeholder={bd['placeholder'][:30]!r}")
                     break
-                # 兼容老版 age：2 个 input + 至少一个命中 name 关键字 + URL 不在
-                # chatgpt.com 主聊天页（避免把 chat textarea + search 当表单瞎填）。
+                # Compatible with old age version: 2 inputs + at least one matching name keyword + URL not in
+                # chatgpt.com main chat page (avoid mistakenly treating chat textarea + search as a form).
                 if (
                     not bd
                     and len(visible_metas) >= 2
@@ -586,8 +582,8 @@ def browser_register(cfg, mail_provider) -> dict:
                     birthday_meta = visible_metas[1]
                     logger.info(f"[browser-reg] 表单 (legacy age): {len(visible_metas)} inputs")
                     break
-                # 已经在 chatgpt.com 主页（非 about-you 子路径），且看不到 about-you 表单
-                # —— 注册可能已直接完成，跳出循环让外层去判断 accessToken。
+                # Already on chatgpt.com home page (not about-you subpath), and cannot see about-you form
+                # —— registration may have completed directly, exit loop to let the outer layer check accessToken.
                 if (
                     "chatgpt.com" in page.url
                     and "auth" not in page.url
@@ -605,11 +601,11 @@ def browser_register(cfg, mail_provider) -> dict:
             if full_name_input and birthday_input:
                 page.screenshot(path="/tmp/browser_reg_about_you.png")
                 full_name = f"{first_name} {last_name}"
-                # Birthday：26-40 岁之间的 1 月 15 日（足够>18，固定日期便于一致指纹）
+                # Birthday: January 15 between ages 26-40 (sufficiently >18, fixed date for consistent fingerprint)
                 import datetime as _dt
                 year = _dt.datetime.now().year - random.randint(26, 40)
                 mm, dd = "01", "15"
-                # native date input 用 YYYY-MM-DD，文本框大多是 MM/DD/YYYY
+                # native date input uses YYYY-MM-DD, text boxes are mostly MM/DD/YYYY
                 bd_type = (birthday_meta or {}).get("type", "")
                 if bd_type == "date":
                     birthday_str = f"{year}-{mm}-{dd}"
@@ -623,20 +619,20 @@ def browser_register(cfg, mail_provider) -> dict:
                     page.keyboard.type(full_name, delay=random.randint(30, 80))
                     time.sleep(random.uniform(0.4, 0.9))
                     birthday_input.focus(); time.sleep(0.3)
-                    # 先清空（预填可能有今日日期）
+                    # Clear first (prefilled may have today's date)
                     try:
                         page.keyboard.press("Control+A")
                         page.keyboard.press("Delete")
                     except Exception:
                         pass
-                    # 对 native date input 用 fill 直接写 ISO；文本框用 keyboard.type
+                    # Use fill to write ISO directly for native date input; use keyboard.type for text boxes
                     if bd_type == "date":
                         try:
                             birthday_input.fill(birthday_str)
                         except Exception:
                             page.keyboard.type(birthday_str, delay=random.randint(30, 70))
                     else:
-                        # MM/DD/YYYY：为兼容 age 老版，若看起来是 number/age 就只打 age
+                        # MM/DD/YYYY: for compatibility with old age version, if it looks like number/age, only type age
                         if _is_birthday(birthday_meta or {}):
                             page.keyboard.type(birthday_str, delay=random.randint(30, 70))
                         else:
@@ -661,7 +657,7 @@ def browser_register(cfg, mail_provider) -> dict:
                 page.screenshot(path="/tmp/browser_reg_no_name_form.png")
                 logger.warning(f"[browser-reg] 未找到 about-you 表单，URL={page.url[:120]}")
 
-            # [7] 等待回到 chatgpt.com (可能有中间页如 email-verification / success-page)
+            # [7] Wait to return to chatgpt.com (may have intermediate pages like email-verification / success-page)
             logger.info("[browser-reg] 等待跳转回 chatgpt.com ...")
             arrived = False
             last_url = ""
@@ -671,9 +667,9 @@ def browser_register(cfg, mail_provider) -> dict:
                 if cur != last_url:
                     logger.info(f"[browser-reg] URL@{i}s: {cur[:120]}")
                     last_url = cur
-                # 到 chatgpt.com 且已加载 React 主界面
+                # Back at chatgpt.com and React main interface already loaded
                 if "chatgpt.com" in cur and "auth.openai.com" not in cur:
-                    # 等 /api/auth/session 能正常返回 accessToken 才算完成
+                    # Wait for /api/auth/session to return accessToken normally to count as complete
                     try:
                         info = page.evaluate('''async () => {
                             try {
@@ -688,7 +684,7 @@ def browser_register(cfg, mail_provider) -> dict:
                             break
                     except Exception:
                         pass
-                # 如果仍在 auth.openai.com，可能还有 /email-verification 或其他中转，继续点 continue
+                # If still on auth.openai.com, may have /email-verification or other redirects, continue clicking continue
                 if "auth.openai.com" in cur and i % 10 == 5:
                     for sel in ['button:has-text("Continue")', 'button:has-text("Next")',
                                 'button[type="submit"]']:
@@ -699,13 +695,13 @@ def browser_register(cfg, mail_provider) -> dict:
                                 logger.info(f"[browser-reg] 中转点击: {sel}")
                                 break
                         except Exception:
-                            # 页面导航时 context destroyed，忽略
+                            # Page navigation causes context destroyed, ignore
                             pass
             if not arrived:
                 page.screenshot(path="/tmp/browser_reg_no_chatgpt.png")
                 raise RuntimeError(f"未跳转回 chatgpt.com，当前: {page.url[:120]}")
 
-            # [8] 等 JS 初始化完成，取 access_token
+            # [8] Wait for JS initialization to complete, get access_token
             time.sleep(5)
             logger.info("[browser-reg] 拉取 /api/auth/session ...")
             session_info = page.evaluate('''async () => {
@@ -716,7 +712,7 @@ def browser_register(cfg, mail_provider) -> dict:
             result["id_token"] = session_info.get("idToken", "") if isinstance(session_info, dict) else ""
             logger.info(f"[browser-reg] access_token 长度: {len(result['access_token'])}")
 
-            # [9] 提取 cookies
+            # [9] Extract cookies
             all_cookies = ctx.cookies()
             chatgpt_cookies = [c for c in all_cookies if "chatgpt.com" in c.get("domain", "")]
             for c in chatgpt_cookies:
@@ -735,15 +731,15 @@ def browser_register(cfg, mail_provider) -> dict:
                 f"device_id={result['device_id'][:16]}..."
             )
 
-            # [10] Codex OAuth 获取 refresh_token
-            # 已知限制: signup 完成后 auth.openai.com 的 hydra session 无法给 Codex 换 token
-            # (login_session 只是 signup 挑战态，不是完整用户会话)
-            # 当前 refresh_token 会为空；如需 refresh_token，需要登录账号重走 Codex OAuth
+            # [10] Codex OAuth to get refresh_token
+            # Known limitation: after signup completes, auth.openai.com's hydra session cannot exchange tokens for Codex
+            # (login_session is just signup challenge state, not a complete user session)
+            # Current refresh_token will be empty; if refresh_token is needed, need to login to account and re-run Codex OAuth
             #
-            # 经实证（2026-04 近期 daemon + self-dealer 全量日志），signup-state Codex OAuth
-            # 100% 返回 token_exchange_user_error，每次浪费 ~30s。默认跳过；如需保留旧路径
-            # 作为逆向参考，设 SKIP_SIGNUP_CODEX_RT=0。后续 _exchange_refresh_token_with_session
-            # (card.py) 或 self-dealer 的 member 重登会正常拿 RT。
+            # Empirically verified (2026-04 recent daemon + self-dealer full logs), signup-state Codex OAuth
+            # 100% returns token_exchange_user_error, wasting ~30s each time. Skipped by default; if retaining old path
+            # as reverse engineering reference, set SKIP_SIGNUP_CODEX_RT=0. Subsequently _exchange_refresh_token_with_session
+            # (card.py) or self-dealer's member re-login will normally get RT.
             if str(os.environ.get("SKIP_SIGNUP_CODEX_RT", "1")).lower() in ("1", "true", "yes", "on"):
                 logger.info("[browser-reg] 跳过 signup 态 Codex OAuth（SKIP_SIGNUP_CODEX_RT=1，已知 100% 失败）")
                 result["refresh_token"] = result.get("refresh_token", "") or ""
@@ -764,12 +760,12 @@ def browser_register(cfg, mail_provider) -> dict:
                         "code_challenge_method": "S256",
                         "id_token_add_organizations": "true",
                         "codex_cli_simplified_flow": "true",
-                        # 不加 prompt=none: session 已经通过浏览器注册建立，
-                        # 让服务器自动识别 session，有 consent 页面时自动 auto-approve
+                        # Without prompt=none: session already established through browser registration,
+                        # let server automatically recognize session, auto-approve when consent page appears
                     }
                     auth_url = f"https://auth.openai.com/oauth/authorize?{urlencode(auth_params)}"
                     logger.info("[browser-reg] Codex OAuth 获取 refresh_token ...")
-                    # 真浏览器 goto + route 拦截 localhost
+                    # Real browser goto + route intercept localhost
                     cb_url = ""
                     callback_holder = {"url": ""}
 
