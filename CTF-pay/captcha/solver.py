@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """Auto-solve the local Stripe hCaptcha bridge page.
 
-当前主要覆盖两类在 Stripe challenge 中实际观察到的题型：
+Currently covering two main types of question formats observed in Stripe challenges:
 
 1. `Tap on each vehicle that is made for water travel`
-   - 使用 CLIP 做 3x3 图片分类，点击船/水上交通工具。
+   - Use CLIP for 3x3 image classification, click on boats/water vehicles.
 
 2. `Please drag the object to complete the pair`
-   - 使用 OpenCV/颜色聚类定位右侧 source object；
-   - 在左侧找到缺失 source object 的骨架图形；
-   - 通过与完整图形做 skeleton 匹配，推算目标落点并拖拽。
+   - Use OpenCV/color clustering to locate the source object on the right;
+   - Find the skeleton figure on the left that is missing the source object;
+   - Match against the complete figure using skeleton matching, calculate the target drop point and drag.
 
-用法：
-    ~/.venvs/ctfml/bin/python hcaptcha_auto_solver.py http://127.0.0.1:PORT/index.html
-"""
+Usage:
+    ~/.venvs/ctfml/bin/python hcaptcha_auto_solver.py http://127.0.0.1:PORT/index.html"""
 
 from __future__ import annotations
 
@@ -318,7 +317,7 @@ def _vlm_chat_completion(
                 },
             }
         )
-    # Claude 模型不支持 response_format，改用 prompt 约束 JSON 输出
+    # Claude model does not support response_format, use prompt constraint for JSON output instead
     _is_claude = "claude" in model.lower()
     if _is_claude:
         system_prompt = system_prompt.rstrip() + (
@@ -341,7 +340,7 @@ def _vlm_chat_completion(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    # 对 Claude 模型：首次失败后用更强约束重试一次
+    # For Claude model: retry with stronger constraint after first failure
     for _attempt in range(2 if _is_claude else 1):
         resp = requests.post(endpoint, headers=headers, json=payload, timeout=timeout_s)
         resp.raise_for_status()
@@ -361,7 +360,7 @@ def _vlm_chat_completion(
             return decision
         except RuntimeError:
             if _attempt == 0 and _is_claude:
-                # 重试：在 user message 末尾追加强制 JSON 提示
+                # Retry: append forced JSON hint at the end of user message
                 retry_msg = {"role": "user", "content": "You did not return valid JSON. Reply with ONLY a JSON object, nothing else. Start with {"}
                 payload["messages"] = list(payload["messages"]) + [
                     {"role": "assistant", "content": text[:200]},
@@ -2848,7 +2847,7 @@ def resolve_effective_prompt(
     request_type: str = "",
     network_updated_at: float = 0.0,
 ) -> str:
-    """在 DOM 题面与网络题面不一致时，尽量选用更接近当前真实 challenge 的 prompt。"""
+    """When DOM question layout and network question layout are inconsistent, try to use the prompt that is closer to the current real challenge."""
     dom = _normalize_prompt_text(dom_prompt)
     net = _normalize_prompt_text(network_prompt)
     req = str(request_type or "").strip().lower()
@@ -2861,15 +2860,15 @@ def resolve_effective_prompt(
     dom_is_drag = is_drag_completion_prompt(dom)
     net_is_drag = is_drag_completion_prompt(net)
 
-    # 网络已明确切到 drag 题型，但 DOM 仍停留在旧 click prompt。
+    # Network has clearly switched to drag question type, but DOM is still stuck on old click prompt.
     if req == "image_drag_drop" and (not dom_is_drag or net_is_drag):
         return net
 
-    # 网络已明确切回点击题，但 DOM 还残留旧 drag prompt。
+    # Network has clearly switched back to click question, but DOM still retains old drag prompt.
     if req == "image_label_area_select" and dom_is_drag and not net_is_drag:
         return net
 
-    # 若刚收到新的 getcaptcha，而 DOM 还没同步，短时间内优先信任网络题面。
+    # If new getcaptcha just arrived while DOM hasn't synced, prioritize network question layout in the short term.
     if req and dom != net and network_updated_at:
         if (time.time() - float(network_updated_at)) <= 8.0:
             return net
@@ -2902,7 +2901,7 @@ def is_drag_completion_prompt(prompt: str) -> bool:
         return True
     if "missing piece" in p or "missing pieces" in p:
         return True
-    # road completion 也是 drag 题型（拖拽道路块到空位）
+    # road completion is also a drag question type (drag road blocks to empty positions)
     if "complete the road" in p:
         return True
     return False
@@ -3006,8 +3005,8 @@ def _raster_is_visually_empty(arr: np.ndarray) -> bool:
     except Exception:
         return False
 
-    # 某些 Stripe / hCaptcha 场景下 canvas 已存在，但导出的位图几乎全黑/全空。
-    # 这会导致 VLM / heuristic 都把 challenge 误判为“无可见区域”，因此要回退 body screenshot。
+    # In some Stripe/hCaptcha scenarios, canvas already exists but the exported bitmap is almost entirely black/empty.
+    # This causes VLM/heuristic to misidentify the challenge as "no visible area", so fallback to body screenshot is needed.
     if mean < 6.0 and p99 < 18.0:
         return True
     if std < 1.5 and (mean < 20.0 or mean > 245.0):

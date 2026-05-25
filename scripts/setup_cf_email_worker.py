@@ -1,36 +1,35 @@
 #!/usr/bin/env python3
-"""一键配 Cloudflare Email Worker + KV，用于接收 OTP 邮件。
+"""One-click setup Cloudflare Email Worker + KV for receiving OTP emails.
 
-跑这个脚本会做这些事（幂等，可反复跑）：
-  1. 校验 CF API token 权限
-  2. 找/建 KV namespace（默认名 OTP_KV）
-  3. 上传 scripts/otp_email_worker.js 为 Worker（默认名 otp-relay），
-     绑定 OTP_KV + 可选的 FALLBACK_TO 环境变量
-  4. 对每个 zone：启用 Email Routing（如未启用），把 catch-all 路由
-     切到这个 Worker
-  5. 把回填到 SQLite runtime_meta[secrets] 的字段打印出来
+Running this script performs these operations (idempotent, can be run repeatedly):
+  1. Validate CF API token permissions
+  2. Find/create KV namespace (default name OTP_KV)
+  3. Upload scripts/otp_email_worker.js as Worker (default name otp-relay),
+     bind OTP_KV + optional FALLBACK_TO environment variable
+  4. For each zone: enable Email Routing (if not enabled), route catch-all
+     to this Worker
+  5. Print fields to be backfilled to SQLite runtime_meta[secrets]
 
-需要的 CF API token 权限：
+Required CF API token permissions:
   - Account → Workers Scripts:Edit
   - Account → Workers KV Storage:Edit
   - Zone → Email Routing Rules:Edit
   - Zone → Zone:Read
 
-用法：
-  # token + account_id 走环境变量
+Usage:
+  # token + account_id via environment variables
   CF_API_TOKEN=xxx CF_ACCOUNT_ID=yyy \\
     python scripts/setup_cf_email_worker.py --zones example.com,foo.com
 
-  # 或直接读 SQLite runtime_meta[secrets] 里 cloudflare.api_token + cloudflare.account_id
+  # Or read cloudflare.api_token + cloudflare.account_id from SQLite runtime_meta[secrets]
   python scripts/setup_cf_email_worker.py --zones example.com
 
-  # 加 fallback：抓到 OTP 同时转发一份到 QQ（迁移期保险）
+  # Add fallback: forward OTP copy to QQ (insurance during migration)
   python scripts/setup_cf_email_worker.py --zones example.com \\
       --fallback-to your_qq@qq.com
 
-  # 仅 dry-run（只校验 token + 列 zone，不改任何东西）
-  python scripts/setup_cf_email_worker.py --zones example.com --dry-run
-"""
+  # Dry-run only (only validate token + list zones, don't modify anything)
+  python scripts/setup_cf_email_worker.py --zones example.com --dry-run"""
 from __future__ import annotations
 
 import argparse
@@ -50,7 +49,7 @@ WORKER_JS = Path(__file__).resolve().parent / "otp_email_worker.js"
 
 
 class CFError(RuntimeError):
-    """CFClient 操作失败（webui 端点会 catch 这个并转 HTTP error）。"""
+    """CFClient operation failed (webui endpoint will catch this and convert to HTTP error)."""
 
 
 class CFClient:
@@ -96,12 +95,11 @@ class CFClient:
     # ── token / account ─────────────────────────────────────
 
     def verify_token(self, account_id: str) -> dict:
-        """打 /accounts/{id} 当 token 可用性探测。
+        """Hit /accounts/{id} as token availability probe.
 
-        注：新格式 'cfat_' token 在 /user/tokens/verify 上会返 1000 Invalid
-        Token（端点是为旧 v1 token 设计的），但 token 本身有效。直接用
-        /accounts/{id} 验证，对所有 token 格式都靠谱。
-        """
+        Note: New format 'cfat_' tokens return 1000 Invalid Token on /user/tokens/verify
+        (endpoint designed for old v1 tokens), but the token itself is valid. Verify directly
+        via /accounts/{id}, which works reliably for all token formats."""
         r = self._req("GET", f"/accounts/{account_id}")
         if not r.get("success"):
             raise CFError(
@@ -189,19 +187,18 @@ class CFClient:
     # ── Email Routing ──────────────────────────────────────
 
     def ensure_email_routing_enabled(self, zone_id: str) -> None:
-        """尽力确认 Email Routing 已启用。
+        """Best effort to confirm Email Routing is enabled.
 
-        注：`GET /zones/{id}/email/routing` 端点跟 Email Routing Rules 不
-        是同一权限（Email Routing 总开关属于 Account 级别）。如果 token
-        只给了 Email Routing Rules:Edit（够用，catch-all rule 能改），这
-        个 GET 会返 10000 Authentication error。catch-all rule 能读且已
-        enabled=True 时，Email Routing 必然已启用，跳过 enable 即可。
-        """
+        Note: `GET /zones/{id}/email/routing` endpoint is not the same permission as
+        Email Routing Rules (Email Routing master switch is Account level). If token only
+        has Email Routing Rules:Edit (sufficient for modifying catch-all rule), this GET
+        returns 10000 Authentication error. When catch-all rule is readable and enabled=True,
+        Email Routing must be enabled, skip enable step."""
         r = self._req("GET", f"/zones/{zone_id}/email/routing")
         if r.get("success"):
             if (r.get("result") or {}).get("enabled"):
                 return
-            # 没启用 → 尝试 enable
+            # Not enabled → attempt enable
             e = self._req("POST", f"/zones/{zone_id}/email/routing/enable")
             if not e.get("success"):
                 errs = e.get("errors") or []
@@ -214,9 +211,9 @@ class CFClient:
                     f"enable email routing 失败 zone={zone_id}: {_short(e)}"
                 )
             return
-        # GET 失败：通常是 token 缺 Email Routing 总开关读权限。如果
-        # caller 已经能读 / 改 catch-all rule，Email Routing 一定已启用，
-        # 这一步可以跳过。
+        # GET failed: usually token lacks Email Routing master switch read permission. If
+        # caller can already read/modify catch-all rule, Email Routing must be enabled,
+        # this step can be skipped.
         errs = r.get("errors") or []
         if any(e.get("code") == 10000 for e in errs):
             print(
@@ -389,7 +386,7 @@ def _run_setup_cli(client: "CFClient", account_id: str, args) -> None:
 
     print(f"[5/5] 给每个 zone 启 Email Routing + 切 catch-all → Worker ...")
     for zname, zid in zone_ids.items():
-        # 先看现状，免得静默覆盖了之前的 forward 规则
+        # Check current state first, avoid silently overwriting previous forward rules
         cur = client.get_catch_all(zid)
         cur_actions = cur.get("actions") or []
         cur_summary = "; ".join(

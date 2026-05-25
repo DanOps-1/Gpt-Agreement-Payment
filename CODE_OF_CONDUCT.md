@@ -1,107 +1,110 @@
-# 行为准则
+# Code of Conduct
 
-## 我们的承诺
+## Our Commitment
 
-为了让本项目的社区成为一个开放、欢迎、有建设性的地方，我们承诺所有参与者
-（贡献者、维护者、issue 提交者、PR 作者、讨论参与者）都能在不受骚扰的环境
-里互动，无论年龄、体型、可见或不可见的残疾、族裔、性别认同、经验水平、教育
-背景、社会经济地位、国籍、宗教、性取向、外貌或个人选择。
+To make this project's community an open, welcoming, and constructive place, we commit that all participants
+(contributors, maintainers, issue submitters, PR authors, discussion participants) can interact in a
+harassment-free environment, regardless of age, body size, visible or invisible disability, ethnicity,
+gender identity, experience level, educational background, socioeconomic status, nationality, religion,
+sexual orientation, appearance, or personal choices.
 
-## 我们的标准
+## Our Standards
 
-下面这些行为是欢迎的：
+The following behaviors are welcome:
 
-- 尊重不同视角、经验、技术选择
-- 给和接受建设性反馈
-- 承认错误，向受影响的人道歉，从经验中学习
-- 把社区利益放在个人利益之上
-- 以技术问题本身为讨论焦点，不是人身
+- Respect different perspectives, experiences, and technical choices
+- Give and receive constructive feedback
+- Acknowledge mistakes, apologize to affected people, and learn from experience
+- Prioritize community interests over personal interests
+- Focus discussions on technical issues themselves, not on people
 
-下面这些行为是**不**可接受的：
+The following behaviors are **not** acceptable:
 
-- 性意味的语言、图像、玩笑、性挑逗
-- 嘲讽、人身攻击、政治攻击
-- 公开或私下的骚扰
-- 未经允许公布他人个人信息（住址、邮箱、电话等）
-- 任何在职场环境下被合理认为不专业的行为
-- 在 issue / PR / discussion 中**索取协助进行未授权测试**或**炫耀违反 ToS**
-  的行为
+- Sexual language, images, jokes, or advances
+- Derogatory comments, personal attacks, political attacks
+- Public or private harassment
+- Publishing others' personal information without permission (addresses, emails, phone numbers, etc.)
+- Any behavior reasonably considered unprofessional in a workplace environment
+- **Soliciting help for unauthorized testing** or **flaunting violations of ToS**
+  in issues / PRs / discussions
 
-## 项目特定的额外规则
+## Project-Specific Additional Rules
 
-本项目是个安全研究工具，社区成员**额外**需要遵守：
+This project is a security research tool. Community members **additionally** must comply with:
 
-1. 任何在 issue / PR / discussion 中明示或暗示自己在用本工具针对未授权目标
-   的行为，会被立即关闭并可能被封禁
-2. 任何索取"如何绕开 OpenAI 反欺诈"、"如何提高账号存活率到 X%"等具体策略
-   的提问，会被引导到 [`docs/anti-fraud-research.md`](docs/anti-fraud-research.md)
-   或者直接关闭
-3. 任何以本项目为基础搭建的"代充值"、"GPT 镜像"、"账号转售"等灰产服务，
-   维护者保留拒绝任何相关协助的权利
-4. 在 [`docs/anti-fraud-research.md`](docs/anti-fraud-research.md) 这类研究
-   材料的脱敏标准上严格执行 —— 任何泄漏真实 IP / 真实域名 / 真实账号的 PR
-   会被直接拒
+1. Any behavior explicitly or implicitly indicating use of this tool against unauthorized targets
+   in issues / PRs / discussions will result in immediate closure and possible bans
+2. Any questions seeking specific strategies like "how to bypass OpenAI anti-fraud" or
+   "how to increase account survival rate to X%" will be redirected to [`docs/anti-fraud-research.md`](docs/anti-fraud-research.md)
+   or directly closed
+3. For any "account top-up", "GPT mirror", "account resale" gray-market services built on this project,
+   maintainers reserve the right to refuse any related assistance
+4. Strict enforcement of anonymization standards in research materials like [`docs/anti-fraud-research.md`](docs/anti-fraud-research.md) —
+   any PRs leaking real IPs / real domains / real accounts will be directly rejected
 
-## 维护者职责
+## Maintainer Responsibilities
 
-项目维护者负责清晰说明可接受的行为标准，对任何不可接受的行为采取适当且
-公正的纠正措施。
+Project maintainers are responsible for clearly communicating acceptable behavior standards and taking
+appropriate and fair corrective action against unacceptable behavior.
 
-维护者有权：
+Maintainers have the right to:
 
-- 删除、编辑、拒绝任何不符合本准则的评论、commit、code、issue 等贡献
-- 临时或永久禁止任何认为不当、威胁、冒犯、有害的行为者
+- Delete, edit, reject any comments, commits, code, issues, or other contributions that violate this code
+- Temporarily or permanently ban any individuals whose behavior is deemed inappropriate, threatening,
+  offensive, or harmful
 
-## 适用范围
+## Scope
 
-本准则适用于：
+This code of conduct applies to:
 
-- 本项目所有公开空间（issue、PR、discussion、wiki、commit message）
-- 任何代表本项目的公开场合（在 conference 上发言、在博客 / 论文里引用本项
-  目时）
+- All public spaces of this project (issues, PRs, discussions, wiki, commit messages)
+- Any public settings representing this project (speaking at conferences, citing this project
+  in blogs / papers)
 
-## 报告
+## Reporting
 
-出现可能违反本准则的行为，请通过 GitHub Security Advisory（私密渠道）报告。
+If you observe potential violations of this code, please report through GitHub Security Advisory (private channel).
 
-所有投诉会被尽快、公正地审查和回应。维护者有义务尊重报告人的隐私和安全。
+All complaints will be reviewed and responded to as quickly and fairly as possible. Maintainers are
+obligated to respect the privacy and safety of the reporter.
 
-## 处置
+## Enforcement
 
-维护者会按下面的流程处置违规：
+Maintainers will enforce violations according to the following process:
 
-### 1. 提醒
+### 1. Reminder
 
-**社区影响**：使用了不专业语言或不符合本准则的行为。
+**Community Impact**: Use of unprofessional language or behavior not aligned with this code.
 
-**结果**：私下书面警告，明确指出违规之处和原因。可能会要求公开道歉。
+**Result**: Private written warning clearly explaining the violation and its reason. May request
+a public apology.
 
-### 2. 警告
+### 2. Warning
 
-**社区影响**：单次或一系列违规行为。
+**Community Impact**: Single or repeated violations.
 
-**结果**：警告 + 一段时间内不允许与相关人员互动（包括评论 / 标记 PR / issue
-等）。违反将进入下一级处置。
+**Result**: Warning + prohibition from interacting with relevant parties for a period (including
+commenting, mentioning PRs / issues). Violations escalate to the next level.
 
-### 3. 临时封禁
+### 3. Temporary Ban
 
-**社区影响**：严重违规，包括持续的不当行为。
+**Community Impact**: Serious violations, including repeated inappropriate behavior.
 
-**结果**：在指定时间内禁止参与本项目的任何形式（评论、PR、issue 等）。违反
-将进入永久封禁。
+**Result**: Prohibition from any form of participation in this project (comments, PRs, issues, etc.)
+for a specified period. Violations escalate to permanent ban.
 
-### 4. 永久封禁
+### 4. Permanent Ban
 
-**社区影响**：模式化的严重违规，包括持续的不当行为、骚扰特定个体、对群体的
-攻击 / 贬低。
+**Community Impact**: Patterned serious violations, including repeated inappropriate behavior, harassment
+of individuals, attacks on / disparagement of groups.
 
-**结果**：永久禁止参与本项目的任何形式公开互动。
+**Result**: Permanent prohibition from any form of public interaction with this project.
 
-## 来源
+## Attribution
 
-本准则改编自 [Contributor Covenant 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct.html)，
-按本项目特殊性增加了"项目特定的额外规则"一节。
+This code of conduct is adapted from [Contributor Covenant 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct.html),
+with an added "Project-Specific Additional Rules" section to address this project's unique nature.
 
-社区影响等级的定义灵感来自 [Mozilla 的执法阶梯](https://github.com/mozilla/diversity)。
+The community impact levels are inspired by [Mozilla's enforcement ladder](https://github.com/mozilla/diversity).
 
-更多关于本准则的常见问题，参见 https://www.contributor-covenant.org/faq。
+For more frequently asked questions about this code of conduct, see https://www.contributor-covenant.org/faq.

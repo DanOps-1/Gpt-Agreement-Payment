@@ -1,6 +1,6 @@
 {
   "qris": {
-    "_comment": "QRIS 支付不绑定/不 OTP/不 PIN — Midtrans 创建 charge 后返回 EMVCo QR，用户用任意 e-wallet/银行 app 扫码即付。本块只控制本地落盘和轮询节奏，金额/货币由 ChatGPT checkout 自身决定（IDR）。",
+    "_comment": "QRIS payment without binding/without OTP/without PIN — After Midtrans creates a charge, it returns an EMVCo QR code, and users can scan it with any e-wallet/bank app to pay. This section only controls local storage and polling rhythm; the amount/currency is determined by ChatGPT checkout itself (IDR).",
     "output_dir": "./qris_artifacts",
     "poll_interval_s": 3,
     "poll_timeout_s": 600,

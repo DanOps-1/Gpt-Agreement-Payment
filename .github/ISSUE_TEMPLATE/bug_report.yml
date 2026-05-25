@@ -1,49 +1,49 @@
-name: Bug 报告
-description: 工具集自己有问题（不包括"Stripe 把我卡封了"这类）
+name: Bug Report
+description: The toolkit itself has issues (excluding cases like "Stripe blocked my account")
 title: "[bug] "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        提交之前先看下：
+        Before submitting, check:
 
-        - **账号被封、IP 被打标、PayPal 拒收** —— 这是预期，看 [反欺诈实证](https://github.com/DanOps-1/Gpt-Agreement-Payment#-反欺诈实证)。别提 issue
-        - **怀疑是安全漏洞**（凭证泄露、注入之类）—— 看 [`SECURITY.md`](https://github.com/DanOps-1/Gpt-Agreement-Payment/blob/main/SECURITY.md)，别公开提
-        - **针对未授权目标使用** —— 别提 issue，并请停下
+        - **Account suspended, IP flagged, PayPal rejected** —— This is expected, see [Anti-fraud Evidence](https://github.com/DanOps-1/Gpt-Agreement-Payment#-anti-fraud-evidence). Don't open an issue
+        - **Suspected security vulnerability** (credential leakage, injection, etc.) —— See [`SECURITY.md`](https://github.com/DanOps-1/Gpt-Agreement-Payment/blob/main/SECURITY.md), don't disclose publicly
+        - **Used against unauthorized targets** —— Don't open an issue, and please stop
 
   - type: textarea
     id: what-happened
     attributes:
-      label: 出了什么问题？
-      description: 你跑了什么命令，挂在哪？
+      label: What went wrong?
+      description: What command did you run, where did it hang?
       placeholder: |
-        跑了 `xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal`
-        在 [B6] 阶段挂了，报 "DataDome slider not detected"
+        Ran `xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal`
+        Hung at [B6] stage, error "DataDome slider not detected"
     validations:
       required: true
 
   - type: textarea
     id: expected
     attributes:
-      label: 预期行为
-      placeholder: pipeline 应该解开滑块继续到 redirect 步骤
+      label: Expected behavior
+      placeholder: pipeline should solve the slider and proceed to redirect step
     validations:
       required: true
 
   - type: input
     id: stage
     attributes:
-      label: 挂在哪个阶段
-      description: 哪个 pipeline 阶段挂的？(`registration` / `Stripe confirm` / `PayPal B-DDC` / `OAuth callback` / `daemon loop` 之类)
+      label: Which stage hung
+      description: Which pipeline stage failed? (`registration` / `Stripe confirm` / `PayPal B-DDC` / `OAuth callback` / `daemon loop` etc.)
     validations:
       required: true
 
   - type: textarea
     id: logs
     attributes:
-      label: 相关日志
-      description: `output/logs/card.log` 最后 30–50 行。**贴之前先脱敏**：token、cookie、真实邮箱、IP、PII 全打码
+      label: Relevant logs
+      description: Last 30–50 lines from `output/logs/card.log`. **Redact before posting**: tokens, cookies, real emails, IPs, PII all masked
       render: shell
     validations:
       required: true
@@ -51,24 +51,24 @@ body:
   - type: textarea
     id: env
     attributes:
-      label: 运行环境
+      label: Runtime environment
       placeholder: |
         - OS: Kali Linux 2026.1
         - Python: 3.11.7
         - playwright: 1.44.0
         - camoufox: 0.4.1
-        - 模式: daemon / 单次 / 批量 / self-dealer
+        - Mode: daemon / single-run / batch / self-dealer
     validations:
       required: true
 
   - type: checkboxes
     id: confirmations
     attributes:
-      label: 确认
+      label: Confirmation
       options:
-        - label: 我针对的是自己拥有或有明确书面授权的系统
+        - label: I'm targeting systems I own or have explicit written permission for
           required: true
-        - label: 本 issue 里的日志 / 截图已经脱敏（凭证、cookie、PII）
+        - label: Logs / screenshots in this issue are redacted (credentials, cookies, PII)
           required: true
-        - label: 我搜过现有 issue，没重复
+        - label: I've searched existing issues, no duplicates
           required: true

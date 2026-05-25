@@ -52,7 +52,7 @@
     }
   ],
   "paypal": {
-    "_comment": "PayPal 邮箱必须是 catch-all zone 内的地址；2FA OTP 经 CF Email Worker → KV 自动取（见 SQLite runtime_meta[secrets].cloudflare），不再需要 IMAP 字段。",
+    "_comment": "The PayPal email must be an address within the catch-all zone; 2FA OTP is automatically retrieved via CF Email Worker → KV (see SQLite runtime_meta[secrets].cloudflare), and the IMAP field is no longer needed.",
     "email": "you@your-catch-all-zone.com",
     "password": "YOUR_PAYPAL_PASSWORD",
     "cookies": ""
@@ -68,7 +68,7 @@
     "auto_refresh_on_inactive": true,
     "warmup_route_data": true,
     "plan": {
-      "_comment": "切 Plus 订阅时：plan_name -> chatgptplusplan，promo_campaign_id -> plus-1-month-free，删 workspace_name / seat_quantity（Plus 是单用户，没有 workspace 概念）。或者直接 `pipeline.py --plan plus`，会自动生成一份 Plus 临时配置。",
+      "_comment": "When switching to Plus subscription: plan_name → chatgptplusplan, promo_campaign_id → plus-1-month-free, remove workspace_name / seat_quantity (Plus is single-user with no workspace concept). Alternatively, run `pipeline.py --plan plus` directly, which will automatically generate a temporary Plus configuration.",
       "workspace_name": "MyWorkspace",
       "price_interval": "month",
       "seat_quantity": 5,

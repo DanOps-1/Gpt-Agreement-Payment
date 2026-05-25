@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
-"""
-Pipeline 调度器：注册 ChatGPT 账号 → Stripe/PayPal 支付
+"""Pipeline Scheduler: Register ChatGPT Account → Stripe/PayPal Payment
 
-⚠️ 仅限授权范围内使用（你拥有的系统 / 合法 CTF / 授权 bug bounty in-scope 资产 /
-   安全研究）。运行本程序即视为同意 NOTICE 文件全部条款。AS IS 提供，无任何担
-   保，一切后果使用者自负。详见仓库根目录 NOTICE 与 README.md 免责声明段。
+⚠️ Authorized use only (systems you own / legitimate CTF / authorized bug bounty in-scope assets /
+   security research). Running this program constitutes agreement to all terms in the NOTICE file.
+   Provided AS IS, without any warranties; all consequences are the user's responsibility.
+   See NOTICE and README.md disclaimer section in the repository root.
 
-用法:
-  # 全链路 (注册 + 支付)
+Usage:
+  # Full pipeline (register + payment)
   python pipeline.py --config CTF-pay/config.paypal.json --paypal
 
-  # 仅注册
+  # Register only
   python pipeline.py --register-only --cardw-config CTF-reg/config.paypal-proxy.json
 
-  # 仅支付 (优先复用 SQLite 数据库里最近未支付账号)
+  # Payment only (prioritizes reusing unpaid accounts from SQLite database)
   python pipeline.py --pay-only --config CTF-pay/config.paypal.json --paypal
 
-  # 批量
-  python pipeline.py --config CTF-pay/config.paypal.json --paypal --batch 5 --delay 30
-"""
+  # Batch mode
+  python pipeline.py --config CTF-pay/config.paypal.json --paypal --batch 5 --delay 30"""
 
 import argparse
 import atexit
@@ -35,7 +34,7 @@ from pathlib import Path
 
 from webui.backend.db import get_db
 
-ROOT = Path(__file__).resolve().parent.parent  # pipeline/_monolith.py → 仓库根目录
+ROOT = Path(__file__).resolve().parent.parent  # pipeline/_monolith.py → Repository root directory
 CARDW_DIR = ROOT / "CTF-reg"
 CARD_DIR = ROOT / "CTF-pay"
 CARD_PY = CARD_DIR / "card.py"
@@ -53,8 +52,8 @@ SECRETS_KEY = "secrets"
 RUNTIME_DB_FILE = OUTPUT_DIR / "webui.db"
 
 
-# --plan {team,plus} 覆盖时往 fresh_checkout.plan 写入的默认值；用户已在
-# config 里显式填了对应字段（promo_campaign_id / entry_point）就不动。
+# --plan {team,plus} default value written to fresh_checkout.plan when covering; user already
+# If the corresponding field (promo_campaign_id / entry_point) is explicitly set in config, do not modify it.
 _PLAN_OVERRIDE_DEFAULTS = {
     "plus": {
         "plan_name": "chatgptplusplan",
@@ -70,10 +69,10 @@ _PLAN_OVERRIDE_DEFAULTS = {
 
 
 def _apply_plan_override(card_config_path: str, plan: str) -> str:
-    """`--plan plus/team` 时不改用户文件——生成一份临时 config，把
-    fresh_checkout.plan 的关键字段对齐目标计划，把临时路径返回给 pipeline
-    后续所有分支用。Plus 模式同时剥掉 example 默认的 workspace/seat 字段。
-    临时文件用 atexit 清理。"""
+    """When `--plan plus/team` is used, do not modify the user's file — generate a temporary config,
+    align the key fields of fresh_checkout.plan to the target plan, and return the temporary path
+    to the pipeline for all subsequent branches to use. In Plus mode, also strip the default
+    workspace/seat fields from example. Clean up the temporary file using atexit."""
     plan = plan.lower()
     if plan not in _PLAN_OVERRIDE_DEFAULTS:
         return card_config_path
@@ -84,7 +83,7 @@ def _apply_plan_override(card_config_path: str, plan: str) -> str:
     fresh = cfg.setdefault("fresh_checkout", {})
     plan_cfg = fresh.setdefault("plan", {})
     defaults = _PLAN_OVERRIDE_DEFAULTS[plan]
-    # plan_name 必覆盖；其它字段只在用户没设时填默认值，避免吃掉手工调好的优惠码
+    # plan_name must be overwritten; other fields only fill default values when users haven't set them, to avoid overwriting manually adjusted discount codes
     plan_cfg["plan_name"] = defaults["plan_name"]
     for key in ("entry_point", "promo_campaign_id"):
         if not plan_cfg.get(key):
@@ -105,12 +104,12 @@ def _apply_plan_override(card_config_path: str, plan: str) -> str:
 
 
 # ──────────────────────────────────────────────
-# 0. 邮箱域池 + gpt-team 系统客户端 + Cloudflare 子域按需开通
+# 0. Email domain pool + gpt-team system client + Cloudflare subdomain on-demand provisioning
 # ──────────────────────────────────────────────
 
 class CloudflareDomainProvisioner:
-    """通过 Cloudflare API 按需开通新子域：加 3 MX + 1 TXT/SPF，挂 zone 的 catch-all routing。
-    zone 的 Email Routing 必须已开启（有 `{type:"all"}` forward 规则即可；子域自动继承）。"""
+    """Provision new subdomains on demand via Cloudflare API: add 3 MX + 1 TXT/SPF, with zone catch-all routing.
+    Email Routing must be enabled on the zone (having a `{type:"all"}` forward rule is sufficient; subdomains automatically inherit)."""
 
     _CF = "https://api.cloudflare.com/client/v4"
 
@@ -131,7 +130,7 @@ class CloudflareDomainProvisioner:
         self.max_segs = max_segs
         self.dns_propagation_s = dns_propagation_s
         self._zone_id_cached = None
-        # 不经环境代理（和 TeamSystemClient 一样，避免被 http_proxy 劫持到本地代理）
+        # Not through environment proxy (same as TeamSystemClient, avoid being hijacked by http_proxy to local proxy)
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def _http(self, method: str, path: str, body=None):
@@ -154,7 +153,7 @@ class CloudflareDomainProvisioner:
         return self._zone_id_cached
 
     def list_subdomains(self) -> list:
-        """列出当前 zone 下所有已有 MX 记录的子域（不含根域自身）。"""
+        """List all subdomains with existing MX records under the current zone (excluding the zone apex itself)."""
         zid = self.zone_id()
         seen = set()
         page = 1
@@ -181,8 +180,8 @@ class CloudflareDomainProvisioner:
         return ".".join(parts)
 
     def provision(self, name: str = None, max_retries: int = 5) -> str:
-        """开通一个新子域（加 3 MX + 1 TXT），返回完整域名（小写）。
-        name 不传则随机生成并避开已存在的。"""
+        """Enable a new subdomain (add 3 MX + 1 TXT), return the complete domain name (lowercase).
+        If name is not provided, it will be randomly generated and avoid existing ones."""
         zid = self.zone_id()
         existing = set(self.list_subdomains())
         attempt = 0
@@ -192,7 +191,7 @@ class CloudflareDomainProvisioner:
             label = name if name else self._random_subdomain_name()
             full = f"{label}.{self.zone_name}".lower()
             if full in existing:
-                if name:  # 指定了还冲突 -> 直接报错
+                if name:  # Specified but still conflicting -> Error directly
                     raise RuntimeError(f"CF 子域 {full} 已存在")
                 continue
             chosen_full = full
@@ -200,7 +199,7 @@ class CloudflareDomainProvisioner:
         if not chosen_full:
             raise RuntimeError(f"CF 随机生成子域名失败（{max_retries} 次都冲突）")
 
-        # 3 条 MX + 1 条 TXT
+        # 3 MX records + 1 TXT record
         for route_idx in (1, 2, 3):
             pri = self._random.randint(5, 95)
             r = self._http("POST", f"/zones/{zid}/dns_records", {
@@ -223,7 +222,7 @@ class CloudflareDomainProvisioner:
         return chosen_full
 
     def delete_subdomain(self, full_name: str) -> int:
-        """删除子域下所有 DNS 记录。返回删除数。"""
+        """Delete all DNS records under the subdomain. Return the number of deleted records."""
         zid = self.zone_id()
         d = self._http("GET", f"/zones/{zid}/dns_records?name={full_name}&per_page=100")
         if not d.get("success"):
@@ -237,13 +236,13 @@ class CloudflareDomainProvisioner:
 
 
 class MultiZoneDomainProvisioner:
-    """多 zone 包装器：开通时优先用 active_zone，按域名后缀路由删除。"""
+    """Multi-zone wrapper: Prioritize using active_zone when opening, route deletion by domain suffix."""
 
     def __init__(self, sub_provisioners):
         self.subs = [p for p in (sub_provisioners or []) if p is not None]
         if not self.subs:
             raise ValueError("MultiZoneDomainProvisioner 需要至少一个子 provisioner")
-        self.active_zone = None  # None = 全部 zones 随机
+        self.active_zone = None  # None = all zones random
 
     @property
     def zone_name(self) -> str:
@@ -267,7 +266,7 @@ class MultiZoneDomainProvisioner:
         return sorted(set(out))
 
     def provision(self, name: str = None, max_retries: int = 5) -> str:
-        """active_zone 优先；quota exceeded / HTTP 400 时自动 fallback 到其他 zone。"""
+        """active_zone takes priority; automatically fallback to other zones when quota exceeded / HTTP 400."""
         active, others = [], []
         for p in self.subs:
             if self.active_zone and p.zone_name.lower() == self.active_zone:
@@ -282,11 +281,11 @@ class MultiZoneDomainProvisioner:
             except Exception as e:
                 last_exc = e
                 msg = str(e).lower()
-                # quota 类错误 / 400 Bad Request → fallback 到下一个 zone
+                # quota class error / 400 Bad Request → fallback to next zone
                 if "quota" in msg or "400" in msg or "exceeded" in msg:
                     print(f"[CF] {p.zone_name} 开通失败({str(e)[:60]})，fallback 下一 zone")
                     continue
-                # 其他错误直接抛
+                # Other errors are thrown directly
                 raise
         raise last_exc or RuntimeError("所有 zone 都开通失败")
 
@@ -300,8 +299,8 @@ class MultiZoneDomainProvisioner:
 
 
 class DomainPool:
-    """持久化邮箱域状态：ok / burned (带 cooldown)。支付后拿 invite 探测结果反馈更新。
-    可选 provisioner：当可用域 < min_available 时，通过 Cloudflare API 按需开通新子域。"""
+    """Persist email domain status: ok / burned (with cooldown). Get invite detection results feedback to update after payment.
+    Optional provisioner: When available domains < min_available, provision new subdomains on-demand via Cloudflare API."""
 
     def __init__(self, domains, state_key=DOMAIN_STATE_KEY, cooldown_hours=24,
                  provisioner: "CloudflareDomainProvisioner" = None, min_available: int = 2):
@@ -339,12 +338,12 @@ class DomainPool:
         return True
 
     def pick(self):
-        """挑一个可用域，策略：available 里 'last_used_ts' 最小（最久没用）。
-        如启用 provisioner，且 available < min_available，先补给新子域。"""
+        """Pick an available domain, strategy: select the one with the smallest 'last_used_ts' in available (least recently used).
+        If provisioner is enabled and available < min_available, replenish new subdomains first."""
         now_ts = time.time()
         available = [d for d in self.domains if self._is_available(d, now_ts)]
 
-        # 可用不足 → 按需开通新子域（Cloudflare API）
+        # Insufficient availability → Open new subdomains on demand (Cloudflare API)
         if self.provisioner and len(available) < self.min_available:
             need = self.min_available - len(available)
             print(f"[DomainPool] 可用域 {len(available)} < {self.min_available}，通过 Cloudflare 开通 {need} 个 ...")
@@ -362,7 +361,7 @@ class DomainPool:
         if not self.domains:
             return ""
         if not available:
-            # 全烧了：挑冷却时间最短的那个先用（尽量减少等待）
+            # All burned: use the one with the shortest cooling time first (minimize waiting)
             def _cd(d):
                 return self.state["domains"].get(d, {}).get("cooldown_until_ts", 0)
             available = sorted(self.domains, key=_cd)[:1]
@@ -381,8 +380,8 @@ class DomainPool:
 
     def mark_result(self, domain, invite_status):
         """invite_status: 'ok' / 'no_permission' / 'unknown'
-        连续 2 次 no_permission 升级为 permanent_burned 并触发 Cloudflare 子域清理。
-        ok 结果重置 no_permission 计数。"""
+        Two consecutive 'no_permission' results escalate to 'permanent_burned' and trigger Cloudflare subdomain cleanup.
+        'ok' result resets the 'no_permission' counter."""
         meta = self.state["domains"].setdefault(domain, {})
         meta["last_result"] = invite_status
         meta["last_result_ts"] = time.time()
@@ -403,12 +402,12 @@ class DomainPool:
         elif invite_status == "ok":
             meta["status"] = "ok"
             meta["last_success_iso"] = datetime.now(timezone.utc).isoformat()
-            meta["no_permission_count"] = 0  # ok 重置计数
+            meta["no_permission_count"] = 0  # ok reset count
         self._save()
 
     def _cleanup_permanent_burned(self, domain):
-        """永久 burn 后：Cloudflare 删除子域 DNS 记录，pool.domains 移除。
-        根域（zone_name 本身）不删，只清子域。"""
+        """After permanent burn: Cloudflare deletes subdomain DNS records, pool.domains is removed.
+        The root domain (zone_name itself) is not deleted, only subdomains are cleared."""
         if not self.provisioner:
             print(f"[DomainPool] ⛔ {domain} 永久标记（无 provisioner，不清理 CF 记录）")
             return
@@ -421,7 +420,7 @@ class DomainPool:
             print(f"[DomainPool] 🔥 永久 burn + CF 清理: {domain} (删 {n} 条 DNS 记录)")
         except Exception as e:
             print(f"[DomainPool] CF 清理 {domain} 失败: {e}")
-        # 从 pool.domains 里移除（保留 state 用于审计）
+        # Remove from pool.domains (keep state for audit)
         if domain in self.domains:
             self.domains.remove(domain)
 
@@ -434,7 +433,7 @@ class DomainPool:
             if st == "burned" and m.get("cooldown_until_ts", 0) <= now_ts:
                 st = "cooled"
             rows.append((d, st, m.get("last_result", "-")))
-        # 也列出已永久 burn 的（从 pool 移除但 state 里仍有）
+        # Also list those that have been permanently burned (removed from pool but still in state)
         for d, m in self.state.get("domains", {}).items():
             if d in self.domains:
                 continue
@@ -444,8 +443,8 @@ class DomainPool:
 
 
 class TeamSystemClient:
-    """gpt-team 系统客户端：login → batch-import 单条 RT，SSE 解析 probe 结果。
-    使用独立的 no-proxy opener，避免被环境变量里的 http_proxy 劫持到本地代理/监控。"""
+    """gpt-team system client: login → batch-import single RT, parse probe results via SSE.
+    Use an independent no-proxy opener to avoid being hijacked by http_proxy in environment variables to local proxy/monitoring."""
 
     def __init__(self, base_url, username, password, timeout_s=60):
         import urllib.request
@@ -456,7 +455,7 @@ class TeamSystemClient:
         self.jwt = None
         self.jwt_exp_ts = 0
         self._opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}),  # 显式清空代理
+            urllib.request.ProxyHandler({}),  # Explicitly clear the proxy
         )
 
     def _login(self):
@@ -470,7 +469,7 @@ class TeamSystemClient:
         with self._opener.open(req, timeout=self.timeout_s) as r:
             body = json.loads(r.read().decode())
         self.jwt = body["token"]
-        # JWT exp 24h，提前 1h 续签
+        # JWT exp 24h, renew 1h in advance
         self.jwt_exp_ts = time.time() + 23 * 3600
         print(f"[Team] 登录成功 user={body.get('user',{}).get('username')}")
 
@@ -479,7 +478,7 @@ class TeamSystemClient:
             self._login()
 
     def import_probe(self, refresh_token):
-        """导入单条 RT + 等 SSE item 事件。返回 {status, account_id, error, raw}"""
+        """Import a single RT + SSE item event. Returns {status, account_id, error, raw}"""
         import urllib.request, base64 as _b64
         self._ensure_jwt()
         payload = {"tokens": [refresh_token]}
@@ -535,11 +534,11 @@ class TeamSystemClient:
         }
 
     def count_usable_accounts(self, seat_limit: int = 5, usage: str = "recovery") -> dict:
-        """查 gpt-team 里 '可用' 账号数。
-        usage='recovery' → 补号池（默认，daemon 维护目标）
-        usage='sales'    → 对外开放池
-        可用 = account_usage 匹配 & !isBanned & !isDisabled & !noInvitePermission
-             & !expired & userCount + inviteCount < seat_limit"""
+        """Check the number of 'available' accounts in gpt-team.
+        usage='recovery' → recovery pool (default, daemon maintenance target)
+        usage='sales'    → external pool
+        available = account_usage matches & !isBanned & !isDisabled & !noInvitePermission
+                    & !expired & userCount + inviteCount < seat_limit"""
         import urllib.request
         from datetime import datetime
         self._ensure_jwt()
@@ -596,7 +595,7 @@ class TeamSystemClient:
         return stats
 
     def update_global_proxy(self, proxy_url: str) -> dict:
-        """PUT /api/admin/proxy-config 更新全局代理。返回 {proxyUrl, ...}"""
+        """PUT /api/admin/proxy-config Update global proxy. Returns {proxyUrl, ...}"""
         import urllib.request
         self._ensure_jwt()
         req = urllib.request.Request(
@@ -611,7 +610,7 @@ class TeamSystemClient:
 
 
 # ──────────────────────────────────────────────
-# 1. 注册模块
+# 1. Registration module
 # ──────────────────────────────────────────────
 
 class RegistrationError(RuntimeError):
@@ -620,18 +619,19 @@ class RegistrationError(RuntimeError):
 
 def register(cardw_config_path, proxy=None, python="python3", timeout=600,
              browser: bool | None = None, _max_outlook_retries: int = 50):
-    """注册一个新 ChatGPT 账号。
+    """Register a new ChatGPT account.
 
-    `browser` 优先级：显式参数 > `WEBUI_REG_MODE` 环境变量 > 默认 False。
-    `WEBUI_REG_MODE=protocol` 走 `auth_flow.AuthFlow.run_register`（HTTP
-    直连，sentinel + OTP 协议链路），`=browser` 走 Camoufox/Playwright。
-    WebUI 在 Run 页加了切换按钮，每次启动 pipeline 时把选择透传成环境变量。
+    `browser` priority: explicit parameter > `WEBUI_REG_MODE` environment variable > default False.
+    `WEBUI_REG_MODE=protocol` uses `auth_flow.AuthFlow.run_register` (HTTP direct connection,
+    sentinel + OTP protocol flow), `=browser` uses Camoufox/Playwright.
+    WebUI added a toggle button on the Run page; each pipeline startup passes the selection
+    as an environment variable.
 
-    outlook 池场景下: 协议层"已有账号"分支立即 fast-fail mark dead, 自动 claim 下一个
-    available retry. 单次 fail-fast < 5s, 50 retry 上限够清扫一般池子大小; avail==0 立即停.
+    In outlook pool scenarios: protocol layer "account already exists" branch immediately
+    fast-fail mark dead, automatically claim next available retry. Single fail-fast < 5s,
+    50 retry limit is sufficient to sweep typical pool sizes; stop immediately if avail==0.
 
-    返回 dict: {email, session_token, access_token, device_id, ...}
-    """
+    Returns dict: {email, session_token, access_token, device_id, ...}"""
     last_err: Exception | None = None
     for attempt in range(1, max(1, _max_outlook_retries) + 1):
         try:
@@ -642,7 +642,7 @@ def register(cardw_config_path, proxy=None, python="python3", timeout=600,
         except RegistrationError as e:
             last_err = e
             msg = str(e)
-            # 仅在"outlook 静默拒绝"型失败 + 池里还有 available 时自动重试。
+            # Retry automatically only when "outlook silent rejection" type failure occurs AND there are still available connections in the pool.
             if "outlook OTP timeout" not in msg and "OpenAI 静默拒绝发 OTP" not in msg:
                 raise
             try:
@@ -670,7 +670,7 @@ def register(cardw_config_path, proxy=None, python="python3", timeout=600,
 
 def _register_once(cardw_config_path, proxy=None, python="python3", timeout=600,
                    browser: bool | None = None):
-    """单次 register 实现（无重试）。register() 包装重试逻辑。"""
+    """Single register implementation (without retry). register() wraps retry logic."""
     if browser is None:
         mode = (os.environ.get("WEBUI_REG_MODE") or "").strip().lower()
         if mode in ("protocol", "http", "api", "auth_flow"):
@@ -679,13 +679,13 @@ def _register_once(cardw_config_path, proxy=None, python="python3", timeout=600,
             browser = True
         else:
             browser = False
-    # 注：以前这里强制 outlook 池走 browser，已移除；
-    # auth_flow 现在自己处理 outlook "已有账号" 分支（两次 OTP timeout 才 mark dead），
-    # 给真新 outlook 一次协议路径机会，假新（OpenAI 静默拒绝）的自动淘汰。
+    # Note: Previously, this forced the Outlook pool to use browser, which has been removed;
+    # auth_flow now handles outlook "account already exists" branch itself (only mark dead after two OTP timeouts),
+    # Give real new Outlook a protocol path opportunity, auto-elimination of fake new (OpenAI silent rejection).
     cardw_config_path = str(Path(cardw_config_path).resolve())
     auth_bundle_dir = str(CARDW_DIR)
 
-    # Wave H: CTF-reg 重组后, mail_provider/auth_flow/browser_register 进了子包
+    # Wave H: After CTF-reg reorganization, mail_provider/auth_flow/browser_register moved into subpackage
     if browser:
         script = r"""
 import json, logging, os, sys
@@ -727,7 +727,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
         env["WEBUI_REG_MODE"] = "protocol"
         env.setdefault("OPENAI_SENTINEL_REQUIRE_QUICKJS", "1")
     if proxy:
-        # 代理通过配置文件传递，不通过环境变量
+        # Proxy passed via config file, not via environment variables
 
         pass
 
@@ -775,7 +775,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
 
 
 # ──────────────────────────────────────────────
-# 2. 支付模块
+# 2. Payment module
 # ──────────────────────────────────────────────
 
 class PaymentError(RuntimeError):
@@ -783,7 +783,7 @@ class PaymentError(RuntimeError):
 
 
 class DatadomeSliderError(PaymentError):
-    """PayPal 页面被 DataDome 可见滑块拦截，需要换 IP 重试。"""
+    """PayPal page blocked by DataDome visible slider, need to retry with different IP."""
     pass
 
 
@@ -847,15 +847,14 @@ def _cpa_cfg_for_card_payment(card_cfg: dict) -> dict:
 def pay(card_config_path, session_token=None, access_token=None,
         device_id=None, use_paypal=False, use_gopay=False, use_qris=False,
         gopay_otp_file=None, python="python3", timeout=600):
-    """执行 Stripe 支付流程。
+    """Execute Stripe payment flow.
 
-    use_paypal / use_gopay / use_qris 三者互斥：默认 card，paypal 走 PayPal browser，
-    gopay 走 GoPay tokenization (CTF-pay/gopay.py)，qris 走 Midtrans QRIS 扫码
-    (CTF-pay/qris.py)，QRIS 不需要 OTP/PIN/绑定，用户用任意印尼 e-wallet 扫码即付。
-    如果提供了 session_token/access_token，会临时覆盖配置文件中的凭证。
-    gopay_otp_file: webui 模式 OTP 文件路径（gopay.py file-watch 读取）。
-    返回 dict: {status, session_id, chatgpt_email, ...}
-    """
+    use_paypal / use_gopay / use_qris are mutually exclusive: default card, paypal uses PayPal browser,
+    gopay uses GoPay tokenization (CTF-pay/gopay.py), qris uses Midtrans QRIS QR code scan
+    (CTF-pay/qris.py), QRIS requires no OTP/PIN/binding, user can scan with any Indonesian e-wallet to pay.
+    If session_token/access_token provided, will temporarily override credentials in config file.
+    gopay_otp_file: webui mode OTP file path (gopay.py file-watch reads it).
+    Returns dict: {status, session_id, chatgpt_email, ...}"""
     flags = sum(1 for x in (use_paypal, use_gopay, use_qris) if x)
     if flags > 1:
         raise PaymentError("use_paypal / use_gopay / use_qris 互斥，只能一种")
@@ -863,15 +862,15 @@ def pay(card_config_path, session_token=None, access_token=None,
     card_config_path = str(Path(card_config_path).resolve())
     cfg_for_env = {}
 
-    # webshare/gost 保活：pay_only / pay_only_targets 直接进 pay()，没经 pipeline()
-    # 也要确保 gost 起着，否则印尼支付走 socks5://127.0.0.1:18898 直接 connect refused
+    # webshare/gost keepalive: pay_only / pay_only_targets go directly to pay(), skip pipeline()
+    # Also ensure gost is running, otherwise Indonesian payment via socks5://127.0.0.1:18898 direct connect refused
     try:
         _early_card_cfg = _read_card_cfg(card_config_path)
         _ensure_gost_alive(_early_card_cfg)
     except Exception as _e:
         print(f"[pay] gost 保活提前调用失败（不致命，继续）: {_e}")
 
-    # 如果有外部凭证，创建临时配置
+    # If external credentials exist, create temporary config
     config_to_use = card_config_path
     tmp_config = None
     if session_token or access_token:
@@ -887,7 +886,7 @@ def pay(card_config_path, session_token=None, access_token=None,
         if device_id:
             auth["device_id"] = device_id
         auth["prefer_session_refresh"] = True
-        # 禁用 auto_register（凭证已有）
+        # Disable auto_register (credentials already exist)
         auto = auth.get("auto_register", {})
         auto["enabled"] = False
         auth["auto_register"] = auto
@@ -907,14 +906,14 @@ def pay(card_config_path, session_token=None, access_token=None,
             cfg_for_env = {}
 
     if use_qris:
-        # QRIS 不经 card.py（不需要 hCaptcha / DataDome / cards），直接 spawn qris.py
-        # Wave I: cwd=CARD_DIR + python -m qris, 替代 [python, str(QRIS_PY)]
+        # QRIS skips card.py (no hCaptcha / DataDome / cards needed), directly spawn qris.py
+        # Wave I: cwd=CARD_DIR + python -m qris, replace [python, str(QRIS_PY)]
         cmd = [python, "-m", "qris",
                "--config", config_to_use, "--json-result"]
         result_marker = "QRIS_RESULT_JSON="
         mode_label = "qris"
     else:
-        # Wave I: cwd=CARD_DIR + python -m card auto, 替代 [python, str(CARD_PY)]
+        # Wave I: cwd=CARD_DIR + python -m card auto, replace [python, str(CARD_PY)]
         cmd = [python, "-m", "card", "auto",
                "--config", config_to_use, "--json-result"]
         if use_paypal:
@@ -941,7 +940,7 @@ def pay(card_config_path, session_token=None, access_token=None,
     try:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, env=env, cwd=str(CARD_DIR),  # Wave I: -m qris/card 需 cwd=CTF-pay
+            text=True, env=env, cwd=str(CARD_DIR),  # Wave I: -m qris/card needs cwd=CTF-pay
         )
         deadline = time.time() + timeout
         for line in proc.stdout:
@@ -975,22 +974,22 @@ def pay(card_config_path, session_token=None, access_token=None,
 
 
 # ──────────────────────────────────────────────
-# 3. Pipeline 调度
+# 3. Pipeline scheduling
 # ──────────────────────────────────────────────
 
 def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
              use_gopay=False, use_qris=False, gopay_otp_file=None,
              timeout_reg=300, timeout_pay=600,
              pool=None, team_client=None, card_cfg=None, proxy_pool=None):
-    """全链路: 注册 → 支付 → (可选) gpt-team 导入探测 → 更新域池
-    proxy_pool 非空时从 pool 挑代理，同时覆盖 CTF-reg + CTF-pay 两个 config 的 proxy 字段"""
+    """Full pipeline: register → pay → (optional) gpt-team import probe → update domain pool
+    When proxy_pool non-empty, pick proxy from pool, simultaneously override proxy field in both CTF-reg + CTF-pay config"""
     card_config_path = str(Path(card_config_path).resolve())
 
     if card_cfg is None:
         card_cfg = _read_card_cfg(card_config_path)
     cardw_config_path = _load_cardw_path_from_card_cfg(card_cfg, cardw_config_path)
 
-    # 内部 fallback：如果外部没传 pool/team/proxy，也自动构造（单次调用场景）
+    # Internal fallback: if external doesn't pass pool/team/proxy, auto-construct anyway (single call scenario)
     owned_pool = False
     if pool is None:
         ts_cfg = card_cfg.get("team_system") or {}
@@ -1002,13 +1001,13 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
     if proxy_pool is None:
         proxy_pool = _build_proxy_pool_from_card_cfg(card_cfg)
 
-    # 挑代理（独立于域）
+    # Pick proxy (independent of domain)
     picked_proxy = proxy_pool.pick() if proxy_pool and proxy_pool.proxies else ""
     if picked_proxy:
         print(f"[ProxyPool] 本次代理: {picked_proxy}")
 
-    # 挑域 + 写临时 CTF-reg config（同时覆盖 proxy）
-    # pool.domains 为空时，若有 provisioner 仍要让 pick() 触发自动开通
+    # Pick domain + write temporary CTF-reg config (simultaneously override proxy)
+    # When pool.domains empty, if provisioner exists still trigger pick() to auto-provision
     picked_domain = pool.pick() if pool and (pool.domains or pool.provisioner) else ""
     temp_cardw = None
     effective_cardw = cardw_config_path
@@ -1019,7 +1018,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
             pool.mark_used(picked_domain)
             print(f"[DomainPool] 本次使用域: {picked_domain}")
 
-    # CTF-pay 也覆盖 proxy（支付流程走同一代理）
+    # CTF-pay also override proxy (payment flow uses same proxy)
     temp_card = None
     effective_card = card_config_path
     if picked_proxy:
@@ -1030,12 +1029,12 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
     record = {"ts": ts, "registration": {}, "payment": {},
               "domain": picked_domain, "proxy": picked_proxy}
 
-    # webshare/gost 保活：daemon 路径自带，单次 pipeline() 也得来一发，
-    # 否则 camoufox 启动会卡 public_ip(socks5://127.0.0.1:18898)
+    # webshare/gost keepalive: daemon path included, single pipeline() also needs one run,
+    # otherwise camoufox startup will hang on public_ip(socks5://127.0.0.1:18898)
     _ensure_gost_alive(card_cfg, team_client)
 
     try:
-        # Step 1: 注册
+        # Step 1: Register
         print(f"\n{'='*60}")
         print(f"[pipeline] Step 1/2: 注册 ChatGPT 账号")
         print(f"{'='*60}")
@@ -1048,7 +1047,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
             _append_result(record)
             raise
 
-        # Step 2: 支付
+        # Step 2: Pay
         print(f"\n{'='*60}")
         print(f"[pipeline] Step 2/2: Stripe 支付 ({reg.get('email', '?')})")
         print(f"{'='*60}")
@@ -1073,7 +1072,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
             _append_result(record)
             raise
 
-        # Step 3: 支付成功 → gpt-team 导入 + invite 探测
+        # Step 3: Payment success → gpt-team import + invite probe
         pay_status = pay_result.get("status", "unknown")
         if pay_status == "succeeded" and team_client:
             try:
@@ -1086,7 +1085,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
                 print(f"[Team] probe 异常: {e}")
                 record["invite_permission"] = "error"
 
-        # Step 4: 支付成功 → 额外导入到 CPA（CLIProxyAPI）
+        # Step 4: Payment success → additional import to CPA (CLIProxyAPI)
         cpa_cfg = _cpa_cfg_for_card_payment(card_cfg or {})
         if pay_status == "succeeded" and cpa_cfg.get("enabled"):
             try:
@@ -1112,7 +1111,7 @@ def pipeline(card_config_path, cardw_config_path=None, use_paypal=False,
 
 
 def _run_one(args_tuple):
-    """单个 pipeline 任务（供并行调度）"""
+    """Single pipeline task (for parallel scheduling)"""
     idx, card_config_path, kwargs = args_tuple
     try:
         r = pipeline(card_config_path, **kwargs)
@@ -1123,13 +1122,13 @@ def _run_one(args_tuple):
 
 
 def _run_one_pay_only(args_tuple):
-    """PayPal 并发模式下：注册已完成，只串行支付用（预留占位，batch 里不再单独使用）"""
+    """PayPal concurrent mode: registration already complete, only serial payment (reserved placeholder, not used separately in batch)"""
     return {"batch_index": args_tuple[0], "status": "error", "error": "deprecated path"}
 
 
 def _register_one(args_tuple):
-    """单个注册任务。args_tuple = (idx, cardw_config_path, pool_or_None)
-    pool 非空时为每个 worker 独立 pick 域 + 改写临时 cardw config。"""
+    """Single register task. args_tuple = (idx, cardw_config_path, pool_or_None)
+    When pool non-empty, independently pick domain for each worker + rewrite temporary cardw config."""
     if len(args_tuple) == 3:
         idx, cardw_config_path, pool = args_tuple
     else:
@@ -1155,11 +1154,10 @@ def _register_one(args_tuple):
 
 
 def batch(card_config_path, count, delay=30, workers=1, **kwargs):
-    """批量运行 N 次。可选 modifier:
-       - register_only=True: 每次只 register（不付费），workers 串行
-       - pay_only=True:      每次只 pay_only（复用未付账号），workers 串行
-       - 都不开:              每次走完整 pipeline（注册+付费）
-    """
+    """Batch run N times. Optional modifier:
+       - register_only=True: each time only register (no payment), workers serial
+       - pay_only=True:      each time only pay_only (reuse unpaid accounts), workers serial
+       - neither enabled:     each time run full pipeline (register+pay)"""
     use_paypal = kwargs.get("use_paypal", False)
     is_register_only = bool(kwargs.pop("register_only", False))
     is_pay_only = bool(kwargs.pop("pay_only", False))
@@ -1167,11 +1165,11 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
     use_qris = bool(kwargs.pop("use_qris", False))
     gopay_otp_file = kwargs.pop("gopay_otp_file", "")
 
-    # 构造共享 pool + team_client（所有 worker 复用）
+    # Construct shared pool + team_client (all workers reuse)
     card_cfg = _read_card_cfg(card_config_path)
     cardw_path = _load_cardw_path_from_card_cfg(card_cfg, kwargs.get("cardw_config_path"))
 
-    # ── register-only batch：每次 register，串行（避免并行同 IP 触发风控）
+    # ── register-only batch: each register, serial (avoid parallel same IP triggering risk control)
     if is_register_only:
         if not cardw_path:
             print("[batch:register-only] 缺 cardw_config_path", file=sys.stderr)
@@ -1196,7 +1194,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
         print(f"\n[batch] register-only 完成: {ok_count}/{count} 成功")
         return results
 
-    # ── pay-only batch：每次 pay_only（复用未付账号），串行
+    # ── pay-only batch: each pay_only (reuse unpaid accounts), serial
     if is_pay_only:
         print(f"\n[batch] === pay-only × {count} 串行 ===")
         results = []
@@ -1242,7 +1240,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
     kwargs.setdefault("proxy_pool", proxy_pool)
 
     if workers > 1 and use_paypal:
-        # PayPal 模式：并行注册 → 串行支付（共用 PayPal 账号不能并行 2FA）
+        # PayPal mode: parallel register → serial pay (shared PayPal account cannot parallel 2FA)
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         cardw_cfg = cardw_path
@@ -1265,7 +1263,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
         reg_ok = [a for a in accounts if a and a["status"] == "ok"]
         print(f"\n[batch] 注册完成: {len(reg_ok)}/{count} 成功")
 
-        # Step 2: 串行支付 + team probe
+        # Step 2: Serial pay + team probe
         print(f"\n[batch] === 阶段 2: 串行支付 ({len(reg_ok)} 账号) ===")
         results = []
         for i, acc in enumerate(reg_ok):
@@ -1314,7 +1312,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
                 time.sleep(delay)
 
     elif workers <= 1:
-        # 全串行
+        # Full serial
         results = []
         for i in range(count):
             print(f"\n{'#'*60}")
@@ -1324,7 +1322,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
             if i < count - 1 and delay > 0:
                 time.sleep(delay)
     else:
-        # 非 PayPal: 全并行
+        # Non-PayPal: full parallel
         from concurrent.futures import ThreadPoolExecutor, as_completed
         print(f"\n[batch] 并行模式: {workers} workers × {count} 任务")
         tasks = [(i, card_config_path, kwargs) for i in range(count)]
@@ -1335,7 +1333,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
                 idx = futures[future]
                 results[idx] = future.result()
 
-    # 汇总
+    # Summary
     print(f"\n{'='*60}")
     print(f"批量结果汇总 ({count} 次, workers={workers})")
     print(f"{'='*60}")
@@ -1362,7 +1360,7 @@ def batch(card_config_path, count, delay=30, workers=1, **kwargs):
 
 
 # ──────────────────────────────────────────────
-# 工具函数
+# Utility functions
 # ──────────────────────────────────────────────
 
 def _append_result(record):
@@ -1456,8 +1454,8 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False, use_qris=Fa
     registered-but-unpaid accounts from being wasted.
     """
     if target_email:
-        # 显式指定账号——不走 consumed 过滤，让用户对选中行操作（即使曾经付费过
-        # 也允许重试，便于测试）。读不到时回退正常逻辑。
+        # Explicitly specify account — do not go through consumed filter, allow user operations on selected rows (even if previously paid)
+        # Also allow retry for convenience in testing. Fall back to normal logic if unable to read.
         target_norm = _norm_email(target_email)
         row = get_db().find_latest_registered_account(target_norm) or None
         if row:
@@ -1526,14 +1524,12 @@ def pay_only(card_config_path, *, use_paypal=False, use_gopay=False, use_qris=Fa
 
 
 # ──────────────────────────────────────────────
-# RT-only：对已注册账号补抓 refresh_token（不付款）
+# RT-only: supplement refresh_token capture for already-registered accounts (no payment)
 # ──────────────────────────────────────────────
 
 
 def rt_only_for_email(card_config_path: str, target_email: str) -> dict:
-    """对单个 email 跑 RT 交换：用 DB 里现有 password/session 走 Codex OAuth
-    拿 refresh_token，写回 registered_accounts。不会付款不会改账号 plan。
-    """
+    """Run RT exchange for individual email: use existing password/session from DB via Codex OAuth to get refresh_token, write back to registered_accounts. No payment, no account plan change."""
     target = _norm_email(target_email)
     if not target:
         return {"status": "no_email"}
@@ -1547,9 +1543,9 @@ def rt_only_for_email(card_config_path: str, target_email: str) -> dict:
         print(f"[rt-only] {target} 已有 refresh_token (len={len(account['refresh_token'])}), 跳过")
         return {"status": "already_has_rt", "email": target}
 
-    # 实际 RT 交换通过 _exchange_refresh_token_dispatch 按 WEBUI_REG_MODE 路由
-    # (protocol → AuthFlow.run_protocol_login, 否则 Camoufox)，但 proxy/oauth_client_id
-    # 解析 helper 仍只在 card.py 里。
+    # Actual RT exchange is routed via _exchange_refresh_token_dispatch by WEBUI_REG_MODE
+    # (protocol → AuthFlow.run_protocol_login, otherwise Camoufox), but proxy/oauth_client_id
+    # parsing helper is still only in card.py.
     sys.path.insert(0, str(CARD_DIR))
     try:
         from card import (
@@ -1599,8 +1595,8 @@ def rt_only_for_email(card_config_path: str, target_email: str) -> dict:
         print(f"[rt-only] ❌ {target} 未获得 refresh_token")
         return {"status": "no_rt", "email": target}
 
-    # 写回 DB。注意：find_latest_registered_account() 的 SELECT 不返 id 字段，
-    # 所以 account['id'] 是空。这里直接按 email 查最新一行的 id 再 UPDATE。
+    # Write back to DB. Note: find_latest_registered_account()'s SELECT does not return id field,
+    # so account['id'] is empty. Here directly query the latest row's id by email then UPDATE.
     try:
         db = get_db()
         with db._conn() as c:
@@ -1629,7 +1625,7 @@ def rt_only_for_email(card_config_path: str, target_email: str) -> dict:
 
 
 def rt_only_targets(card_config_path: str, target_emails: list[str]) -> dict:
-    """批量 RT-only：串行跑每个 email，汇总结果。"""
+    """Batch RT-only: run each email serially, summarize results."""
     results = []
     ok = 0
     skip = 0
@@ -1654,7 +1650,7 @@ def rt_only_targets(card_config_path: str, target_emails: list[str]) -> dict:
 def pay_only_targets(card_config_path: str, target_emails: list[str], *,
                      use_paypal=False, use_gopay=False, use_qris=False,
                      gopay_otp_file=None) -> dict:
-    """批量 pay-only：对指定 email 列表逐个跑支付。"""
+    """Batch pay-only: run payment for specified email list one by one."""
     results = []
     ok = 0
     fail = 0
@@ -1685,7 +1681,7 @@ def pay_only_targets(card_config_path: str, target_emails: list[str], *,
 
 
 # ──────────────────────────────────────────────
-# free_only mode helpers (OAuth 状态管理 + 失败分类)
+# free_only mode helpers (OAuth state management + failure classification)
 # ──────────────────────────────────────────────
 
 _OAUTH_TRANSIENT_COOLDOWN_S = 6 * 3600  # transient_failed 6h cooldown
@@ -1738,7 +1734,7 @@ def _get_account_oauth_status(email: str):
 
 
 def _should_skip_oauth_account(email: str) -> bool:
-    """True = 跳过；succeeded/dead 永跳，transient_failed 在 6h cooldown 内跳。"""
+    """True = skip; succeeded/dead always skip, transient_failed skips within 6h cooldown."""
     s = _get_account_oauth_status(email)
     if not s:
         return False
@@ -1767,7 +1763,7 @@ def _find_latest_registered_account_for_email(email: str) -> dict:
 
 
 def _password_from_email(email: str) -> str:
-    """跟 browser_register 一致：local + domain（含点）；< 8 字符附加 2026OpenAI。"""
+    """Consistent with browser_register: local + domain (including dots); < 8 chars append 2026OpenAI."""
     p = (email or "").replace("@", "")
     if len(p) < 8:
         p = f"{p}2026OpenAI"
@@ -1775,11 +1771,10 @@ def _password_from_email(email: str) -> str:
 
 
 def _classify_oauth_failure(log: str) -> str:
-    """从 _exchange_refresh_token_with_session 的 print log 推断失败原因。
+    """Infer failure reason from print log of _exchange_refresh_token_with_session.
 
-    优先级：account_dead > add_phone_blocked > otp_timeout >
-    consent_failed > no_callback > unknown
-    """
+    Priority: account_dead > add_phone_blocked > otp_timeout >
+    consent_failed > no_callback > unknown"""
     if not log:
         return "unknown"
     low = log.lower()
@@ -1795,7 +1790,7 @@ def _classify_oauth_failure(log: str) -> str:
         return "otp_timeout"
     if "未捕获到 callback URL" in log or "callback 无 code" in log:
         return "no_callback"
-    # OpenAI 拒绝 OAuth authorize 参数（最常见：client_id 占位符 / 失效 token）
+    # OpenAI rejects OAuth authorize parameters (most common: client_id placeholder / expired token)
     if "AuthApiFailure" in log or "auth.openai.com/error?payload=" in log:
         return "auth_api_failure"
     if "consent" in log and "code=" not in log and "[RT] callback 无" not in log:
@@ -1804,7 +1799,7 @@ def _classify_oauth_failure(log: str) -> str:
 
 
 def _rt_mode_is_protocol() -> bool:
-    """WEBUI 选了纯协议时，RT 补领也必须走 AuthFlow，不能静默回落 Camoufox。"""
+    """When WEBUI selects pure protocol, RT supplementation must also go through AuthFlow, cannot silently fall back to Camoufox."""
     mode = (os.environ.get("WEBUI_REG_MODE") or "").strip().lower()
     return mode in ("protocol", "http", "api", "auth_flow")
 
@@ -1813,15 +1808,14 @@ def _exchange_refresh_token_dispatch(
     email: str, password: str, mail_cfg: dict,
     proxy_url: str = "", oauth_client_id: str = "",
 ) -> str:
-    """根据 WEBUI_REG_MODE 选 RT 交换路径。
+    """Choose RT exchange path by WEBUI_REG_MODE.
 
-    - protocol 模式：CTF-reg/drivers/protocol.py 的 exchange_refresh_token_protocol
-      （sentinel + email OTP + Codex OAuth，全 self.session.get/post）。失败会
-      raise，不退回 Camoufox。
-    - 否则：card._exchange_refresh_token_with_session（Camoufox 真浏览器）。
+    - protocol mode: exchange_refresh_token_protocol from CTF-reg/drivers/protocol.py
+      (sentinel + email OTP + Codex OAuth, all self.session.get/post). Failure raises,
+      no fallback to Camoufox.
+    - otherwise: card._exchange_refresh_token_with_session (Camoufox real browser).
 
-    两端签名一致，pipeline 调用点统一通过本 helper。
-    """
+    Both ends have consistent signatures, pipeline call point unified via this helper."""
     if _rt_mode_is_protocol():
         if str(CARDW_DIR) not in sys.path:
             sys.path.insert(0, str(CARDW_DIR))
@@ -1845,17 +1839,16 @@ def _exchange_refresh_token_dispatch(
 def _exchange_rt_with_classification(
     email: str, password: str, mail_cfg: dict, proxy_url: str
 ):
-    """包 _exchange_refresh_token_dispatch 加失败分类。
+    """Wrap _exchange_refresh_token_dispatch with failure classification.
 
-    返回 (rt, fail_reason)：rt 非空时 fail_reason 为空串。
-    print 输出 tee 到真 stdout（webui runner 能看到进度）+ 缓冲（用于 grep 分类）。
+    Return (rt, fail_reason): when rt is non-empty, fail_reason is empty string.
+    print output tees to real stdout (webui runner can see progress) + buffered (for grep classification).
 
-    路径选择由 _exchange_refresh_token_dispatch 按 WEBUI_REG_MODE 决定。
-    """
+    Path selection by _exchange_refresh_token_dispatch per WEBUI_REG_MODE."""
     import io
 
-    # card.py 内部会 from mail.cf_kv import ...（Wave H 前: cf_kv_otp_provider）
-    # 要确保两个目录都在 sys.path，否则 OTP 路径 ImportError 立即返 ""。
+    # card.py internally does from mail.cf_kv import ... (before Wave H: cf_kv_otp_provider)
+    # Must ensure both directories are in sys.path, otherwise OTP path ImportError returns "" immediately.
     if str(CARDW_DIR) not in sys.path:
         sys.path.insert(0, str(CARDW_DIR))
     if str(CARD_DIR) not in sys.path:
@@ -1917,7 +1910,7 @@ def _load_cardw_path_from_card_cfg(card_cfg, fallback_cardw=None):
 
 
 def _load_secrets():
-    """从 SQLite 运行时库读取 Cloudflare/KV 等敏感凭证。"""
+    """Read sensitive credentials like Cloudflare/KV from SQLite runtime library."""
     try:
         data = get_db().get_runtime_json(SECRETS_KEY, {})
         return data if isinstance(data, dict) else {}
@@ -1927,17 +1920,16 @@ def _load_secrets():
 
 
 # ──────────────────────────────────────────────
-# Daemon：持续维护 gpt-team 系统可用账号数
+# Daemon: continuously maintain available account count for gpt-team system
 # ──────────────────────────────────────────────
 
 def _cleanup_temp_leftovers(max_age_s: int = 1800, verbose: bool = False) -> dict:
-    """清理孤儿临时文件以防 /tmp（tmpfs）被 SIGKILL 残留吃爆。
-    只清 mtime 超过 max_age_s 的：
-    - /tmp/chatgpt_reg_*        （Camoufox 注册临时 profile）
-    - /tmp/xvfb-run.*           （xvfb-run auth 目录，需无 Xvfb 引用）
-    - CTF-pay/.runtime/pipeline_*.json   （pay 临时 config，含 pay/plan/px）
-    - CTF-reg/.runtime/pipeline_cardw_*.json （register 临时 config）
-    """
+    """Clean orphan temp files to prevent /tmp (tmpfs) from being blown up by SIGKILL remnants.
+    Only clean files with mtime > max_age_s:
+    - /tmp/chatgpt_reg_*        (Camoufox registration temp profile)
+    - /tmp/xvfb-run.*           (xvfb-run auth directory, must have no Xvfb references)
+    - CTF-pay/.runtime/pipeline_*.json   (pay temp config, contains pay/plan/px)
+    - CTF-reg/.runtime/pipeline_cardw_*.json (register temp config)"""
     now = time.time()
     stats = {"profiles": 0, "xvfb": 0, "cfg_pay": 0, "cfg_cardw": 0, "bytes": 0}
 
@@ -1964,7 +1956,7 @@ def _cleanup_temp_leftovers(max_age_s: int = 1800, verbose: bool = False) -> dic
     except Exception:
         pass
 
-    # 2. xvfb-run.* 目录（保留活跃 Xvfb 引用的）
+    # 2. xvfb-run.* directories (preserve those with active Xvfb references)
     active_auth_dirs = set()
     try:
         out = subprocess.check_output(["pgrep", "-af", "Xvfb"], text=True)
@@ -1988,7 +1980,7 @@ def _cleanup_temp_leftovers(max_age_s: int = 1800, verbose: bool = False) -> dic
     except Exception:
         pass
 
-    # 3. 项目内临时 config（pipeline 产生的 temp json）
+    # 3. in-project temp configs (temp json produced by pipeline)
     for base, pattern, key in [(RUNTIME_PAY, "pipeline_*.json", "cfg_pay"),
                                  (RUNTIME_REG, "pipeline_cardw_*.json", "cfg_cardw")]:
         try:
@@ -2013,9 +2005,9 @@ def _cleanup_temp_leftovers(max_age_s: int = 1800, verbose: bool = False) -> dic
 
 def _cleanup_dead_cf_subdomains(provisioner, gpt_team_db_path: str,
                                   dry_run: bool = False) -> dict:
-    """CF zone record quota 清理：gpt-team DB 里所有 is_banned/is_disabled/expired 的
-    账号，它们的邮箱子域如果在 DB 里没有任何活账号，就把 CF 上该子域的 DNS 记录删掉。
-    每子域释放约 4 条 records（3 MX + 1 TXT/SPF）。返回 stats dict。"""
+    """CF zone record quota cleanup: for all is_banned/is_disabled/expired accounts in gpt-team DB,
+    if their email subdomains have no active accounts in DB, delete those subdomains' DNS records on CF.
+    Each subdomain frees ~4 records (3 MX + 1 TXT/SPF). Return stats dict."""
     import sqlite3
     from collections import defaultdict
     stats = {"checked": 0, "dead_subs": 0, "cleaned_subs": 0, "records_removed": 0,
@@ -2025,7 +2017,7 @@ def _cleanup_dead_cf_subdomains(provisioner, gpt_team_db_path: str,
     if not gpt_team_db_path or not os.path.exists(gpt_team_db_path):
         print(f"[CF-cleanup] 跳过：gpt-team DB 不存在 ({gpt_team_db_path})")
         return stats
-    # 当前 provisioner 覆盖的 zone（单 zone 用 zone_name 属性；多 zone 走 zone_names）
+    # Current provisioner's covered zone (single zone uses zone_name attribute; multiple zones use zone_names)
     zones = []
     if hasattr(provisioner, "zone_names"):
         zones = [z.lower() for z in provisioner.zone_names]
@@ -2045,7 +2037,7 @@ def _cleanup_dead_cf_subdomains(provisioner, gpt_team_db_path: str,
         return stats
     by_sub = defaultdict(lambda: {"alive": 0, "dead": 0})
     try:
-        # dead 判定：banned / disabled / expired / no_invite_permission
+        # dead determination: banned / disabled / expired / no_invite_permission
         q = """SELECT email, is_banned, is_disabled,
                CASE WHEN expire_at IS NULL OR expire_at=''
                  OR DATETIME(REPLACE(expire_at,'/','-')) < DATETIME('now','localtime')
@@ -2056,13 +2048,13 @@ def _cleanup_dead_cf_subdomains(provisioner, gpt_team_db_path: str,
             if not email or "@" not in email:
                 continue
             sub = email.split("@", 1)[1].lower()
-            # 必须是子域（严格 endswith "." + zone），apex 根域本身绝不碰
+            # Must be subdomain (strictly endswith "." + zone), never touch apex root domain itself
             if not any(sub.endswith("." + z) for z in zones):
                 continue
-            if sub in {z.lower() for z in zones}:  # 双保险
+            if sub in {z.lower() for z in zones}:  # double insurance
                 continue
             stats["checked"] += 1
-            # no_invite_permission 的账号对业务没用，视同 dead
+            # no_invite_permission accounts are useless for business, treat as dead
             if banned or disabled or expired or no_perm:
                 by_sub[sub]["dead"] += 1
             else:
@@ -2073,9 +2065,9 @@ def _cleanup_dead_cf_subdomains(provisioner, gpt_team_db_path: str,
     finally:
         conn.close()
 
-    # 1. DB 里所有账号对应子域都 dead → 清
+    # 1. All subdomains for all DB accounts are dead → cleanup
     fully_dead_db = set(s for s, v in by_sub.items() if v["alive"] == 0 and v["dead"] > 0)
-    # 2. CF 上有 MX 但 DB 里完全没对应账号的孤儿子域 → 也清
+    # 2. MX exists on CF but no corresponding accounts at all in DB for orphan subdomains → also cleanup
     cf_subs = set()
     try:
         cf_subs = {s.lower() for s in provisioner.list_subdomains()}
@@ -2108,14 +2100,12 @@ def _cleanup_dead_cf_subdomains(provisioner, gpt_team_db_path: str,
 
 
 def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
-    """
-    状态机：常驻维护 gpt-team 系统里 '可用邀请' 账号数 ≥ target_ok_accounts。
-    - 可用定义：isOpen & !isBanned & !isDisabled & !noInvitePermission & seat 未满
-    - 限流：每小时 / 每日上限（避免短时间批量触发风控）
-    - 保护：连续失败 ≥ max_consecutive_failures 时冷却 consecutive_fail_cooldown_s
-    - 状态持久化：SQLite runtime_meta[daemon_state]
-    - 优雅退出：SIGINT/SIGTERM 完成当前循环后停止
-    """
+    """State machine: continuously maintain available invite account count in gpt-team system ≥ target_ok_accounts.
+    - Available defined: isOpen & !isBanned & !isDisabled & !noInvitePermission & seat not full
+    - Rate limiting: per hour / per day limit (avoid triggering risk control in short time batch)
+    - Protection: consecutive failures ≥ max_consecutive_failures triggers consecutive_fail_cooldown_s cooldown
+    - State persistence: SQLite runtime_meta[daemon_state]
+    - Graceful shutdown: SIGINT/SIGTERM stops after completing current loop"""
     import signal
     card_cfg = _read_card_cfg(card_config_path)
     cardw_path = _load_cardw_path_from_card_cfg(card_cfg, cardw_config_path)
@@ -2130,15 +2120,15 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
     cfail_cool_s = int(d_cfg.get("consecutive_fail_cooldown_s", 1800))
     jitter = d_cfg.get("jitter_before_run_s") or [60, 180]
     seat_limit = int(d_cfg.get("seat_limit", 5))
-    # gpt-team 的 batch-import 默认把新账号放入 "recovery" 补号池（is_open=0 + account_usage='recovery'），
-    # 对外售卖时 admin 手动改 sales 并开启。daemon 默认维护补号池数量。
+    # gpt-team's batch-import by default puts new accounts into "recovery" replenishment pool (is_open=0 + account_usage='recovery'),
+    # admin manually changes to sales and enables when selling externally. daemon maintains replenishment pool count by default.
     usage_pool = str(d_cfg.get("usage_pool", "recovery")).lower()
 
     ts_cfg = card_cfg.get("team_system") or {}
     cd_h = int(ts_cfg.get("domain_cooldown_hours", 24))
     pool = _build_domain_pool_from_cardw(cardw_path, cd_h)
     team_client = _build_team_client_from_card_cfg(card_cfg)
-    _proxy_pool = _build_proxy_pool_from_card_cfg(card_cfg)  # 预留，暂不参与 pipeline 分发
+    _proxy_pool = _build_proxy_pool_from_card_cfg(card_cfg)  # reserved, currently not participating in pipeline distribution
 
     if not team_client:
         raise RuntimeError("daemon 需要 team_system.enabled=true")
@@ -2151,7 +2141,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
         try: signal.signal(sg, _sig)
         except Exception: pass
 
-    # Webshare 自动轮换配置
+    # Webshare auto-rotation config
     ws_cfg = card_cfg.get("webshare") or {}
     ws_enabled = bool(ws_cfg.get("enabled"))
     ws_threshold = int(ws_cfg.get("refresh_threshold", 3))
@@ -2168,7 +2158,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
         except Exception as e:
             print(f"[Webshare] 启动额度查询失败（不影响运行）: {e}")
 
-    # 状态
+    # State
     state = {
         "started_at": datetime.now(timezone.utc).isoformat(),
         "total_attempts": 0, "total_succeeded": 0, "total_failed": 0,
@@ -2200,7 +2190,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
     except Exception as e:
         print(f"[daemon] 读历史 state 失败: {e}")
 
-    # 初始化 current_zone（若 provisioner 是多 zone）
+    # Initialize current_zone (if provisioner is multi-zone)
     zone_list = []
     prov = getattr(pool, "provisioner", None)
     if prov and hasattr(prov, "zone_names"):
@@ -2223,11 +2213,11 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
         except Exception as e:
             print(f"[daemon] 存 state 失败: {e}")
 
-    # 启动时做一次激进清理（上次 SIGKILL 残留）
+    # Do aggressive cleanup once at startup (residue from last SIGKILL)
     _c0 = _cleanup_temp_leftovers(max_age_s=300, verbose=True)
     if sum(v for k, v in _c0.items() if k != "bytes"):
         print(f"[cleanup] 启动清理完毕")
-    # CF 死子域清理：启动时 + 循环中按 cf_cleanup_every_n_runs 周期触发
+    # CF dead subdomain cleanup: at startup + triggered periodically by cf_cleanup_every_n_runs in loop
     cf_db_path = (card_cfg.get("daemon") or {}).get(
         "gpt_team_db_path", "/path/to/gpt-team/backend/db/database.sqlite"
     )
@@ -2235,7 +2225,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
         "cf_cleanup_every_n_runs", 30
     ))
     _cleanup_dead_cf_subdomains(getattr(pool, "provisioner", None), cf_db_path)
-    # 启动时检查 gost（断了自动拉起）
+    # Check gost at startup (auto-restart if broken)
     _ensure_gost_alive(card_cfg, team_client)
 
     _hour_label = f"{rate_per_hour}/h" if rate_per_hour > 0 else "无限"
@@ -2246,7 +2236,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
     kwargs = {"card_cfg": card_cfg, "pool": pool, "team_client": team_client, "use_paypal": use_paypal}
 
     while not stop["flag"]:
-        # 无 Webshare 轮换额度 + 连续 no_perm 触发的冷却闸门
+        # No Webshare rotation quota + cooldown gate triggered by consecutive no_perm
         now_ts = time.time()
         cd_until = float(state.get("no_perm_cooldown_until", 0) or 0)
         if cd_until > now_ts:
@@ -2285,7 +2275,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
                 time.sleep(1)
             continue
 
-        # 限流
+        # Rate limiting
         now = time.time()
         state["rate_hour_ts"] = [t for t in state["rate_hour_ts"] if now - t < 3600]
         state["rate_day_ts"] = [t for t in state["rate_day_ts"] if now - t < 86400]
@@ -2306,7 +2296,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
                 time.sleep(1)
             continue
 
-        # 连续失败保护
+        # Consecutive failure protection
         if state["consecutive_failures"] >= max_cfail:
             print(f"[daemon] 连续失败 {state['consecutive_failures']}/{max_cfail}，冷却 {cfail_cool_s/60:.0f} min")
             _save()
@@ -2316,7 +2306,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
             state["consecutive_failures"] = 0
             continue
 
-        # 抖动
+        # Jitter
         js = random.uniform(float(jitter[0]), float(jitter[1]))
         print(f"[daemon] 抖动 {js:.0f}s 后开跑（可用缺口 {target-usable}）...")
         for _ in range(int(js)):
@@ -2324,12 +2314,12 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
             time.sleep(1)
         if stop["flag"]: break
 
-        # 跑 1 次 pipeline
+        # Run 1 pipeline
         state["total_attempts"] += 1
         run_ts = time.time()
         state["rate_hour_ts"].append(run_ts)
         state["rate_day_ts"].append(run_ts)
-        # 每轮前确认 gost 活着（避免 camoufox geoip 失败）
+        # Confirm gost is alive before each round (avoid camoufox geoip failure)
         _ensure_gost_alive(card_cfg, team_client)
         try:
             rec = pipeline(card_config_path, **kwargs)
@@ -2347,8 +2337,8 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
                 state["last_error"] = f"pay={status}"
                 print(f"[daemon] ✗ pipeline 失败 (pay={status})  连续失败={state['consecutive_failures']}")
         except DatadomeSliderError as e:
-            # 可见滑块：card.py 的 drag solver 已尝试且失败。换 IP 也救不了
-            # （PayPal 账号风控才是根源），所以不 rotate，只计失败 + 触发自然冷却
+            # Visible slider: drag solver in card.py already attempted and failed. IP rotation won't help either
+            # (PayPal account risk control is the root cause), so no rotate, just count failure + trigger natural cooldown
             state["total_failed"] += 1
             state["consecutive_failures"] += 1
             state["last_error"] = "datadome_slider"
@@ -2356,9 +2346,9 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
             print(f"[daemon] ⚠ DataDome 滑块 solver 失败  连续失败={state['consecutive_failures']}  "
                   f"（不轮换 IP，换 IP 不解决账号风控）")
         except RegistrationError as e:
-            # 注册失败：分两类
-            # - OTP 超时 / 域风控 → 计 zone-级 streak，累到阈值切 zone
-            # - InvalidIP / geoip / proxy 脱链 等基础设施类 → 不计 zone streak
+            # Registration failure: split into two categories
+            # - OTP timeout / zone rate limit → count zone-level streak, switch zone when threshold reached
+            # - InvalidIP / geoip / proxy disconnection etc. infrastructure issues → don't count zone streak
             state["total_failed"] += 1
             state["consecutive_failures"] += 1
             state["last_error"] = f"reg: {str(e)[:160]}"
@@ -2383,7 +2373,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
             perm = "-"
             print(f"[daemon] ✗ pipeline 异常: {str(e)[:200]}  连续失败={state['consecutive_failures']}")
 
-        # 注册失败连续累积到阈值 → 切 zone（OpenAI signup 域风控专用路径）
+        # Registration failure consecutive accumulation to threshold → switch zone (OpenAI signup domain rate limit dedicated path)
         if (zone_list and len(zone_list) > 1
             and state.get("zone_reg_fail_streak", 0) >= zone_rotate_on_reg_fails):
             cur_zone = state.get("current_zone", zone_list[0])
@@ -2404,11 +2394,11 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
             state["current_zone"] = next_zone
             state["zone_reg_fail_streak"] = 0
             state["zone_ip_rotations"] = 0
-            state["consecutive_failures"] = 0  # 切 zone 给新 zone 重置 fail 计数
+            state["consecutive_failures"] = 0  # Switching zone resets fail counter for new zone
             state["total_zone_rotations"] = state.get("total_zone_rotations", 0) + 1
             print(f"[daemon] zone 切换完成，累计 zone 轮换={state['total_zone_rotations']}")
 
-        # IP no_perm streak（始终追踪，与 Webshare 额度状态无关）
+        # IP no_perm streak (always tracked, independent of Webshare quota status)
         if ws_enabled:
             if perm == "no_permission":
                 state["ip_no_perm_streak"] += 1
@@ -2419,7 +2409,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
                           f"zone_rotations={state.get('zone_ip_rotations', 0)}）")
                 state["ip_no_perm_streak"] = 0
                 state["zone_ip_rotations"] = 0
-                # ok 一单也说明 IP 还能用，清掉历史 rotation_disabled 标记，给下次一个机会
+                # One successful order also proves IP still works, clear historical rotation_disabled flag, give next attempt a chance
                 if state.get("webshare_rotation_disabled"):
                     print(f"[daemon] invite=ok → 清 webshare_rotation_disabled")
                     state["webshare_rotation_disabled"] = False
@@ -2441,10 +2431,10 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
                         state["webshare_rotation_disabled"] = True
                         print(f"[daemon] ⚠ Webshare 替换额度耗尽: {e}")
                     except Exception as e:
-                        # 非 quota 异常（网络/DNS 抖动等）不锁死 rotation，只打 log
+                        # Non-quota exceptions (network/DNS jitter etc.) don't lock rotation, just log
                         print(f"[daemon] ✗ IP 轮换失败（本次跳过，下次 no_perm 再试）: {e}")
 
-                # 若轮换不可用（额度耗尽 / 异常），进 3h 冷却让 IP 自然回血
+                # If rotation unavailable (quota exhausted / exception), enter 3h cooldown to let IP naturally recover
                 if state.get("webshare_rotation_disabled") and \
                    state["ip_no_perm_streak"] >= ws_threshold:
                     cd_end = time.time() + ws_cooldown_s
@@ -2454,7 +2444,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
                           f"{ws_cooldown_s/3600:.1f}h 到 "
                           f"{datetime.fromtimestamp(cd_end).strftime('%m-%d %H:%M')}")
 
-            # 在当前 zone 内 IP 轮换次数累计到阈值 → 切 zone
+            # IP rotation count within current zone accumulates to threshold → switch zone
             if (zone_list and len(zone_list) > 1
                 and state.get("zone_ip_rotations", 0) >= zone_rotate_after):
                 cur_zone = state.get("current_zone", zone_list[0])
@@ -2465,7 +2455,7 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
                 next_zone = zone_list[(idx + 1) % len(zone_list)]
                 print(f"[daemon] 🔀 当前 zone={cur_zone} 内已 IP 轮换 "
                       f"{state['zone_ip_rotations']} 次仍 no_perm，切换 zone → {next_zone}")
-                # 把池里不属于新 zone 的子域清掉（让下一单强制从新 zone provision）
+                # Remove subdomains in pool that don't belong to new zone (force new zone provision for next order)
                 kept = [d for d in pool.domains if d.lower().endswith("." + next_zone.lower())
                          or d.lower() == next_zone.lower()]
                 removed = len(pool.domains) - len(kept)
@@ -2479,15 +2469,15 @@ def daemon(card_config_path, cardw_config_path=None, use_paypal=False):
                       f"累计 zone 轮换={state['total_zone_rotations']}")
 
         _save()
-        # 每轮 pipeline 后清一次 30min 前的孤儿，防 /tmp 被 SIGKILL 残留吃爆
+        # Clean orphans from 30min ago after each pipeline round, prevent /tmp from being exhausted by SIGKILL residue
         _cleanup_temp_leftovers(max_age_s=1800, verbose=False)
-        # 每 cf_cleanup_every_n_runs 单清一次 CF 死子域（0=禁用）
+        # Clean CF dead subdomains every cf_cleanup_every_n_runs orders (0=disabled)
         if cf_cleanup_every > 0 and state["total_attempts"] % cf_cleanup_every == 0:
             try:
                 _cleanup_dead_cf_subdomains(getattr(pool, "provisioner", None), cf_db_path)
             except Exception as e:
                 print(f"[CF-cleanup] 周期清理异常: {e}")
-        # 下一轮前短 sleep
+        # Short sleep before next round
         for _ in range(10):
             if stop["flag"]: break
             time.sleep(1)
@@ -2511,7 +2501,7 @@ def _build_domain_pool_from_cardw(cardw_path, cooldown_hours=24):
     if ap_cfg.get("enabled"):
         secrets = _load_secrets().get("cloudflare") or {}
         token = secrets.get("api_token", "").strip()
-        # 支持 zone_names (list) 或单 zone_name，向后兼容
+        # Support zone_names (list) or single zone_name, backward compatible
         zones_cfg = ap_cfg.get("zone_names")
         if zones_cfg and isinstance(zones_cfg, list):
             zones = [z for z in zones_cfg if z and isinstance(z, str) and z.strip()]
@@ -2546,8 +2536,8 @@ def _build_domain_pool_from_cardw(cardw_path, cooldown_hours=24):
         else:
             print(f"[CF] auto_provision 已启用但缺 token 或 zone（api_token={bool(token)}, zones={zones}）")
 
-    # auto-loop / daemon 单 zone 锁定：WEBUI_FORCE_ZONE 让本次进程只用指定 zone
-    # 的域（含其子域），并把 multi-zone provisioner 切到该 zone。
+    # auto-loop / daemon single zone lock: WEBUI_FORCE_ZONE restricts this process to use only specified zone
+    # domains (including subdomains), and switch multi-zone provisioner to that zone.
     forced_zone = (os.environ.get("WEBUI_FORCE_ZONE", "") or "").strip().lower()
     if forced_zone:
         kept = [d for d in lst if d.lower() == forced_zone or d.lower().endswith("." + forced_zone)]
@@ -2583,17 +2573,17 @@ def _build_team_client_from_card_cfg(card_cfg):
 
 
 # ──────────────────────────────────────────────
-# 代理池（预留，目前不参与 pipeline，等填入 proxies.list 后接管）
+# Proxy pool (reserved, currently not involved in pipeline, will take over after proxies.list is filled)
 # ──────────────────────────────────────────────
 
 
 class WebshareQuotaExhausted(RuntimeError):
-    """Webshare 本月替换额度耗尽。"""
+    """Webshare monthly replacement quota exhausted."""
     pass
 
 
 class WebshareClient:
-    """Webshare.io API v2 最小客户端：refresh + 读当前代理 + 额度查询。"""
+    """Webshare.io API v2 minimal client: refresh + read current proxy + quota query."""
 
     BASE = "https://proxy.webshare.io/api/v2"
 
@@ -2617,7 +2607,7 @@ class WebshareClient:
         return self._opener.open(req, timeout=self.timeout_s)
 
     def get_plan(self) -> dict:
-        """GET /subscription/plan/ 返回 active plan dict（含替换额度）。"""
+        """GET /subscription/plan/ returns active plan dict (with replacement quota)."""
         with self._req("/subscription/plan/") as r:
             data = json.loads(r.read().decode())
         for p in (data.get("results") or []):
@@ -2626,7 +2616,7 @@ class WebshareClient:
         return (data.get("results") or [{}])[0]
 
     def get_replacement_quota(self) -> dict:
-        """返回 {total, used, available, cycle_end_iso}"""
+        """Returns {total, used, available, cycle_end_iso}"""
         p = self.get_plan()
         return {
             "total": int(p.get("proxy_replacements_total", 0) or 0),
@@ -2636,9 +2626,9 @@ class WebshareClient:
         }
 
     def refresh_pool(self, country: str = "", count: int = 1) -> None:
-        """POST /proxy/list/refresh/ 触发整池 IP 轮换，204 即成功。
-        country 非空时带 {"countries":{country.upper(): count}} body 锁定国家。
-        耗尽额度时抛 WebshareQuotaExhausted。"""
+        """POST /proxy/list/refresh/ triggers pool-wide IP rotation, 204 means success.
+        When country is non-empty, pass {"countries":{country.upper(): count}} body to lock country.
+        Raises WebshareQuotaExhausted when quota exhausted."""
         import urllib.error
         body = None
         if country:
@@ -2659,7 +2649,7 @@ class WebshareClient:
             raise RuntimeError(f"Webshare refresh HTTP {e.code}: {body_text}") from e
 
     def get_current_proxy(self) -> dict:
-        """GET /proxy/list/ 返回第一个 proxy。未校验 valid。"""
+        """GET /proxy/list/ returns first proxy. valid not verified."""
         with self._req("/proxy/list/?mode=direct&page=1&page_size=5") as r:
             data = json.loads(r.read().decode())
         results = data.get("results") or []
@@ -2669,7 +2659,7 @@ class WebshareClient:
 
     def wait_for_fresh_proxy(self, prev_ip: str = "", max_wait_s: int = 120,
                               poll_interval_s: int = 5) -> dict:
-        """轮询直到：valid=True 且 ip != prev_ip。返回 proxy 字典。"""
+        """Poll until: valid=True and ip != prev_ip. Returns proxy dict."""
         deadline = time.time() + max_wait_s
         last = None
         while time.time() < deadline:
@@ -2691,8 +2681,8 @@ _GOST_LAST_FILE = "/tmp/gost_last.json"
 
 def _save_gost_last(new_ip: str, new_port: int, username: str, password: str,
                      listen_port: int, upstream_scheme: str) -> None:
-    """成功 swap 后落盘, 让别的子进程在 webshare API 抖动时也能 fallback 拉起.
-    敏感字段 (password) 在容器内, /tmp 只本容器可访问."""
+    """After successful swap, persist to disk so other subprocesses can fallback and restart when webshare API jitters.
+    Sensitive fields (password) stay in container, /tmp only accessible by this container."""
     try:
         import json as _json
         with open(_GOST_LAST_FILE, "w", encoding="utf-8") as f:
@@ -2720,7 +2710,7 @@ def _load_gost_last() -> dict | None:
 
 def _swap_gost_relay(new_ip: str, new_port: int, username: str, password: str,
                        listen_port: int = 18898, upstream_scheme: str = "http") -> None:
-    """把监听 listen_port 的 gost 换成新上游。安全匹配进程命令行中的 -L=socks5://:<port> 片段。"""
+    """Replace gost listening on listen_port with new upstream. Safely match -L=socks5://:<port> segment in process command line."""
     import signal
     listen_pat = f"-L=socks5://:{listen_port}"
     try:
@@ -2742,7 +2732,7 @@ def _swap_gost_relay(new_ip: str, new_port: int, username: str, password: str,
             print(f"[gost] 停止旧 gost PID={pid}")
         except Exception as e:
             print(f"[gost] 杀 PID={pid} 失败: {e}")
-    # 等旧端口释放
+    # Wait for old port to be released
     deadline = time.time() + 8
     while time.time() < deadline:
         try:
@@ -2766,8 +2756,8 @@ def _swap_gost_relay(new_ip: str, new_port: int, username: str, password: str,
     time.sleep(0.5)
     if p.poll() is not None:
         raise RuntimeError(f"gost 启动即退出，见 {log_path}")
-    # 同步验证上游真能通——避免"代码已轮 IP，gost 还冷启"窗口里调用方
-    # 第一个请求踩 SOCKS5 失败被误归到 proxy_dead → 又触发轮换的螺旋。
+    # Synchronously verify upstream connectivity — avoid "code has rotated IP, gost still cold-started" window in caller invocation
+    # The first request steps on SOCKS5 failure and is mistakenly categorized as proxy_dead → which triggers another round of rotation spiral.
     settle_deadline = time.time() + 15
     while time.time() < settle_deadline:
         if _probe_gost_upstream(listen_port, timeout_s=3):
@@ -2781,7 +2771,7 @@ def _swap_gost_relay(new_ip: str, new_port: int, username: str, password: str,
 
 
 def _probe_gost_upstream(listen_port: int, timeout_s: int = 5) -> bool:
-    """探活：curl 走 socks5://127.0.0.1:<port> 出公网。200 算活；其它（407、SOCKS5 97 等）算死。"""
+    """Probing: curl via socks5://127.0.0.1:<port> to access the public network. HTTP 200 is considered alive; others (407, SOCKS5 97, etc.) are considered dead."""
     try:
         r = subprocess.run(
             ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
@@ -2796,13 +2786,13 @@ def _probe_gost_upstream(listen_port: int, timeout_s: int = 5) -> bool:
 
 
 def _ensure_gost_alive(card_cfg: dict, team_client=None) -> bool:
-    """启动/循环前调。先检 listen，再做上游探活——任何一关挂了都走 refresh+swap
-    自愈（覆盖 Webshare 换 IP 但 gost 还指着旧 IP 这种 407 场景）。
+    """Startup/pre-loop hook. First check listen, then perform upstream health check—if either fails, perform refresh+swap
+    self-healing (handles scenarios like 407 errors where Webshare IP is swapped but gost still points to the old IP).
 
-    并发 worker 同时调时, 用 /tmp/gost_ensure.lock flock 串行化, 避免
-    N worker 同时 swap_gost_relay 互相 kill 对方刚起的 gost (产生 chromium
-    ERR_CONNECTION_CLOSED). 拿不到 lock 就 spin 等, 第二个 worker 进 lock 时
-    listen 已在 + 探活通过, 直接 return True."""
+    When concurrent workers call simultaneously, use /tmp/gost_ensure.lock flock to serialize,
+    avoiding N workers simultaneously calling swap_gost_relay and killing each other's newly started gost processes (causing chromium
+    ERR_CONNECTION_CLOSED). If unable to acquire lock, spin-wait; when the second worker enters the lock,
+    listen is already up + health check passed, return True directly."""
     ws_cfg = (card_cfg or {}).get("webshare") or {}
     if not ws_cfg.get("enabled"):
         return False
@@ -2816,7 +2806,7 @@ def _ensure_gost_alive(card_cfg: dict, team_client=None) -> bool:
     lock_fd = None
     try:
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-        # 阻塞式 LOCK_EX, 最长等 90s (gost swap 最长 ~15s, 加 webshare API 失败兜底 30s timeout)
+        # Blocking LOCK_EX, wait at most 90s (gost swap takes ~15s at most, plus webshare API failure fallback 30s timeout)
         import signal as _sig
         class _Timeout(Exception): ...
         def _alarm(_s, _f):
@@ -2832,7 +2822,7 @@ def _ensure_gost_alive(card_cfg: dict, team_client=None) -> bool:
             _sig.alarm(0)
             _sig.signal(_sig.SIGALRM, old_handler)
     except Exception as e:
-        # fcntl 不支持的环境 (mac / windows) 退到无锁路径
+        # Environments where fcntl is not supported (mac / windows) fall back to lock-free path
         print(f"[gost] flock 失败 ({e}), 走无锁路径")
         if lock_fd is not None:
             try: os.close(lock_fd)
@@ -2852,7 +2842,7 @@ def _ensure_gost_alive(card_cfg: dict, team_client=None) -> bool:
 
 def _ensure_gost_alive_inner(card_cfg: dict, team_client, ws_cfg: dict, listen_port: int) -> bool:
     api_key = (ws_cfg.get("api_key") or "").strip()
-    # 检 listen
+    # Check listen
     listening = False
     try:
         ck = subprocess.run(["ss", "-ltn", f"sport = :{listen_port}"],
@@ -2860,14 +2850,14 @@ def _ensure_gost_alive_inner(card_cfg: dict, team_client, ws_cfg: dict, listen_p
         listening = f":{listen_port}" in ck.stdout
     except Exception:
         pass
-    # listen 在 → 还要探上游能否出网
+    # listen in → also need to explore upstream to see if it can access the network
     if listening:
         if _probe_gost_upstream(listen_port):
             return True
         print(f"[gost] listen :{listen_port} 在但上游探活失败 → 触发 refresh + swap 自愈")
         try:
             _rotate_webshare_ip(card_cfg, team_client=team_client)
-            # rotate 完再探一次
+            # rotate again after completion
             if _probe_gost_upstream(listen_port):
                 return True
             print(f"[gost] rotate 后探活仍失败")
@@ -2883,10 +2873,10 @@ def _ensure_gost_alive_inner(card_cfg: dict, team_client, ws_cfg: dict, listen_p
         px = client.get_current_proxy()
     except Exception as e:
         print(f"[gost] 查询 Webshare 当前 IP 失败: {e}")
-        # webshare API 抖 (502/timeout 常见) → 回退用上次 _swap_gost_relay 成功
-        # 留下的 cache (/tmp/gost_last.json), 至少先把 gost 拉起再说. 即便 IP 已经
-        # 被 webshare 池替换了 _probe_gost_upstream 也会立刻探活失败, 调用方 retry
-        # 时会重新进 listen-在-但-上游-死 分支触发 rotate.
+        # webshare API shake (502/timeout common) → fallback to use last successful _swap_gost_relay
+        # Keep the cache (/tmp/gost_last.json), at least pull up gost first. Even if the IP has already
+        # _probe_gost_upstream will immediately fail probe when replaced by webshare pool, caller will retry
+        # will re-enter listen-on-but-upstream-dead branch to trigger rotate.
         cached = _load_gost_last()
         if cached:
             print(f"[gost] fallback 用 cache IP {cached.get('proxy_address')}:{cached.get('port')} 拉起")
@@ -2907,7 +2897,7 @@ def _ensure_gost_alive_inner(card_cfg: dict, team_client, ws_cfg: dict, listen_p
     except Exception as e:
         print(f"[gost] 拉起失败: {e}")
         return False
-    # 同步 team 全局代理
+    # Synchronize team global proxy
     if team_client and ws_cfg.get("sync_team_proxy", True):
         team_scheme = str(ws_cfg.get("team_proxy_scheme", "socks5"))
         try:
@@ -2919,19 +2909,19 @@ def _ensure_gost_alive_inner(card_cfg: dict, team_client, ws_cfg: dict, listen_p
     return True
 
 
-# Rotate 冷却：模块级时间戳 + 上次结果缓存。任何调用方（auto-loop 分类 /
-# pipeline._ensure_gost_alive / 手动 /api/proxy/rotate-ip）共享，避免短时间内
-# 重复 refresh 烧 Webshare 配额。冷却内的调用直接返回上次 IP，不查 API。
+# Rotate cooling: module-level timestamp + last result cache. Any caller (auto-loop classification /
+# pipeline._ensure_gost_alive / manual /api/proxy/rotate-ip) shared, avoid short-term
+# Repeatedly refresh Webshare quota and burn it. Calls within cooldown directly return the previous IP without querying the API.
 _LAST_ROTATE_TS: float = 0.0
 _LAST_ROTATE_PX: dict | None = None
 
 
 def _rotate_webshare_ip(card_cfg: dict, team_client=None, prev_ip: str = "",
                           force: bool = False) -> dict:
-    """整合：refresh → 轮询新 IP → 换 gost → 同步 team 全局代理。返回新 proxy dict。
+    """Integration: refresh → poll new IP → switch gost → sync team global proxy. Return new proxy dict.
 
-    cooldown 由 cardw.webshare.rotate_cooldown_s 控制（默认 300s）；
-    传 force=True 跳过冷却（手动按钮 /api/proxy/rotate-ip 用得着）。"""
+    Cooldown is controlled by cardw.webshare.rotate_cooldown_s (default 300s);
+    Pass force=True to skip cooldown (useful for manual button /api/proxy/rotate-ip)."""
     global _LAST_ROTATE_TS, _LAST_ROTATE_PX
     ws_cfg = (card_cfg or {}).get("webshare") or {}
     if not ws_cfg.get("enabled"):
@@ -2997,8 +2987,8 @@ def _rotate_webshare_ip(card_cfg: dict, team_client=None, prev_ip: str = "",
 
 
 class ProxyPool:
-    """代理轮换池（stub）。未来扩展：健康检查、失败标记、LRU 轮换。
-    当前行为：有 list 则返回第一个（保持稳定），无 list 返回空字符串（走配置默认代理）。"""
+    """Proxy rotation pool (stub). Future expansion: health checks, failure marking, LRU rotation.
+    Current behavior: return the first one if list exists (maintain stability), return empty string if no list (use default proxy from configuration)."""
 
     def __init__(self, proxies=None, rotation="static", state_file=None):
         self.proxies = [p for p in (proxies or []) if p and str(p).strip()]
@@ -3013,7 +3003,7 @@ class ProxyPool:
         return self.proxies[0]
 
     def mark_fail(self, proxy):
-        # TODO: 实现失败标记 + 冷却
+        # TODO: Implement failure flag + cooldown
         pass
 
 
@@ -3025,7 +3015,7 @@ def _build_proxy_pool_from_card_cfg(card_cfg) -> "ProxyPool":
 
 
 def _rewrite_cardw_with_domain(src_path, domain, proxy_url=""):
-    """读 CTF-reg config，把 catch_all_domain 覆盖为 domain，可选覆盖 proxy，写到临时文件返回路径"""
+    """Read CTF-reg config, override catch_all_domain with domain, optionally override proxy, write to temp file and return path"""
     with open(src_path, "r", encoding="utf-8") as f:
         data = json.load(f)
     mail = data.setdefault("mail", {})
@@ -3042,7 +3032,7 @@ def _rewrite_cardw_with_domain(src_path, domain, proxy_url=""):
 
 
 def _rewrite_card_with_proxy(src_path, proxy_url):
-    """读 CTF-pay config，覆盖 proxy 字段，写到临时文件返回路径"""
+    """Read CTF-pay config, override proxy field, write to temp file and return path"""
     with open(src_path, "r", encoding="utf-8") as f:
         data = json.load(f)
     data["proxy"] = proxy_url
@@ -3064,7 +3054,7 @@ def _find_latest_refresh_token_for_email(email, session_id=""):
 
 
 def _augment_card_result_last_match(email, session_id, extra_fields):
-    """倒序找到首条匹配 email(+session_id) 的支付记录并补字段。"""
+    """Find the first matching payment record with email(+session_id) in reverse order and fill in the missing fields."""
     try:
         return get_db().augment_card_result_last_match(email, session_id, extra_fields)
     except Exception as e:
@@ -3073,12 +3063,12 @@ def _augment_card_result_last_match(email, session_id, extra_fields):
 
 
 # ──────────────────────────────────────────────
-# 自产自销（self-dealer）相关 helper
-# 业务形态：1 个 owner 付费开 Team + N 个 member 被邀请上车 + 全部推 CPA
-# 复用现成：register / pay / _exchange_refresh_token_with_session / _cpa_import_after_team
+# Self-dealer related helper
+# Business model: 1 owner pays to open a Team + N members are invited to join + all push CPA
+# Reuse existing: register / pay / _exchange_refresh_token_with_session / _cpa_import_after_team
 # ──────────────────────────────────────────────
 
-# OpenAI team API helpers 已抽到 pipeline.oauth.team_api (Wave C-2)
+# OpenAI team API helpers have been extracted to pipeline.oauth.team_api (Wave C-2)
 from pipeline.oauth.team_api import (  # noqa: E402
     _oai_exchange_refresh_to_access_token,
     _oai_team_id_from_access_token,
@@ -3096,16 +3086,15 @@ def _cpa_import_after_team(
     refresh_token: str = "",
     is_free: bool = False,
 ) -> str:
-    """支付成功后把账号导入 CPA (CLIProxyAPI)。best-effort，异常不抛。
+    """Import the account to CPA (CLIProxyAPI) after successful payment. best-effort, no exception thrown.
 
     Args:
-        refresh_token: 显式传入的 rt（free_only 路径用）；不传时从
-            SQLite 支付记录按 email/sid 查（pay 流程默认行为）。
-        is_free: True → CPA 推送 plan_tag 改用 cpa_cfg.free_plan_tag
-            （免费账号档位）；False → 用 plan_tag（team / 付费档位）。
+        refresh_token: Explicitly passed rt (used in free_only path); when not passed,
+            query from SQLite payment records by email/sid (default behavior of pay flow).
+        is_free: True → CPA pushes plan_tag using cpa_cfg.free_plan_tag
+            (free account tier); False → use plan_tag (team / paid tier).
 
-    Returns: ok / skipped / no_rt / fail_refresh / fail_upload
-    """
+    Returns: ok / skipped / no_rt / fail_refresh / fail_upload"""
     import urllib.request, urllib.parse, urllib.error, base64, hashlib
     if not cpa_cfg or not cpa_cfg.get("enabled"):
         return "skipped"
@@ -3117,9 +3106,9 @@ def _cpa_import_after_team(
     rt = (refresh_token or "").strip() or _find_latest_refresh_token_for_email(email, sid)
     reg_acc = _find_latest_registered_account_for_email(email)
     if not rt:
-        # 真实支付后，refresh_token 可能因为 add-phone / rate-limit / 401 等原因
-        # 无法及时拿到；此时至少保留已注册账号里的 access_token 做“裸导入”
-        #，让 CPA 端先落库，后续再补 RT。
+        # After actual payment, refresh_token may fail due to reasons such as add-phone / rate-limit / 401, etc.
+        # Unable to get in time; in this case, at least keep the access_token in the registered account for "bare import"
+        #Let the CPA side write to the database first, and supplement RT later.
         at = (reg_acc.get("access_token") or "").strip()
         id_tok = (reg_acc.get("id_token") or "").strip() or at
         if not at:
@@ -3180,7 +3169,7 @@ def _cpa_import_after_team(
                          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0 Safari/537.36"},
                 method="POST",
             )
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 不走本地 proxy
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # Do not use local proxy
             with opener.open(req, timeout=int(cpa_cfg.get("timeout_s", 20))) as r:
                 resp = r.read().decode()
             print(f"[CPA] ✓ {email} 已导入 → {base_url}  account_id={account_id[:8] or '?'}")
@@ -3194,10 +3183,10 @@ def _cpa_import_after_team(
             print(f"[CPA] ✗ {email} 上传异常: {e}")
             return "fail_upload"
 
-    # 刷一次 refresh_token → 拿绑了 team 的 access_token + id_token
+    # Refresh once refresh_token → Get access_token + id_token bound with team
     client_id = cpa_cfg.get("oauth_client_id") or "app_EMoamEEZ73f0CkXaXp7hrann"
     at, id_tok, account_id = "", "", ""
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 不走本地 proxy
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # Do not use local proxy
     try:
         data = urllib.parse.urlencode({
             "grant_type": "refresh_token",
@@ -3227,7 +3216,7 @@ def _cpa_import_after_team(
     except Exception as e:
         print(f"[CPA] {email} refresh_token 交换失败（仍尝试裸导入）: {e}")
 
-    # 构造 codex 文件
+    # Construct codex file
     expired_iso = ""
     if at:
         try:
@@ -3250,7 +3239,7 @@ def _cpa_import_after_team(
         plan_tag = (cpa_cfg.get("free_plan_tag") or "free").strip() or "free"
     name = f"codex-{tag}-{email}-{plan_tag}.json"
     try:
-        # 走 curl_cffi（chrome TLS+UA 指纹）规避 CF WAF；不可用则降级 urllib
+        # Use curl_cffi (Chrome TLS + UA fingerprint) to bypass CF WAF; downgrade to urllib if unavailable
         try:
             import curl_cffi.requests as cr
             sess = cr.Session(impersonate="chrome136")
@@ -3293,8 +3282,8 @@ def _cpa_import_after_team(
 
 
 def _team_probe_after_payment(pay_record, team_client, pool, domain):
-    """支付成功后：读 RT → 导入 team → 写回 probe 结果 → 更新域状态。
-    返回 probe 返回的 status 字符串（ok/no_permission/failed/error/none）。"""
+    """After successful payment: read RT → import team → write back probe results → update domain status.
+    Return the status string returned by probe (ok/no_permission/failed/error/none)."""
     if not team_client:
         return "none"
     email = ""
@@ -3324,13 +3313,13 @@ def _team_probe_after_payment(pay_record, team_client, pool, domain):
         print(f"[Team] ❌ {email} 导入失败: {probe.get('error')}")
     else:
         print(f"[Team] ❓ {email} status={st}  err={probe.get('error','')[:200]}")
-    # 更新支付结果记录
+    # Update payment result record
     _augment_card_result_last_match(email, sid, {
         "invite_permission": st,
         "team_gpt_account_pk": probe.get("account_id"),
         "email_domain": domain,
     })
-    # 更新域池
+    # Update domain pool
     if pool and domain:
         pool.mark_result(domain, st if st in ("ok", "no_permission") else "unknown")
     return st
@@ -3344,12 +3333,11 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
                 members_count=4, timeout_reg=300, timeout_pay=600,
                 invite_accept_gap_s=3,
                 resume_owner_email: str = ""):
-    """自产自销（state machine 2nd form）：
-      Step 1 (1 次)：注册 - 支付 - 推送 team+cpa    →  现成 pipeline()
-      Step 2 (N 次)：注册 - 邀请上车 - 推送 cpa     →  register() + invite/accept + relogin + cpa_push
-    注册 & 推送流程一字不改，只是 member 循环里在 register() 前照 pipeline() 的做法
-    重新 pick 代理 + pick 域 + rewrite 临时 cardw，保证每次注册用新代理/域。
-    """
+    """Self-production and self-sales (state machine 2nd form):
+      Step 1 (1 time): Registration - Payment - Push team+cpa    →  Ready-made pipeline()
+      Step 2 (N times): Registration - Invite to join - Push cpa     →  register() + invite/accept + relogin + cpa_push
+    Registration & push flow remains unchanged, only in the member loop before register() follow the approach of pipeline()
+    Re-pick proxy + pick domain + rewrite temporary cardw, ensuring each registration uses new proxy/domain."""
     card_config_path = str(Path(card_config_path).resolve())
     card_cfg = _read_card_cfg(card_config_path)
     cardw_path = _load_cardw_path_from_card_cfg(card_cfg, cardw_config_path)
@@ -3397,14 +3385,14 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
     except Exception:
         pass
     mail_cfg = reg_cfg.get("mail", {}) or {}
-    # invite/accept/relogin 统一用 card_cfg.proxies.list[0]（本地 gost 中继，
-    # 与 pipeline() 给注册 rewrite 的是同一条）。cardw.proxy 原值凭证可能失效。
+    # invite/accept/relogin use card_cfg.proxies.list[0] (local gost relay) uniformly,
+    # same as the one registered and rewritten by pipeline(). cardw.proxy original credential may expire.
     api_proxies = (card_cfg or {}).get("proxies", {}).get("list") or []
     proxy_url = (api_proxies[0] if api_proxies else "") or reg_cfg.get("proxy", "") or ""
     print(f"[self-dealer] invite/accept/relogin 代理: {proxy_url}")
 
-    # member 注册前的 pool 准备——完全照搬 pipeline() 的做法，不动任何流程，
-    # 只是把 pipeline() 里的 pool/proxy_pool/pick+rewrite 逻辑抽到 member 循环里
+    # member pool preparation before registration -- completely follow pipeline()'s approach, don't change any flow,
+    # just extract the pool/proxy_pool/pick+rewrite logic from pipeline() into member loop
     ts_cfg = card_cfg.get("team_system") or {}
     cd_h = int(ts_cfg.get("domain_cooldown_hours", 24))
     try:
@@ -3430,7 +3418,7 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
         print(f"\n--- [self-dealer] Member {i}/{members_count} ---")
         entry = {"index": i, "email": "", "status": "pending"}
         try:
-            # 与 pipeline() 一致：每次挑代理 + 挑域 + rewrite 临时 cardw
+            # consistent with pipeline(): each time pick proxy + pick domain + rewrite temp cardw
             picked_proxy = proxy_pool.pick() if proxy_pool and proxy_pool.proxies else ""
             if picked_proxy:
                 print(f"[self-dealer] ProxyPool 本次代理: {picked_proxy}")
@@ -3474,7 +3462,7 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
                 entry["status"] = "register_incomplete"
                 continue
 
-            # 邀请
+            # invite
             inv = _oai_send_team_invite(owner_at, team_id, mem_email, proxy_url=proxy_url)
             print(f"[self-dealer] invite status={inv['status']}  invite_id={inv['invite_id'][:20] if inv['invite_id'] else '-'}")
             if inv["status"] not in (200, 201):
@@ -3483,14 +3471,14 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
 
             time.sleep(max(0, invite_accept_gap_s))
 
-            # 接受
+            # accept
             acc = _oai_accept_team_invite(mem_at, team_id, mem_did, proxy_url=proxy_url)
             print(f"[self-dealer] accept status={acc['status']}  body={acc['body'][:100]}")
             if acc["status"] not in (200, 201):
                 entry["status"] = f"accept_failed http={acc['status']} body={acc['body'][:120]}"
                 continue
 
-            # 重登拿 refresh_token（按 WEBUI_REG_MODE 走协议 or Camoufox）
+            # relogin to get refresh_token (follow protocol or Camoufox based on WEBUI_REG_MODE)
             try:
                 rt = _exchange_refresh_token_dispatch(
                     email=mem_email, password=mem_pwd, mail_cfg=mail_cfg, proxy_url=proxy_url,
@@ -3503,7 +3491,7 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
                 entry["status"] = "no_rt"
                 continue
 
-            # 追加一条支付成功记录，让 _cpa_import_after_team 能读到
+            # append one payment success record so _cpa_import_after_team can read it
             sid = f"self-dealer-m{i}-{mem_email.split('@')[0][:20]}"
             res_entry = {
                 "ts": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
@@ -3519,7 +3507,7 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
             except Exception as e:
                 print(f"[self-dealer] 写支付记录失败: {e}")
 
-            # CPA 推送
+            # CPA push
             try:
                 status = _cpa_import_after_team(mem_email, sid, cpa_cfg)
             except Exception as e:
@@ -3533,7 +3521,7 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
                 entry["status"] = f"unhandled: {str(e)[:120]}"
         members_report.append(entry)
 
-    # 汇总
+    # summary
     print("\n" + "=" * 72)
     print("[self-dealer] 汇总")
     print("=" * 72)
@@ -3553,13 +3541,12 @@ def self_dealer(card_config_path, cardw_config_path=None, use_paypal=False,
 def promo_link_loop(card_config_path, cardw_config_path=None, count: int = 1,
                     plan: str = "plus", country: str = "ID", currency: str = "IDR",
                     promo_campaign_id: str = ""):
-    """注册 / 登录 outlook 邮箱 → 调 ChatGPT checkout API 抓 hosted long URL → 存 promo_links 表.
+    """Register / login outlook mailbox → call ChatGPT checkout API to grab hosted long URL → store in promo_links table.
 
-    跟 register-only 区别: 设 WEBUI_ALLOW_LOGIN=1 → "已有账号" 不 fast-fail, 走 OTP login
-    复用账号. 这样接码池被 OpenAI 标的号也能用 (登录拿 access_token, 调 checkout API 拿 promo).
+    Difference from register-only: set WEBUI_ALLOW_LOGIN=1 → "existing account" does not fast-fail, goes through OTP login
+    to reuse account. This allows phone numbers marked by OpenAI in the code-receiving pool to still work (login gets access_token, call checkout API to get promo).
 
-    count: 抓 N 条; 0 = 无限 (直到 SIGTERM / outlook 池空).
-    """
+    count: grab N items; 0 = unlimited (until SIGTERM / outlook pool empty)."""
     from pipeline.promo_link import fetch_promo_link
 
     card_cfg = _read_card_cfg(card_config_path)
@@ -3567,7 +3554,7 @@ def promo_link_loop(card_config_path, cardw_config_path=None, count: int = 1,
     proxy_url = card_cfg.get("proxy", "")
 
     _ensure_gost_alive(card_cfg)
-    # 已有账号也接受 → outlook fast-fail 关掉
+    # existing account also accepted → outlook fast-fail turned off
     os.environ["WEBUI_ALLOW_LOGIN"] = "1"
 
     print(f"[promo-link] start count={count or '∞'} plan={plan} {country}/{currency} "
@@ -3582,7 +3569,7 @@ def promo_link_loop(card_config_path, cardw_config_path=None, count: int = 1,
             break
         print(f"\n{'#'*60}\n# [promo-link] 第 {i}/{count or '∞'} 次\n{'#'*60}")
         try:
-            r = register(cardw_path)  # 返 {email, access_token, cookie_header, device_id, ...}
+            r = register(cardw_path)  # return {email, access_token, cookie_header, device_id, ...}
         except RegistrationError as e:
             fail_count += 1
             print(f"[promo-link] 第 {i} 次 register fail: {str(e)[:200]}")
@@ -3613,7 +3600,7 @@ def promo_link_loop(card_config_path, cardw_config_path=None, count: int = 1,
             print(f"[promo-link] {email}: fetch checkout fail → {info.get('error', '?')[:200]}")
             continue
 
-        # 写 DB
+        # write DB
         try:
             link_id = get_db().add_promo_link({
                 "email": email,
@@ -3643,12 +3630,11 @@ def promo_link_loop(card_config_path, cardw_config_path=None, count: int = 1,
 
 
 def free_register_loop(card_config_path, cardw_config_path=None, count: int = 0):
-    """free_only mode：注册免费 ChatGPT 号 + 单独跑 OAuth 拿 rt + 推 CPA(free)。
+    """free_only mode: register free ChatGPT account + run OAuth separately to get rt + push CPA(free).
 
-    跟 daemon/self_dealer 不同：不进入支付步骤。
+    Different from daemon/self_dealer: do not enter payment step.
 
-    count = 0 表示无限（直到 SIGTERM）；> 0 跑 count 次后退出。
-    """
+    count = 0 means unlimited (until SIGTERM); > 0 exits after running count times."""
     import hashlib
 
     card_cfg = _read_card_cfg(card_config_path)
@@ -3657,18 +3643,18 @@ def free_register_loop(card_config_path, cardw_config_path=None, count: int = 0)
     mail_cfg = card_cfg.get("mail") or {}
     proxy_url = card_cfg.get("proxy", "")
 
-    # 启 gost（如果配了 webshare）
+    # start gost (if webshare configured)
     _ensure_gost_alive(card_cfg)
 
-    # OAuth Codex client_id：card.py:_exchange_refresh_token_with_session 读
-    # OAUTH_CODEX_CLIENT_ID env var；从 cpa.oauth_client_id 推过去（subprocess
-    # 调用 card 模块时该 env 必须已设，否则 OpenAI 返 AuthApiFailure）。
+    # OAuth Codex client_id: read by card.py:_exchange_refresh_token_with_session
+    # OAUTH_CODEX_CLIENT_ID env var; push from cpa.oauth_client_id (subprocess
+    # call card module, this env must already be set, otherwise OpenAI returns AuthApiFailure).
     _client_id = (cpa_cfg.get("oauth_client_id") or "").strip()
     if _client_id and not os.environ.get("OAUTH_CODEX_CLIENT_ID"):
         os.environ["OAUTH_CODEX_CLIENT_ID"] = _client_id
         print(f"[free] 自动设 OAUTH_CODEX_CLIENT_ID = {_client_id}")
 
-    # 域池
+    # domain pool
     pool = _build_domain_pool_from_cardw(cardw_path)
 
     print(
@@ -3740,11 +3726,10 @@ def free_register_loop(card_config_path, cardw_config_path=None, count: int = 0)
 
 
 def free_backfill_rt_loop(card_config_path, cardw_config_path=None):
-    """free_only mode：读数据库里的注册账号给老号补 rt + 推 CPA(free)。
+    """free_only mode: read registered accounts from database to supplement old accounts with rt + push CPA(free).
 
-    跳过：已有 refresh_token / oauth_status==succeeded / oauth_status==dead /
-    transient_failed 在 6h cooldown 内的账号。
-    """
+    Skip: accounts with existing refresh_token / oauth_status==succeeded / oauth_status==dead /
+    transient_failed within 6h cooldown."""
     import hashlib
 
     card_cfg = _read_card_cfg(card_config_path)
@@ -3754,7 +3739,7 @@ def free_backfill_rt_loop(card_config_path, cardw_config_path=None):
 
     _ensure_gost_alive(card_cfg)
 
-    # OAuth Codex client_id（同 free_register_loop，避免 AuthApiFailure）
+    # OAuth Codex client_id (same as free_register_loop, avoid AuthApiFailure)
     _client_id = (cpa_cfg.get("oauth_client_id") or "").strip()
     if _client_id and not os.environ.get("OAUTH_CODEX_CLIENT_ID"):
         os.environ["OAUTH_CODEX_CLIENT_ID"] = _client_id
@@ -3909,16 +3894,16 @@ def main():
         print("[ERROR] --free-register 与 --free-backfill-rt 互斥", file=sys.stderr)
         sys.exit(2)
 
-    # --plan 在所有分支前生效：生成临时 config，后续所有 register/pay/daemon/
-    # batch/self_dealer/pay_only_targets 入口都用这个 patched 路径，免得每个
-    # 分支单独处理。
+    # --plan takes effect before all branches: generate temp config, all subsequent register/pay/daemon/
+    # batch/self_dealer/pay_only_targets entry points use this patched path, avoid
+    # each branch handling it separately.
     if args.plan:
         args.config = _apply_plan_override(args.config, args.plan)
 
-    # webshare/gost 保活：所有路径共用一处入口（之前各 sub-pipeline 各自调，
-    # register-only / rt-only / target-emails 分支会漏掉，造成 camoufox public_ip
-    # 通过 socks5://127.0.0.1:18898 时 connect refused）。放在 --plan 之后，
-    # 让 gost 读到的是 patched config（plan 不影响 webshare 字段，但顺序更稳）。
+    # webshare/gost keepalive: all paths share one entry point (previously each sub-pipeline called it separately,
+    # register-only / rt-only / target-emails branches would miss it, causing camoufox public_ip
+    # through socks5://127.0.0.1:18898 connect refused). Place it after --plan,
+    # let gost read the patched config (plan doesn't affect webshare field, but order is more stable).
     try:
         _entry_card_cfg = _read_card_cfg(args.config)
         _ensure_gost_alive(_entry_card_cfg)
@@ -3971,7 +3956,7 @@ def main():
             print(f"\n结果: ok={r['ok']} fail={r['fail']}")
             return
 
-        # batch 是循环外壳，跟 register-only / pay-only 正交组合
+        # batch is loop wrapper, orthogonally combined with register-only / pay-only
         if args.batch > 0:
             batch(args.config, args.batch, delay=args.delay, workers=args.workers,
                   use_paypal=args.paypal, cardw_config_path=args.cardw_config,

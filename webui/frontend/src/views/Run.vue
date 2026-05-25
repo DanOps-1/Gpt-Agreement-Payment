@@ -4,24 +4,24 @@
       <div class="brand">
         <span class="brand-prompt">$</span>
         <span class="brand-name">gpt-pay</span>
-        <span class="brand-sub">// 运行控制</span>
+        <span class="brand-sub">// Run Control</span>
         <span class="brand-clock">{{ clock }}</span>
       </div>
       <div class="run-nav">
-        <RouterLink to="/wizard" class="nav-link">配置向导</RouterLink>
-        <RouterLink to="/run" class="nav-link active">运行</RouterLink>
-        <RouterLink to="/outlook" class="nav-link">Outlook 池</RouterLink>
-        <RouterLink to="/promo-links" class="nav-link">Promo 长链接</RouterLink>
-        <button class="header-btn" @click="logout">退出</button>
+        <RouterLink to="/wizard" class="nav-link">Config Wizard</RouterLink>
+        <RouterLink to="/run" class="nav-link active">Run</RouterLink>
+        <RouterLink to="/outlook" class="nav-link">Outlook Pool</RouterLink>
+        <RouterLink to="/promo-links" class="nav-link">Promo Long Links</RouterLink>
+        <button class="header-btn" @click="logout">Logout</button>
       </div>
     </header>
 
     <div class="run-body">
       <section class="run-controls">
-        <div class="term-divider" data-tail="──────────">参数</div>
+        <div class="term-divider" data-tail="──────────">Parameters</div>
         <div class="form-stack">
           <div class="ctl-row">
-            <span class="ctl-label">模式</span>
+            <span class="ctl-label">Mode</span>
             <div class="mode-pills">
               <button
                 v-for="m in modes"
@@ -42,15 +42,15 @@
             <TermField v-model.number="form.self_dealer" label="member N" type="number" />
           </div>
           <div v-if="form.mode === 'free_register' || form.mode === 'promo_link'" class="ctl-row sub">
-            <TermField v-model.number="form.count" label="次数 (0=无限)" type="number" />
+            <TermField v-model.number="form.count" label="count (0=unlimited)" type="number" />
           </div>
           <p v-if="form.mode === 'promo_link'" class="ctl-hint">
-            注册 / 登录 outlook 邮箱 → 调 ChatGPT checkout 拿 promo 命中的 hosted long URL → 存 promo_links 表。
-            "已有账号" 不 fast-fail (走 OTP login 拿凭证)。区域 / 币种现在可自由指定。
+            Register / login outlook email → Call ChatGPT checkout to get promo-hit hosted long URL → Save to promo_links table.
+            "Account already exists" does not fast-fail (go through OTP login to get credentials). Region / currency can now be freely specified.
           </p>
           <div v-if="form.mode === 'promo_link'" class="promo-region-box">
             <div class="ctl-row reg-mode">
-              <span class="reg-mode-label">长链接区域 ·</span>
+              <span class="reg-mode-label">Long Link Region ·</span>
               <button
                 v-for="preset in promoRegionPresets"
                 :key="preset.country"
@@ -87,41 +87,41 @@
               <TermField
                 v-model="form.promo_campaign_id"
                 label="campaign"
-                placeholder="空=默认 plus/team free campaign"
+                placeholder="empty=default plus/team free campaign"
               />
             </div>
             <p class="ctl-hint">
-              当前将生成 <code>{{ form.promo_plan }}</code> /
+              Current will generate <code>{{ form.promo_plan }}</code> /
               <code>{{ normalizedPromoCountry }}</code>/<code>{{ normalizedPromoCurrency }}</code>
-              长链接；也可以直接输入任意 2 位国家代码 + 3 位币种。
+              long links; can also directly input any 2-letter country code + 3-letter currency.
             </p>
           </div>
 
-          <!-- no_card_plus 模式参数面板: 触发 scripts/no_card_paypal_plus.py -->
+          <!-- no_card_plus mode parameters: triggers scripts/no_card_paypal_plus.py -->
           <div v-if="form.mode === 'no_card_plus'" class="promo-region-box">
             <p class="ctl-hint">
-              用 promo_links 表里 fresh 的 plus 长链接 → Chromium RPA 走 PayPal guest signup → 0 元开 Plus。
-              SMS API URL 从 <code>config.paypal.json::paypal.sms_api_url</code> 读，不通过 cmdline。
+              Use fresh plus long links from promo_links table → Chromium RPA through PayPal guest signup → Open Plus for 0 yuan.
+              SMS API URL read from <code>config.paypal.json::paypal.sms_api_url</code>, not via cmdline.
             </p>
             <div class="ctl-row sub promo-region-fields">
               <TermField
                 v-model.number="form.no_card_promo_link_id"
-                label="promo_link_id (0=自动挑最新 fresh plus)"
+                label="promo_link_id (0=auto pick latest fresh plus)"
                 type="number"
               />
               <TermField
                 v-model="form.no_card_phone"
-                label="phone (E.164, 不带 +)"
+                label="phone (E.164, no +)"
                 placeholder="US 10-digit local number"
               />
               <TermField
                 v-model="form.no_card_sms_api_url"
-                label="SMS API URL (含 key, localStorage 持久化)"
+                label="SMS API URL (with key, localStorage persistent)"
                 placeholder="http://a.62-us.com/api/get_sms?key=..."
               />
               <TermField
                 v-model.number="form.no_card_otp_timeout"
-                label="OTP 超时 (s)"
+                label="OTP timeout (s)"
                 type="number"
               />
               <TermField
@@ -131,66 +131,66 @@
               />
               <TermField
                 v-model.number="form.no_card_node_rpa_timeout"
-                label="node RPA 超时 (s)"
+                label="node RPA timeout (s)"
                 type="number"
               />
               <TermField
                 v-model.number="form.no_card_max_due"
-                label="max due (cents, 守门)"
+                label="max due (cents, gatekeeper)"
                 type="number"
               />
             </div>
             <div class="ctl-row toggles">
-              <TermToggle v-model="form.no_card_allow_already_paid">允许已 plus 账号再跑</TermToggle>
-              <TermToggle v-model="form.no_card_allow_full_price">允许全价 (没 promo 也跑)</TermToggle>
+              <TermToggle v-model="form.no_card_allow_already_paid">Allow already plus accounts to run</TermToggle>
+              <TermToggle v-model="form.no_card_allow_full_price">Allow full price (run without promo)</TermToggle>
             </div>
             <div class="ctl-row reg-mode">
-              <span class="reg-mode-label">auto-gen 库存来源 ·</span>
+              <span class="reg-mode-label">auto-gen inventory source ·</span>
               <label class="reg-mode-opt" :class="{ active: form.no_card_inventory_mail_source === 'any' }">
                 <input type="radio" value="any" v-model="form.no_card_inventory_mail_source" />
-                不限
+                any
               </label>
               <label class="reg-mode-opt" :class="{ active: form.no_card_inventory_mail_source === 'outlook' }">
                 <input type="radio" value="outlook" v-model="form.no_card_inventory_mail_source" />
-                微软邮箱 (@outlook/@hotmail/@live/@msn)
+                Microsoft email (@outlook/@hotmail/@live/@msn)
               </label>
               <label class="reg-mode-opt" :class="{ active: form.no_card_inventory_mail_source === 'catch_all' }">
                 <input type="radio" value="catch_all" v-model="form.no_card_inventory_mail_source" />
-                域名邮箱 (catch_all_domain)
+                Domain email (catch_all_domain)
               </label>
             </div>
             <p class="ctl-hint">
-              <code>allow_already_paid</code> 关闭时：账号 RT plan 已是 plus/team/pro 拒绝执行。
-              <code>allow_full_price</code> 关闭时：Stripe due > max_due 拒绝执行（避免无 promo 真扣卡）。
-              card 默认走 meiguodizhi 随机卡 (不传 fixed-card)。
+              When <code>allow_already_paid</code> is off: reject if account RT plan is already plus/team/pro.
+              When <code>allow_full_price</code> is off: reject if Stripe due > max_due (avoid charging without promo).
+              Card defaults to meiguodizhi random card (no fixed-card passed).
               <br />
-              <code>auto-gen 库存来源</code>：promo_links 库存空时，从 registered_accounts 自动生产新长链接；
-              选 <code>微软邮箱</code> 只挑 outlook 系账号；<code>域名邮箱</code> 只挑 CTF-reg config 里 catch_all_domain(s) 的 alias。
+              <code>auto-gen inventory source</code>: when promo_links inventory empty, auto-generate new long links from registered_accounts;
+              select <code>Microsoft email</code> to only pick outlook-type accounts; <code>Domain email</code> to only pick catch_all_domain aliases from CTF-reg config.
             </p>
           </div>
 
-          <!-- no_card_plus_parallel 模式: N worker 并发, phone 池 M 可少于 N -->
+          <!-- no_card_plus_parallel mode: N worker concurrent, phone pool M can be < N -->
           <div v-if="form.mode === 'no_card_plus_parallel'" class="promo-region-box">
             <p class="ctl-hint">
-              并发跑 <b>N</b> 个 worker. Phone 池可比 N 少 — 多 worker 共用同一 phone 时, OTP
-              触发短信前会自动排队 (phone-lock), pre-OTP/post-OTP 阶段保持并行.
-              DB 用 atomic claim 防止两 worker 抢同一 promo_link.
-              当前共享同一出口 IP / gost 中继.
+              Run <b>N</b> workers concurrently. Phone pool can be fewer than N — when multiple workers share the same phone, SMS OTP
+              auto-queue before triggering (phone-lock), pre-OTP/post-OTP phases stay parallel.
+              DB uses atomic claim to prevent two workers grabbing same promo_link.
+              Currently sharing same exit IP / gost relay.
             </p>
             <div class="ctl-row sub promo-region-fields">
               <TermField
                 v-model.number="parallel.concurrency"
-                label="并发数 N (worker 数, 可大于 phone 数)"
+                label="concurrency N (worker count, can exceed phone count)"
                 type="number"
               />
               <TermField
                 v-model="parallel.default_sms_url"
-                label="默认 SMS API URL (phone 行留空时兜底)"
+                label="default SMS API URL (fallback when phone row is empty)"
                 placeholder="http://a.62-us.com/api/get_sms?key=..."
               />
               <TermField
                 v-model.number="parallel.otp_timeout"
-                label="OTP 超时 (s)"
+                label="OTP timeout (s)"
                 type="number"
               />
               <TermField
@@ -200,7 +200,7 @@
               />
               <TermField
                 v-model.number="parallel.node_rpa_timeout"
-                label="node RPA 超时 (s)"
+                label="node RPA timeout (s)"
                 type="number"
               />
               <TermField
@@ -210,31 +210,31 @@
               />
               <TermField
                 v-model.number="parallel.stagger_s"
-                label="错开启动 (s, 防同一秒打到 gost)"
+                label="stagger startup (s, prevent same-second hit to gost)"
                 type="number"
               />
             </div>
             <div class="ctl-row toggles">
-              <TermToggle v-model="parallel.allow_already_paid">允许已 plus 账号再跑</TermToggle>
-              <TermToggle v-model="parallel.allow_full_price">允许全价 (没 promo 也跑)</TermToggle>
+              <TermToggle v-model="parallel.allow_already_paid">Allow already plus accounts to run</TermToggle>
+              <TermToggle v-model="parallel.allow_full_price">Allow full price (run without promo)</TermToggle>
             </div>
             <div class="ctl-row reg-mode">
-              <span class="reg-mode-label">auto-gen 库存来源 ·</span>
+              <span class="reg-mode-label">auto-gen inventory source ·</span>
               <label class="reg-mode-opt" :class="{ active: parallel.inventory_mail_source === 'any' }">
                 <input type="radio" value="any" v-model="parallel.inventory_mail_source" />
-                不限
+                any
               </label>
               <label class="reg-mode-opt" :class="{ active: parallel.inventory_mail_source === 'outlook' }">
                 <input type="radio" value="outlook" v-model="parallel.inventory_mail_source" />
-                微软邮箱
+                Microsoft email
               </label>
               <label class="reg-mode-opt" :class="{ active: parallel.inventory_mail_source === 'catch_all' }">
                 <input type="radio" value="catch_all" v-model="parallel.inventory_mail_source" />
-                域名邮箱
+                Domain email
               </label>
             </div>
 
-            <div class="term-divider" data-tail="──────────">Phone 池 ({{ parallel.workers.length }} 个)</div>
+            <div class="term-divider" data-tail="──────────">Phone Pool ({{ parallel.workers.length }} items)</div>
             <div v-for="(w, idx) in parallel.workers" :key="idx" class="ctl-row sub promo-region-fields">
               <TermField
                 v-model="w.phone"
@@ -243,44 +243,44 @@
               />
               <TermField
                 v-model="w.sms_url"
-                :label="`slot${idx + 1} sms_url (空 = 用默认)`"
+                :label="`slot${idx + 1} sms_url (empty = use default)`"
                 placeholder="http://...?key=..."
               />
               <TermField
                 v-model="w.tag"
                 :label="`slot${idx + 1} tag`"
-                placeholder="可选, 备注"
+                placeholder="optional, remark"
               />
               <TermBtn @click="removeParallelWorker(idx)" :disabled="parallel.workers.length <= 1">−</TermBtn>
             </div>
             <div class="ctl-row toggles">
-              <TermBtn @click="addParallelWorker">＋ 加 phone</TermBtn>
+              <TermBtn @click="addParallelWorker">＋ Add phone</TermBtn>
             </div>
             <p v-if="parallelMapping.length" class="ctl-hint">
-              <b>映射预览</b> (N={{ parallel.concurrency }} workers → {{ parallelMapping.length === parallel.concurrency ? parallel.workers.filter(w => (w.phone || '').trim()).length : 0 }} phone slots):
+              <b>Mapping Preview</b> (N={{ parallel.concurrency }} workers → {{ parallelMapping.length === parallel.concurrency ? parallel.workers.filter(w => (w.phone || '').trim()).length : 0 }} phone slots):
               <span v-for="m in parallelMapping" :key="m.worker_id" style="margin-right: 0.8em">
-                <code>{{ m.worker_id }}</code>→<code>{{ m.phone || '(空)' }}</code>{{ m.tag ? ` ${m.tag}` : '' }}
+                <code>{{ m.worker_id }}</code>→<code>{{ m.phone || '(empty)' }}</code>{{ m.tag ? ` ${m.tag}` : '' }}
               </span>
             </p>
 
             <div class="ctl-row toggles">
               <TermBtn @click="startParallel" :disabled="parallel.busy || parallelRunning">
-                {{ parallel.busy ? "..." : "并发启动" }}
+                {{ parallel.busy ? "..." : "Start Parallel" }}
               </TermBtn>
               <TermBtn @click="stopParallel" :disabled="!parallelRunning">
-                全部停止
+                Stop All
               </TermBtn>
               <TermBtn @click="refreshParallelStatus" :disabled="parallel.statusBusy">
-                {{ parallel.statusBusy ? "..." : "刷新" }}
+                {{ parallel.statusBusy ? "..." : "Refresh" }}
               </TermBtn>
               <TermBtn @click="clearParallel" :disabled="parallelRunning">
-                清掉已结束
+                Clear Completed
               </TermBtn>
             </div>
 
             <div v-if="parallel.summary" class="health-panel" :class="{ ok: parallel.summary.failed === 0, fail: parallel.summary.failed > 0 }">
               <div class="health-head">
-                <span class="health-title">并发状态</span>
+                <span class="health-title">Parallel Status</span>
                 <span class="health-meta">
                   total {{ parallel.summary.total_workers }}
                   | running {{ parallel.summary.running }}
@@ -302,165 +302,166 @@
                 </div>
               </div>
               <p class="ctl-hint" style="margin-top: 0.4em">
-                每个 worker 的实时日志会按行带 <code>[worker_id]</code> 前缀汇入页面底部的「实时日志」区。
+                Each worker's real-time logs will be merged into the "Real-time Logs" section at bottom with <code>[worker_id]</code> prefix per line.
               </p>
             </div>
           </div>
 
           <p class="ctl-hint">
-            UI 已切成按需显示：只展开当前模式 / 支付方式真正会用到的配置和工具。
+            UI now shows on-demand: only expand config and tools that current mode / payment method actually uses.
           </p>
 
           <div v-if="showPaymentSelector" class="ctl-row toggles">
-            <TermToggle v-model="form.paypal" :disabled="form.gopay || form.qris">PayPal 支付</TermToggle>
-            <TermToggle v-model="form.gopay" :disabled="form.qris" @update:modelValue="onGoPayToggle">GoPay (印尼)</TermToggle>
-            <TermToggle v-model="form.qris" :disabled="form.gopay" @update:modelValue="onQrisToggle">QRIS (扫码)</TermToggle>
+            <TermToggle v-model="form.paypal" :disabled="form.gopay || form.qris">PayPal Payment</TermToggle>
+            <TermToggle v-model="form.gopay" :disabled="form.qris" @update:modelValue="onGoPayToggle">GoPay (Indonesia)</TermToggle>
+            <TermToggle v-model="form.qris" :disabled="form.gopay" @update:modelValue="onQrisToggle">QRIS (QR Code)</TermToggle>
           </div>
           <div v-if="showRunModifiers" class="ctl-row toggles">
             <TermToggle v-model="form.pay_only">--pay-only</TermToggle>
             <TermToggle v-model="form.register_only" :disabled="form.pay_only">--register-only</TermToggle>
           </div>
           <p v-if="showRunModifiers" class="ctl-hint">
-            <code>--pay-only</code> 跳过注册，优先复用最近注册但未支付账号；
-            <code>--register-only</code> 只注册不支付。
-            <span v-if="form.register_only">当前是 register-only，支付方式配置已隐藏。</span>
+            <code>--pay-only</code> Skip registration, prefer reusing recently registered but unpaid accounts;
+            <code>--register-only</code> Register only, no payment.
+            <span v-if="form.register_only">Currently register-only; payment method config hidden.</span>
           </p>
 
           <div v-if="showRegisterPath" class="ctl-row reg-mode">
-            <span class="reg-mode-label">注册路径 ·</span>
+            <span class="reg-mode-label">Register Path ·</span>
             <label class="reg-mode-opt" :class="{ active: form.register_mode === 'protocol' }">
               <input type="radio" value="protocol" v-model="form.register_mode" />
-              纯协议 (auth_flow + Node/QuickJS)
+              Protocol Only (auth_flow + Node/QuickJS)
             </label>
             <label class="reg-mode-opt" :class="{ active: form.register_mode === 'browser' }">
               <input type="radio" value="browser" v-model="form.register_mode" />
-              浏览器模拟 (Camoufox/Playwright)
+              Browser Emulation (Camoufox/Playwright)
             </label>
           </div>
           <p v-if="showRegisterPath" class="ctl-hint">
-            <code>protocol</code>：<code>AuthFlow</code> HTTP 直连 + Node/QuickJS Sentinel；RT 补领走 <code>run_protocol_login</code>。
-            <code>browser</code>：Camoufox 真浏览器；RT 补领走 <code>_exchange_refresh_token_with_session</code>。
-            两者在 OpenAI 强制 <code>add-phone</code> 时都过不去。
+            <code>protocol</code>: <code>AuthFlow</code> HTTP direct + Node/QuickJS Sentinel; RT refresh uses <code>run_protocol_login</code>.
+            <code>browser</code>: Camoufox real browser; RT refresh uses <code>_exchange_refresh_token_with_session</code>.
+            Both fail when OpenAI enforces <code>add-phone</code>.
           </p>
 
-          <!-- 邮箱来源 (二选一互斥): Outlook 接码池 / 自有域名 catch-all -->
+          <!-- Email source (mutually exclusive): Outlook SMS code pool / self-hosted domain catch-all -->
           <div v-if="showMailSource" class="ctl-row reg-mode">
-            <span class="reg-mode-label">邮箱来源 ·</span>
+            <span class="reg-mode-label">Email Source ·</span>
             <label class="reg-mode-opt" :class="{ active: form.mail_source === 'outlook' }">
               <input type="radio" value="outlook" v-model="form.mail_source" />
-              Outlook 接码池 (IMAP OAuth2 收码)
+              Outlook Pool (IMAP OAuth2 code receiving)
             </label>
             <label class="reg-mode-opt" :class="{ active: form.mail_source === 'catch_all' }">
               <input type="radio" value="catch_all" v-model="form.mail_source" />
-              域名 catch-all (CF Email Worker)
+              Domain catch-all (CF Email Worker)
             </label>
           </div>
           <div v-if="showOutlookSelector" class="ctl-row reg-mode">
-            <span class="reg-mode-label">Outlook 账号 ·</span>
+            <span class="reg-mode-label">Outlook Account ·</span>
             <select v-model="form.outlook_email" class="outlook-select" :disabled="outlookLoading">
-              <option value="">— 池里任取一个 available ({{ outlookAvailable.length }} 个) —</option>
+              <option value="">— Pick any available from pool ({{ outlookAvailable.length }} available) —</option>
               <option v-for="acc in outlookAvailable" :key="acc.email" :value="acc.email">
                 {{ acc.email }}
               </option>
             </select>
             <button type="button" class="reg-mode-opt" @click="reloadOutlookPool" :disabled="outlookLoading">
-              {{ outlookLoading ? "..." : "刷新" }}
+              {{ outlookLoading ? "..." : "Refresh" }}
             </button>
-            <RouterLink to="/outlook" class="reg-mode-opt">管理池</RouterLink>
+            <RouterLink to="/outlook" class="reg-mode-opt">Manage Pool</RouterLink>
           </div>
           <p v-if="showOutlookSelector" class="ctl-hint">
-            池空 / 指定号不可用 → 直接报错, 不回退 catch-all。
-            <span v-if="form.outlook_email">当前指定: <code>{{ form.outlook_email }}</code></span>
+            Pool empty / specified email unavailable → error directly, no fallback to catch-all.
+            <span v-if="form.outlook_email">Current: <code>{{ form.outlook_email }}</code></span>
           </p>
           <p v-else-if="showCatchAllHint" class="ctl-hint">
-            用配置里 <code>mail.catch_all_domain</code> + persona 算法生成 <code>alias@yourdomain</code>。
-            OTP 走 CF Email Worker → KV → /api/cf-kv/otp 拉取。没配 domain → 直接报错。
+            Use <code>mail.catch_all_domain</code> + persona algorithm to generate <code>alias@yourdomain</code>.
+            OTP through CF Email Worker → KV → /api/cf-kv/otp fetch.
+            No domain configured → error directly.
           </p>
           <p v-else-if="form.pay_only && modeSupportsPayment" class="ctl-hint">
-            当前是 <code>pay-only</code>：不注册新账号，注册路径 / 邮箱来源已隐藏，只使用库存账号进入支付。
+            Currently <code>pay-only</code>: no new registration, register path / email source hidden, use inventory accounts for payment only.
           </p>
           <p v-else-if="isFreeBackfillMode" class="ctl-hint">
-            <code>free_backfill_rt</code> 只处理库存老号补 <code>refresh_token</code>，不需要新邮箱或支付方式。
+            <code>free_backfill_rt</code> only backfill <code>refresh_token</code> for old accounts, no new email or payment method needed.
           </p>
         </div>
 
-        <div v-if="form.mode !== 'no_card_plus_parallel'" class="term-divider" data-tail="──────────">命令</div>
+        <div v-if="form.mode !== 'no_card_plus_parallel'" class="term-divider" data-tail="──────────">Command</div>
         <pre v-if="form.mode !== 'no_card_plus_parallel'" class="cmd-preview">{{ cmdPreview }}</pre>
 
         <div v-if="form.mode !== 'no_card_plus_parallel' && configHealth" class="health-panel" :class="{ ok: configHealth.ok, fail: !configHealth.ok }">
           <div class="health-head">
-            <span class="health-title">配置健康检查</span>
+            <span class="health-title">Config Health Check</span>
             <span class="badge" :class="configHealth.ok ? 'badge-ok' : 'badge-err'">
-              {{ configHealth.ok ? "可启动" : "阻断启动" }}
+              {{ configHealth.ok ? "Ready" : "Blocked" }}
             </span>
-            <span class="health-meta">{{ configHealth.payment_kind }} / {{ configHealth.requires_email_otp ? "需要邮箱 OTP" : "不需要邮箱 OTP" }}</span>
+            <span class="health-meta">{{ configHealth.payment_kind }} / {{ configHealth.requires_email_otp ? "requires email OTP" : "no email OTP needed" }}</span>
           </div>
           <div class="health-list">
             <div v-for="chk in visibleHealthChecks" :key="chk.name" class="health-row" :class="`health-${chk.status}`">
               <span class="health-status">{{ healthStatusLabel(chk.status) }}</span>
               <div class="health-body">
                 <strong>{{ chk.message }}</strong>
-                <div v-if="chk.missing?.length" class="health-sub">缺：{{ chk.missing.join(", ") }}</div>
-                <div v-if="chk.action" class="health-sub">处理：{{ chk.action }}</div>
-                <div v-if="chk.details" class="health-sub">详情：{{ chk.details }}</div>
+                <div v-if="chk.missing?.length" class="health-sub">Missing: {{ chk.missing.join(", ") }}</div>
+                <div v-if="chk.action" class="health-sub">Action: {{ chk.action }}</div>
+                <div v-if="chk.details" class="health-sub">Details: {{ chk.details }}</div>
               </div>
             </div>
           </div>
         </div>
 
         <div v-if="form.mode !== 'no_card_plus_parallel'" class="step-actions">
-          <TermBtn variant="ghost" :loading="configHealthLoading" @click="checkConfigHealth">检查配置</TermBtn>
-          <TermBtn v-if="!status.running" :loading="starting" @click="start">▶ 开始运行</TermBtn>
-          <TermBtn v-else variant="danger" :loading="stopping" @click="stop">■ 停止</TermBtn>
+          <TermBtn variant="ghost" :loading="configHealthLoading" @click="checkConfigHealth">Check Config</TermBtn>
+          <TermBtn v-if="!status.running" :loading="starting" @click="start">▶ Start Run</TermBtn>
+          <TermBtn v-else variant="danger" :loading="stopping" @click="stop">■ Stop</TermBtn>
         </div>
         <p v-else class="ctl-hint">
-          并发模式下不走单 run 健康检查 / 命令行预览; 用上面的「并发启动」按钮。
+          Parallel mode skips single run health check / command preview; use "Start Parallel" button above.
         </p>
 
         <div class="status-line" :class="{ running: status.running }">
           <span v-if="status.running">
             <span class="status-dot">●</span>
-            运行中 PID {{ status.pid }} // 模式 {{ status.mode }} // {{ runtimeText }}
+            Running PID {{ status.pid }} // Mode {{ status.mode }} // {{ runtimeText }}
           </span>
           <span v-else-if="status.ended_at">
             <span class="status-dot ok" v-if="status.exit_code === 0">●</span>
             <span class="status-dot err" v-else>●</span>
-            上次运行已退出 // 退出码 {{ status.exit_code }} //
+            Last run exited // Exit code {{ status.exit_code }} //
             {{ runtimeText }}
           </span>
           <span v-else>
-            <span class="status-dot idle">○</span> 空闲
+            <span class="status-dot idle">○</span> Idle
           </span>
         </div>
 
-        <!-- QRIS QR 显示：runner 抓到 [qris] PNG 日志后 status.qris 就有值 -->
+        <!-- QRIS QR display: after runner captures [qris] PNG log, status.qris has value -->
         <div v-if="showQrisPanel" class="qris-panel">
           <div class="qris-head">
-            <span class="qris-title">QRIS 扫码支付</span>
+            <span class="qris-title">QRIS QR Code Payment</span>
             <span class="badge" :class="status.qris?.settled ? 'badge-ok' : 'badge-warn'">
-              {{ status.qris?.settled ? "✓ 已入账" : "等待扫码" }}
+              {{ status.qris?.settled ? "✓ Settled" : "Waiting for QR scan" }}
             </span>
           </div>
           <div class="qris-body">
             <img v-if="status.qris?.png_path" :src="qrPngUrl" alt="QRIS QR" class="qris-img" />
             <div class="qris-meta">
               <p><strong>Reference:</strong> <code>{{ status.qris?.reference }}</code></p>
-              <p v-if="status.qris?.expiry"><strong>过期:</strong> {{ status.qris?.expiry }}</p>
+              <p v-if="status.qris?.expiry"><strong>Expires:</strong> {{ status.qris?.expiry }}</p>
               <p v-if="status.qris?.qr_image_url">
-                <strong>远端预览:</strong>
+                <strong>Remote Preview:</strong>
                 <a :href="status.qris?.qr_image_url" target="_blank" rel="noopener">
                   {{ status.qris?.qr_image_url?.replace(/^https?:\/\//, '').slice(0, 60) }}…
                 </a>
               </p>
               <p v-if="status.qris?.deeplink_url" class="qris-deeplink">
-                <strong>📱 GoPay app 直接支付：</strong>
-                <a :href="status.qris?.deeplink_url" target="_blank" rel="noopener">点这里在手机 GoPay app 弹付款</a>
+                <strong>📱 Direct GoPay App Payment:</strong>
+                <a :href="status.qris?.deeplink_url" target="_blank" rel="noopener">Click to open payment in GoPay app on phone</a>
                 <br />
-                <span class="qris-hint">手机已装 GoPay app 时优先用这个，绕过扫码 + WhatsApp OTP</span>
+                <span class="qris-hint">When GoPay app is installed, use this to skip QR scan + WhatsApp OTP</span>
               </p>
               <p class="qris-hint">
-                或扫上方 QR：用 GoPay / DANA / OVO / ShopeePay 等印尼 e-wallet 扫付。
-                后端轮询 Midtrans status，settle 后自动 verify ChatGPT plan。
+                Or scan QR above: use GoPay / DANA / OVO / ShopeePay etc. Indonesian e-wallet to pay.
+                Backend polls Midtrans status, auto verify ChatGPT plan after settlement.
               </p>
             </div>
           </div>
@@ -474,81 +475,81 @@
             </span>
           </summary>
           <p class="link-hint">
-            循环跑「注册 + GoPay 支付」一直到累计成功次数 = target，或连续失败 ≥ max。
-            自动处理：<code>cf_429</code> 触发 IP 轮换；<code>coupon_ineligible</code> 标当前账号为废号删除；
-            其它已知错误（OTP 超时/钱包余额不足/406 已绑定）记日志后跳过。
+            Loop "register + GoPay payment" until cumulative success count = target, or consecutive failures ≥ max.
+            Auto handle: <code>cf_429</code> triggers IP rotation; <code>coupon_ineligible</code> mark account as junk and delete;
+            other known errors (OTP timeout/wallet insufficient/406 already bound) log and skip.
           </p>
           <div v-if="!autoLoop.running" class="auto-loop-form">
             <label>
-              目标成功数
+              Target Successes
               <input v-model.number="autoLoopForm.target_success" type="number" min="1" max="10000" class="link-manual-input" style="min-width:80px;flex:0 0 auto" />
             </label>
             <label>
-              连续失败上限
+              Max Consecutive Failures
               <input v-model.number="autoLoopForm.max_consec_fail" type="number" min="1" max="100" class="link-manual-input" style="min-width:80px;flex:0 0 auto" />
             </label>
-            <TermBtn :loading="autoLoopBusy" @click="startAutoLoop">▶ 启动 Auto Loop</TermBtn>
+            <TermBtn :loading="autoLoopBusy" @click="startAutoLoop">▶ Start Auto Loop</TermBtn>
           </div>
           <div v-else class="auto-loop-running">
             <div class="auto-loop-stats">
               <span><b>iter</b> {{ autoLoop.iteration }}</span>
               <span class="ok"><b>success</b> {{ autoLoop.success_count }}/{{ autoLoop.target_success }}</span>
-              <span class="warn"><b>fail</b> {{ autoLoop.fail_count }} (连续 {{ autoLoop.consecutive_fail }}/{{ autoLoop.max_consec_fail }})</span>
-              <span><b>IP 轮换</b> {{ autoLoop.ip_rotations }}</span>
-              <span v-if="autoLoop.scrap_marked.length"><b>已废号</b> {{ autoLoop.scrap_marked.length }}</span>
+              <span class="warn"><b>fail</b> {{ autoLoop.fail_count }} (consecutive {{ autoLoop.consecutive_fail }}/{{ autoLoop.max_consec_fail }})</span>
+              <span><b>IP Rotations</b> {{ autoLoop.ip_rotations }}</span>
+              <span v-if="autoLoop.scrap_marked.length"><b>Marked Junk</b> {{ autoLoop.scrap_marked.length }}</span>
               <span v-if="autoLoop.zone_list.length > 1">
                 <b>zone</b> {{ autoLoop.current_zone || '?' }}
-                ({{ autoLoop.zone_list.length }} 个，已切 {{ autoLoop.total_zone_rotations }} 次)
+                ({{ autoLoop.zone_list.length }} total, rotated {{ autoLoop.total_zone_rotations }} times)
               </span>
               <span v-if="autoLoop.zone_reg_fail_streak > 0" class="warn">
-                reg连挂 {{ autoLoop.zone_reg_fail_streak }}
+                reg consecutive failures {{ autoLoop.zone_reg_fail_streak }}
               </span>
             </div>
             <div class="auto-loop-last" v-if="autoLoop.last_kind">
               <b>{{ autoLoop.last_kind }}</b> · {{ autoLoop.last_action }}
               <span v-if="autoLoop.last_email"> · {{ autoLoop.last_email }}</span>
             </div>
-            <TermBtn variant="danger" :loading="autoLoopBusy" @click="stopAutoLoop">■ 停止 Auto Loop</TermBtn>
+            <TermBtn variant="danger" :loading="autoLoopBusy" @click="stopAutoLoop">■ Stop Auto Loop</TermBtn>
           </div>
           <p v-if="autoLoop.stop_reason && !autoLoop.running" class="link-hint">
-            上次结束原因：<code>{{ autoLoop.stop_reason }}</code>
+            Last stop reason: <code>{{ autoLoop.stop_reason }}</code>
           </p>
         </details>
 
         <details v-if="showProxyTools" class="link-details">
           <summary>
-            出口 IP ·
+            Exit IP ·
             <span class="link-summary" :class="proxyIp ? 'ok' : 'muted'">
-              {{ proxyIp || '未加载' }}<span v-if="proxyCountry"> ({{ proxyCountry }})</span>
+              {{ proxyIp || 'Not loaded' }}<span v-if="proxyCountry"> ({{ proxyCountry }})</span>
             </span>
             <TermBtn
               variant="ghost"
               class="link-refresh-btn"
               :loading="rotatingIp"
               @click.prevent="rotateProxyIp"
-            >切换 IP</TermBtn>
+            >Rotate IP</TermBtn>
           </summary>
           <p class="link-hint" v-if="proxyError">{{ proxyError }}</p>
           <p v-else class="link-hint">
-            遇到 Midtrans <code>429 body=</code>（Cloudflare 边缘节流，按 IP 限流）时点「切换 IP」。
-            会调 Webshare API 整池替换 + 切 gost 上游。<em>会消耗 Webshare 月度替换额度。</em>
+            When hitting Midtrans <code>429 body=</code> (Cloudflare edge rate limit by IP), click "Rotate IP".
+            Calls Webshare API to replace pool + switch gost upstream. <em>Consumes Webshare monthly rotation quota.</em>
           </p>
         </details>
 
         <details v-if="showGopayLinkTools" class="link-details">
           <summary>
-            GoPay 链接 ·
+            GoPay Link ·
             <span class="link-summary" :class="linkSummaryClass">{{ linkSummaryText }}</span>
-            <TermBtn variant="ghost" class="link-refresh-btn" @click.prevent="refreshLinkStates">刷新</TermBtn>
+            <TermBtn variant="ghost" class="link-refresh-btn" @click.prevent="refreshLinkStates">Refresh</TermBtn>
           </summary>
           <p class="link-hint">
-            支付成功自动 mark linked，下次启动 GoPay 流程会预检拒。
-            <em>本地 unlink ≠ Midtrans 服务端 unlink</em>——出 429 是 Midtrans 自己 rate-limit/冷却，本面板解决不了。
+            Auto mark linked after payment succeeds; next GoPay flow will pre-check and reject.
+            <em>Local unlink ≠ Midtrans server unlink</em> — 429 is Midtrans' own rate-limit/cooldown, this panel can't fix it.
           </p>
           <div v-if="linkStateError" class="link-error">{{ linkStateError }}</div>
           <table v-if="linkStates.length" class="link-table">
             <thead>
-              <tr><th>手机号</th><th>状态</th><th>linked_at</th><th>改动方</th><th></th></tr>
+              <tr><th>Phone</th><th>Status</th><th>linked_at</th><th>Changed By</th><th></th></tr>
             </thead>
             <tbody>
               <tr v-for="row in linkStates" :key="row.phone">
@@ -577,12 +578,12 @@
               </tr>
             </tbody>
           </table>
-          <div v-else class="link-empty-inline">暂无记录</div>
+          <div v-else class="link-empty-inline">No records yet</div>
           <div class="link-manual">
             <input
               v-model="linkManualPhone"
               class="link-manual-input"
-              placeholder="手动添加手机号（含国家码，纯数字）"
+              placeholder="Manually add phone (with country code, digits only)"
             />
             <TermBtn
               variant="ghost"
@@ -599,10 +600,10 @@
       </section>
 
       <section class="run-inventory">
-        <div class="term-divider inventory-divider" data-tail="──────────">账号库存</div>
+        <div class="term-divider inventory-divider" data-tail="──────────">Account Inventory</div>
         <div class="inventory-head">
           <div class="inventory-meta">
-            <span class="inventory-label">最近刷新</span>
+            <span class="inventory-label">Last Refreshed</span>
             <span class="inventory-value">{{ inventoryUpdatedText }}</span>
           </div>
           <div class="inventory-head-actions">
@@ -611,49 +612,49 @@
               variant="ghost"
               :loading="inventoryLoading"
               @click="refreshInventory"
-            >刷新库存</TermBtn>
+            >Refresh Inventory</TermBtn>
             <TermBtn variant="ghost" @click="toggleInventoryContent">
-              {{ showInventoryContent ? "收起详情" : "展开库存" }}
+              {{ showInventoryContent ? "Collapse Details" : "Expand Inventory" }}
             </TermBtn>
           </div>
         </div>
         <div v-if="!showInventoryContent" class="inventory-lazy">
-          账号库存默认不加载。选中 <code>pay-only</code> / <code>free_register</code> /
-          <code>free_backfill_rt</code> 会自动展开；也可以手动点「展开库存」。
+          Account inventory not loaded by default. Auto-expands when <code>pay-only</code> / <code>free_register</code> /
+          <code>free_backfill_rt</code> selected; also manually expand.
         </div>
 
         <template v-else>
           <div v-if="inventoryError" class="inventory-error">
-            库存刷新失败：{{ inventoryError }}。如果刚更新过代码，重启后端 <code>python -m webui.server</code>。
+            Inventory refresh failed: {{ inventoryError }}. If code just updated, restart backend with <code>python -m webui.server</code>.
           </div>
 
           <div class="inventory-stats">
             <div class="inventory-stat">
-              <span class="inventory-stat-label">总账号</span>
+              <span class="inventory-stat-label">Total Accounts</span>
               <strong>{{ inventory.counts.registered_total }}</strong>
             </div>
             <div v-if="showPayInventoryFields" class="inventory-stat">
-              <span class="inventory-stat-label">可复用</span>
+              <span class="inventory-stat-label">Reusable</span>
               <strong>{{ inventory.counts.pay_only_eligible }}</strong>
             </div>
             <div v-if="showPayInventoryFields" class="inventory-stat">
-              <span class="inventory-stat-label">已消耗</span>
+              <span class="inventory-stat-label">Consumed</span>
               <strong>{{ inventory.counts.pay_only_consumed }}</strong>
             </div>
             <div v-if="showPayInventoryFields" class="inventory-stat">
-              <span class="inventory-stat-label">缺 auth</span>
+              <span class="inventory-stat-label">Missing Auth</span>
               <strong>{{ inventory.counts.pay_only_no_auth }}</strong>
             </div>
             <div v-if="showRtInventoryFields" class="inventory-stat">
-              <span class="inventory-stat-label">有 RT</span>
+              <span class="inventory-stat-label">Has RT</span>
               <strong>{{ inventory.counts.with_refresh_token }}</strong>
             </div>
             <div v-if="showRtInventoryFields" class="inventory-stat">
-              <span class="inventory-stat-label">RT 待补</span>
+              <span class="inventory-stat-label">RT Missing</span>
               <strong>{{ inventory.counts.rt_missing }}</strong>
             </div>
             <div v-if="showRtInventoryFields" class="inventory-stat">
-              <span class="inventory-stat-label">RT 冷却</span>
+              <span class="inventory-stat-label">RT Cooldown</span>
               <strong>{{ inventory.counts.rt_cooldown }}</strong>
             </div>
           </div>
@@ -662,71 +663,71 @@
             <input
               v-model="invFilters.search"
               class="inv-filter-input"
-              placeholder="🔍 邮箱关键字"
+              placeholder="🔍 Email keyword"
             />
             <select v-model="invFilters.plan" class="inv-filter-sel">
-              <option value="">所有 plan</option>
+              <option value="">All Plans</option>
               <option value="plus">plus</option>
               <option value="team">team</option>
               <option value="pro">pro</option>
               <option value="free">free</option>
             </select>
             <select v-model="invFilters.check" class="inv-filter-sel">
-              <option value="">所有验证</option>
-              <option value="valid">✓ 有效</option>
-              <option value="invalid">✗ 失效</option>
-              <option value="unknown">? 未知</option>
-              <option value="unchecked">未检</option>
+              <option value="">All Checks</option>
+              <option value="valid">✓ Valid</option>
+              <option value="invalid">✗ Invalid</option>
+              <option value="unknown">? Unknown</option>
+              <option value="unchecked">Unchecked</option>
             </select>
             <select v-if="showPayInventoryFields" v-model="invFilters.pay" class="inv-filter-sel">
-              <option value="">所有支付</option>
-              <option value="reusable">可复用</option>
-              <option value="consumed">已消耗</option>
-              <option value="no_auth">缺 auth</option>
+              <option value="">All Payment</option>
+              <option value="reusable">Reusable</option>
+              <option value="consumed">Consumed</option>
+              <option value="no_auth">Missing Auth</option>
             </select>
             <select v-if="showRtInventoryFields" v-model="invFilters.rt" class="inv-filter-sel">
-              <option value="">所有 RT</option>
-              <option value="has_rt">有 RT</option>
-              <option value="oauth_succeeded">OAuth 成功</option>
-              <option value="missing">缺 RT</option>
-              <option value="cooldown">冷却中</option>
-              <option value="retryable">可重试</option>
-              <option value="dead">永久失败</option>
+              <option value="">All RT</option>
+              <option value="has_rt">Has RT</option>
+              <option value="oauth_succeeded">OAuth Succeeded</option>
+              <option value="missing">Missing</option>
+              <option value="cooldown">Cooldown</option>
+              <option value="retryable">Retryable</option>
+              <option value="dead">Permanently Failed</option>
             </select>
             <select v-if="showCpaInventoryActions" v-model="invFilters.cpa" class="inv-filter-sel">
-              <option value="">所有 CPA</option>
-              <option value="pushed">已推送</option>
-              <option value="not_pushed">未推送</option>
+              <option value="">All CPA</option>
+              <option value="pushed">Pushed</option>
+              <option value="not_pushed">Not Pushed</option>
             </select>
             <span class="inv-filter-count">{{ filteredAccounts.length }} / {{ inventory.accounts.length }}</span>
-            <TermBtn variant="ghost" :disabled="!hasActiveFilter" @click="resetInvFilters">清除筛选</TermBtn>
+            <TermBtn variant="ghost" :disabled="!hasActiveFilter" @click="resetInvFilters">Clear Filters</TermBtn>
           </div>
 
           <div v-if="inventory.accounts.length" class="inventory-toolbar">
             <label class="inventory-toolbar-check">
               <input type="checkbox" :checked="allFilteredSelected" @change="toggleSelectAllFiltered" />
-              <span>全选筛选结果 ({{ selectedFilteredCount }} / {{ filteredAccounts.length }})</span>
+              <span>Select All Filtered ({{ selectedFilteredCount }} / {{ filteredAccounts.length }})</span>
             </label>
-            <!-- 顶栏: 只放 "全表批量" 操作 (不依赖选中). 单账号操作走卡片右上角按钮 -->
+            <!-- Top bar: bulk table-wide operations (independent of selection). Single-account ops in card buttons -->
             <div class="inventory-toolbar-actions">
-              <TermBtn v-if="unknownOrUncheckedIds.length" variant="ghost" :loading="inventoryBusy" @click="verifyAllUnknown">验证全部未检 ({{ unknownOrUncheckedIds.length }})</TermBtn>
-              <TermBtn v-if="planRefreshableIds.length" variant="ghost" :loading="inventoryBusy" @click="refreshPlanAll">实时刷新 Plan ({{ planRefreshableIds.length }})</TermBtn>
-              <TermBtn v-if="rtRefreshableIds.length" variant="ghost" :loading="inventoryBusy" @click="refreshRtStatusAll">RT刷新全部有RT ({{ rtRefreshableIds.length }})</TermBtn>
-              <TermBtn v-if="showCpaInventoryActions && unpushedIds.length" variant="ghost" :loading="inventoryBusy" @click="pushAllUnpushed">推送全部未推送→CPA ({{ unpushedIds.length }})</TermBtn>
-              <TermBtn v-if="unpushedIds.length" variant="ghost" :loading="inventoryBusy" @click="pushAllUnpushedToAutofill">推送全部未推送→散户面板 ({{ unpushedIds.length }})</TermBtn>
-              <TermBtn v-if="invalidIds.length" variant="ghost" :loading="inventoryBusy" @click="deleteAllInvalid">删除所有失效 ({{ invalidIds.length }})</TermBtn>
+              <TermBtn v-if="unknownOrUncheckedIds.length" variant="ghost" :loading="inventoryBusy" @click="verifyAllUnknown">Verify All Unchecked ({{ unknownOrUncheckedIds.length }})</TermBtn>
+              <TermBtn v-if="planRefreshableIds.length" variant="ghost" :loading="inventoryBusy" @click="refreshPlanAll">Realtime Refresh Plan ({{ planRefreshableIds.length }})</TermBtn>
+              <TermBtn v-if="rtRefreshableIds.length" variant="ghost" :loading="inventoryBusy" @click="refreshRtStatusAll">Refresh RT All ({{ rtRefreshableIds.length }})</TermBtn>
+              <TermBtn v-if="showCpaInventoryActions && unpushedIds.length" variant="ghost" :loading="inventoryBusy" @click="pushAllUnpushed">Push All Unpushed → CPA ({{ unpushedIds.length }})</TermBtn>
+              <TermBtn v-if="unpushedIds.length" variant="ghost" :loading="inventoryBusy" @click="pushAllUnpushedToAutofill">Push All Unpushed → Autofill Panel ({{ unpushedIds.length }})</TermBtn>
+              <TermBtn v-if="invalidIds.length" variant="ghost" :loading="inventoryBusy" @click="deleteAllInvalid">Delete All Invalid ({{ invalidIds.length }})</TermBtn>
             </div>
           </div>
-          <!-- 多选时浮出: 批量操作"选中" (跟顶栏分开, 不混) -->
+          <!-- Multi-select floating: batch ops on "selected" (separate from top bar, no mixing) -->
           <div v-if="hasSelection" class="inventory-multi-actions">
-            <span class="inventory-multi-label">已选中 {{ selectedIds.size }} 个 · 批量操作:</span>
-            <TermBtn variant="ghost" :loading="inventoryBusy" @click="verifySelected">验证</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" @click="refreshRtStatusSelected">RT刷新</TermBtn>
-            <TermBtn v-if="showCpaInventoryActions" variant="ghost" :loading="inventoryBusy" @click="pushSelectedToCpa">推送→CPA</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" @click="pushSelectedToAutofill">推送→散户面板</TermBtn>
+            <span class="inventory-multi-label">Selected {{ selectedIds.size }} · Bulk Actions:</span>
+            <TermBtn variant="ghost" :loading="inventoryBusy" @click="verifySelected">Verify</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" @click="refreshRtStatusSelected">Refresh RT</TermBtn>
+            <TermBtn v-if="showCpaInventoryActions" variant="ghost" :loading="inventoryBusy" @click="pushSelectedToCpa">Push → CPA</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" @click="pushSelectedToAutofill">Push → Autofill Panel</TermBtn>
             <TermBtn v-if="showPayOnlyInventoryAction" variant="ghost" :loading="inventoryBusy" @click="payOnlySelected">pay-only</TermBtn>
-            <TermBtn v-if="showRtInventoryAction" variant="ghost" :loading="inventoryBusy" @click="rtOnlySelected">补 RT</TermBtn>
-            <TermBtn variant="ghost" :loading="inventoryBusy" @click="deleteSelected">删除</TermBtn>
+            <TermBtn v-if="showRtInventoryAction" variant="ghost" :loading="inventoryBusy" @click="rtOnlySelected">Backfill RT</TermBtn>
+            <TermBtn variant="ghost" :loading="inventoryBusy" @click="deleteSelected">Delete</TermBtn>
           </div>
 
           <div v-if="filteredAccounts.length" class="inventory-list">
@@ -736,25 +737,25 @@
                 <span class="inventory-email">{{ acc.email }}</span>
                 <span class="badge" :class="planBadgeClass(acc.plan_tag)">{{ planLabel(acc.plan_tag) }}</span>
                 <span class="badge" :class="checkBadgeClass(acc.last_check_status)" :title="acc.last_check_message">
-                  <template v-if="checkingIds.has(acc.id)">⟳ 检查中</template>
+                  <template v-if="checkingIds.has(acc.id)">⟳ Checking</template>
                   <template v-else>{{ checkLabel(acc.last_check_status) }}</template>
                 </span>
                 <span v-if="showPayInventoryFields" class="badge" :class="payBadgeClass(acc.pay_state)">{{ payStateLabel(acc) }}</span>
                 <span v-if="showRtInventoryFields" class="badge" :class="rtBadgeClass(acc.rt_state)">{{ rtStateLabel(acc) }}</span>
                 <span v-if="showCpaInventoryActions" class="badge" :class="cpaBadgeClass(acc)" :title="acc.cpa_status">{{ cpaLabel(acc) }}</span>
-                <!-- 单账号操作按钮组 (右对齐). 跟现有 "推送→CPA" 按钮同一行 -->
+                <!-- Single-account action button group (right-aligned). Same row as existing "Push → CPA" button -->
                 <div class="inventory-row-actions">
-                  <button class="inventory-row-action" :disabled="inventoryBusy" @click="verifyOne(acc.id)">验证</button>
-                  <button class="inventory-row-action" :disabled="inventoryBusy" @click="refreshRtStatusOne(acc.id)" :title="acc.has_refresh_token ? '用 RT 换新 AT 拿 JWT plan' : '无 RT, 该按钮会返 no_rt'">RT刷新</button>
-                  <button v-if="showCpaInventoryActions && !acc.cpa_pushed" class="inventory-row-action" :disabled="inventoryBusy" @click="pushOneToCpa(acc.id)">推送→CPA</button>
-                  <button class="inventory-row-action" :disabled="inventoryBusy" @click="pushOneToAutofill(acc.id)">推送→散户</button>
+                  <button class="inventory-row-action" :disabled="inventoryBusy" @click="verifyOne(acc.id)">Verify</button>
+                  <button class="inventory-row-action" :disabled="inventoryBusy" @click="refreshRtStatusOne(acc.id)" :title="acc.has_refresh_token ? 'Use RT for new AT to get JWT plan' : 'No RT, this button returns no_rt'">Refresh RT</button>
+                  <button v-if="showCpaInventoryActions && !acc.cpa_pushed" class="inventory-row-action" :disabled="inventoryBusy" @click="pushOneToCpa(acc.id)">Push → CPA</button>
+                  <button class="inventory-row-action" :disabled="inventoryBusy" @click="pushOneToAutofill(acc.id)">Push → Autofill</button>
                   <button v-if="showPayOnlyInventoryAction" class="inventory-row-action" :disabled="inventoryBusy" @click="payOnlyOne(acc.id)">pay-only</button>
-                  <button v-if="showRtInventoryAction" class="inventory-row-action" :disabled="inventoryBusy" @click="rtOnlyOne(acc.id)">补 RT</button>
-                  <button class="inventory-row-action inventory-row-action--danger" :disabled="inventoryBusy" @click="deleteOne(acc.id)">删除</button>
+                  <button v-if="showRtInventoryAction" class="inventory-row-action" :disabled="inventoryBusy" @click="rtOnlyOne(acc.id)">Backfill RT</button>
+                  <button class="inventory-row-action inventory-row-action--danger" :disabled="inventoryBusy" @click="deleteOne(acc.id)">Delete</button>
                 </div>
               </div>
               <div class="inventory-row-sub">
-                <span>注册 {{ formatInventoryTs(acc.registered_at) }}</span>
+                <span>Registered {{ formatInventoryTs(acc.registered_at) }}</span>
                 <span>attempts {{ acc.attempts }}</span>
                 <span>auth {{ authSummary(acc) }}</span>
                 <span v-if="acc.last_plan_type">rt-plan {{ acc.last_plan_type }}</span>
@@ -771,10 +772,10 @@
             </div>
           </div>
           <div v-else-if="!inventory.accounts.length" class="inventory-empty">
-            暂无账号库存；先跑一次注册/支付，等数据库同步完成后再点刷新。
+            No account inventory yet; run register/payment once, wait for DB sync, then refresh.
           </div>
           <div v-else class="inventory-empty">
-            所有账号都被筛掉了——清除筛选或调整条件。
+            All accounts filtered out — clear filters or adjust conditions.
           </div>
         </template>
       </section>
@@ -785,13 +786,13 @@
             <button
               class="otp-close"
               :disabled="otpDialog.submitting"
-              title="关闭（gopay.py 已自行从 API 取到 OTP / 想手动跳过）"
+              title="Close (gopay.py auto-fetches from API / want to manually skip)"
               @click="dismissOtpModal"
             >×</button>
             <div class="otp-head">
               <span class="otp-prompt">$</span> GoPay WhatsApp OTP
             </div>
-            <p class="otp-desc">查 WhatsApp，把刚收到的 6 位 OTP 输进来。提交后 gopay.py 自动继续。</p>
+            <p class="otp-desc">Check WhatsApp, enter the 6-digit OTP just received. Submit and gopay.py continues automatically.</p>
             <input
               class="otp-input"
               v-model="otpDialog.value"
@@ -802,7 +803,7 @@
               placeholder="000000"
             />
             <div class="otp-actions">
-              <TermBtn :loading="otpDialog.submitting" @click="submitOtp">提交</TermBtn>
+              <TermBtn :loading="otpDialog.submitting" @click="submitOtp">Submit</TermBtn>
             </div>
           </div>
         </div>
@@ -810,16 +811,16 @@
 
       <section class="run-logs">
         <div class="logs-head">
-          <span class="pre-prompt">$</span> 实时日志
-          <span class="logs-meta">{{ lines.length }} 行</span>
+          <span class="pre-prompt">$</span> Real-time Logs
+          <span class="logs-meta">{{ lines.length }} lines</span>
           <label class="auto-scroll-toggle">
             <input type="checkbox" v-model="autoScroll" />
-            <span>自动滚到底</span>
+            <span>Auto-scroll to bottom</span>
           </label>
         </div>
         <div class="logs-stream" ref="streamEl">
           <div v-if="!lines.length" class="logs-empty">
-            等待运行<span class="term-cursor"></span>
+            Waiting to run<span class="term-cursor"></span>
           </div>
           <div v-for="entry in lines" :key="entry.seq" class="log-line" :class="entry.cls">
             <span class="log-ts">{{ entry.tsLabel }}</span>
@@ -850,11 +851,11 @@ const modes = [
   { value: "batch", label: "batch — N×" },
   { value: "self_dealer", label: "self-dealer" },
   { value: "daemon", label: "daemon ∞" },
-  { value: "free_register", label: "free_register — 免费号+rt+CPA" },
-  { value: "free_backfill_rt", label: "free_backfill_rt — 老号补rt" },
-  { value: "promo_link", label: "promo_link — 抓优惠长链接存DB" },
-  { value: "no_card_plus", label: "no_card_plus — promo+PayPal RPA 0 元开 Plus" },
-  { value: "no_card_plus_parallel", label: "no_card_plus 并发 — N worker 各自 phone+sms" },
+  { value: "free_register", label: "free_register — free accounts+rt+CPA" },
+  { value: "free_backfill_rt", label: "free_backfill_rt — backfill rt for old accounts" },
+  { value: "promo_link", label: "promo_link — capture promo long links to DB" },
+  { value: "no_card_plus", label: "no_card_plus — promo+PayPal RPA open Plus for 0 yuan" },
+  { value: "no_card_plus_parallel", label: "no_card_plus parallel — N worker concurrent phones+sms" },
 ];
 const paymentModes = new Set(["single", "batch", "self_dealer", "daemon"]);
 const promoRegionPresets = [
@@ -983,17 +984,17 @@ const form = ref({
   batch: 5,
   workers: 3,
   self_dealer: 4,
-  count: 0, // free_register 模式：注册多少个后停（0 = 无限）
+  count: 0, // free_register mode: register how many then stop (0 = unlimited)
   promo_plan: (localStorage.getItem("webui.promo_plan") || "plus") as "plus" | "team",
   promo_country: (localStorage.getItem("webui.promo_country") || "ID").toUpperCase(),
   promo_currency: (localStorage.getItem("webui.promo_currency") || "IDR").toUpperCase(),
   promo_campaign_id: localStorage.getItem("webui.promo_campaign_id") || "",
   register_mode: ((localStorage.getItem("webui.register_mode") as "browser" | "protocol") || "protocol"),
-  // 邮箱来源 (二选一互斥), 默认 outlook
+  // Email source (mutually exclusive), default outlook
   mail_source: (localStorage.getItem("webui.mail_source") || "outlook") as "outlook" | "catch_all",
-  outlook_email: "",  // 仅 mail_source=outlook 时生效, 空 = 池里随便挑
-  // no_card_plus 模式 (scripts/no_card_paypal_plus.py): promo+PayPal RPA 0 元开 plus
-  no_card_promo_link_id: 0, // 0 = 自动挑最新 fresh plus link
+  outlook_email: "",  // only effective when mail_source=outlook, empty = random from pool
+  // no_card_plus mode (scripts/no_card_paypal_plus.py): promo+PayPal RPA open plus for 0
+  no_card_promo_link_id: 0, // 0 = auto pick latest fresh plus link
   no_card_phone: localStorage.getItem("webui.no_card_phone") || "",
   no_card_sms_api_url: localStorage.getItem("webui.no_card_sms_api_url") || "",
   no_card_otp_timeout: 240,
@@ -1012,7 +1013,7 @@ watch(() => form.value.no_card_inventory_mail_source, (v) => {
   try { localStorage.setItem("webui.no_card_inventory_mail_source", v || "any"); } catch {}
 });
 
-// 并发模式 (no_card_plus_parallel) 独立 state, 不污染 form
+// Parallel mode (no_card_plus_parallel) independent state, don't pollute form
 type ParallelWorker = { phone: string; sms_url: string; tag: string };
 type ParallelSummary = {
   total_workers: number;
@@ -1029,8 +1030,8 @@ type ParallelSummary = {
     current_event: string;
   }>;
 };
-// 并发模式 worker 列表只从 localStorage 加载用户自己填过的;
-// 不预填任何敏感数据 (phone/SMS key 全部由用户手动输入, 防误泄露).
+// Parallel mode worker list only loads user-filled from localStorage;
+// no pre-fill of sensitive data (phone/SMS key all manual user input, prevent leak).
 const _loadParallelWorkers = (): ParallelWorker[] => {
   try {
     const raw = localStorage.getItem("webui.parallel_workers");
@@ -1063,13 +1064,14 @@ const parallel = ref({
   statusBusy: false,
   summary: null as ParallelSummary | null,
   pollHandle: 0 as number | undefined as any,
-  // 每个 worker 的 stdout 增量游标; 新增行追加到全局 lines (复用单 run 实时日志区).
+  // Each worker's stdout increment cursor; new lines appended to global lines (reuse single run realtime log area).
   workerLogSeq: {} as Record<string, number>,
 });
 
 const parallelRunning = computed(() => (parallel.value.summary?.running || 0) > 0);
 
-// N worker → phone 池 round-robin 映射. 同 phone 多 worker 用时, phone-lock 在 OTP 阶段排队.
+// N worker → phone pool round-robin mapping. When same phone shared by multiple workers,
+// phone-lock queues at OTP stage.
 const parallelMapping = computed(() => {
   const pool = parallel.value.workers
     .map((w) => ({ phone: (w.phone || "").trim(), sms_url: (w.sms_url || "").trim(), tag: (w.tag || "").trim() }))
@@ -1113,15 +1115,15 @@ async function startParallel() {
   if (parallel.value.busy) return;
   const mapping = parallelMapping.value;
   if (mapping.length === 0) {
-    message.error("至少要 1 个 phone 行 (phone 非空)");
+    message.error("Need at least 1 phone row (non-empty phone)");
     return;
   }
   if (!parallel.value.default_sms_url && mapping.some((m) => !m.sms_url)) {
-    message.error("某 slot sms_url 留空时必须设默认 SMS URL");
+    message.error("When some slot sms_url empty, default SMS URL required");
     return;
   }
-  // 后端拿到映射好的 worker list (N 条), 每条带具体 phone+sms_url+worker_id 提示;
-  // 后端会按这个顺序 spawn 等量 worker.
+  // Backend gets mapped worker list (N rows), each with phone+sms_url+worker_id hint;
+  // backend spawns equal workers in this order.
   const ws = mapping.map((m) => ({
     phone: m.phone,
     sms_url: m.sms_url,
@@ -1143,13 +1145,14 @@ async function startParallel() {
       inventory_mail_source: parallel.value.inventory_mail_source,
     };
     const r = await api.post("/run/parallel/start", body);
-    message.success(`已启动 ${r.data?.spawned?.length || 0} workers`);
-    // 复用全局实时日志区: 清掉旧行, 重置每个 worker 的 seq 游标, 让 polling 从头拉
+    message.success(`Started ${r.data?.spawned?.length || 0} workers`);
+    // Reuse global realtime log area: clear old lines, reset each worker seq cursor,
+    // let polling pull from start
     lines.value = [];
     parallel.value.workerLogSeq = {};
     startParallelPolling();
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || e?.message || "并发启动失败");
+    message.error(e?.response?.data?.detail || e?.message || "Parallel start failed");
   } finally {
     parallel.value.busy = false;
   }
@@ -1157,19 +1160,19 @@ async function startParallel() {
 async function stopParallel() {
   try {
     const r = await api.post("/run/parallel/stop");
-    message.success(`已停 ${r.data?.stopped?.length || 0} workers`);
+    message.success(`Stopped ${r.data?.stopped?.length || 0} workers`);
     refreshParallelStatus();
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || "停止失败");
+    message.error(e?.response?.data?.detail || "Stop failed");
   }
 }
 async function clearParallel() {
   try {
     const r = await api.post("/run/parallel/clear");
-    message.success(`已清 ${r.data?.removed?.length || 0} 个已结束 worker`);
+    message.success(`Cleared ${r.data?.removed?.length || 0} completed workers`);
     refreshParallelStatus();
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || "清理失败");
+    message.error(e?.response?.data?.detail || "Clear failed");
   }
 }
 async function refreshParallelStatus() {
@@ -1178,16 +1181,17 @@ async function refreshParallelStatus() {
   try {
     const r = await api.get("/run/parallel/status");
     parallel.value.summary = r.data as ParallelSummary;
-    // 并行拉每个 worker 的日志增量
+    // Parallel fetch each worker's log increments; new lines append to global lines.
     await fetchAllWorkerLogs();
   } catch (e: any) {
-    // 静默, 频繁轮询时不弹错
+    // Silent; frequent polling shouldn't error
   } finally {
     parallel.value.statusBusy = false;
   }
 }
 
-// 全局 lines.value 序号空间; 给并发 worker 的合并日志一个安全偏移, 不与单 run SSE seq 冲突.
+// Global lines.value seq namespace; give parallel worker merged logs safe offset,
+// no conflict with single run SSE seq.
 let _parallelSeqCursor = 1_000_000;
 async function fetchAllWorkerLogs() {
   const ids = (parallel.value.summary?.workers || []).map((w) => w.worker_id);
@@ -1205,11 +1209,11 @@ async function fetchAllWorkerLogs() {
       }
       parallel.value.workerLogSeq[wid] = data.next_seq || since;
     } catch {
-      // 静默
+      // Silent
     }
   }));
   if (allNew.length === 0) return;
-  // 按 (worker seq) 升序, 同 seq 按 worker_id 字典排序 → 确定性 ordering
+  // Sort by (worker seq) ascending, same seq by worker_id dict order → deterministic ordering
   allNew.sort((a, b) => (a.seq - b.seq) || a.wid.localeCompare(b.wid));
   for (const item of allNew) {
     const entry: any = {
@@ -1238,7 +1242,7 @@ function stopParallelPolling() {
     parallel.value.pollHandle = 0;
   }
 }
-// 切到并发模式自动启动轮询; 切走停掉
+// Switch to parallel mode auto-start polling; switch away auto-stop
 watch(() => form.value.mode, (m) => {
   if (m === "no_card_plus_parallel") {
     startParallelPolling();
@@ -1303,7 +1307,7 @@ function normalizePromoRegion() {
   form.value.promo_currency = normalizedPromoCurrency.value || promoCurrencyByCountry[country] || "";
 }
 
-// Outlook 池下拉数据 (mail_source=outlook 时拉 available 列表)
+// Outlook pool dropdown data (mail_source=outlook pulls available list)
 const outlookAvailable = ref<Array<{ email: string }>>([]);
 const outlookLoading = ref(false);
 async function reloadOutlookPool() {
@@ -1312,7 +1316,7 @@ async function reloadOutlookPool() {
   try {
     const r = await api.get("/outlook/list", { params: { limit: 500, status: "available" } });
     outlookAvailable.value = (r.data?.items || []).map((x: any) => ({ email: x.email }));
-    // 若当前选中的 email 不在最新可用列表里, 清掉
+    // If selected email not in latest available list, clear it
     if (form.value.outlook_email &&
         !outlookAvailable.value.some(a => a.email === form.value.outlook_email)) {
       form.value.outlook_email = "";
@@ -1330,8 +1334,8 @@ const otpDialog = ref({
   submitting: false,
   openedAt: 0,
   autoFilled: false,
-  // 用户手动 × 关闭后这次 run 内不再 reopen，
-  // 直到 SSE `done` 事件触发（pipeline 结束 → 清旗）。
+  // After user manually × close, don't reopen until SSE `done` event (pipeline end),
+  // reset for next run.
   dismissed: false,
 });
 let otpPollTimer: ReturnType<typeof setInterval> | undefined;
@@ -1352,17 +1356,17 @@ const linkManualPhone = ref("");
 let linkPollTimer: ReturnType<typeof setInterval> | undefined;
 
 const linkStateUpdatedText = computed(() => {
-  if (!linkStateUpdatedAt.value) return "未刷新";
+  if (!linkStateUpdatedAt.value) return "Not refreshed";
   const d = new Date(linkStateUpdatedAt.value);
   return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
 });
 
 const linkSummaryText = computed(() => {
-  if (!linkStates.value.length) return "无记录";
+  if (!linkStates.value.length) return "No records";
   const linked = linkStates.value.filter(r => r.linked).length;
   const unlinked = linkStates.value.length - linked;
-  if (linked === 0) return `${unlinked} 个 unlinked`;
-  return `${linked} 个 linked / ${unlinked} 个 unlinked`;
+  if (linked === 0) return `${unlinked} unlinked`;
+  return `${linked} linked / ${unlinked} unlinked`;
 });
 
 const linkSummaryClass = computed(() => {
@@ -1382,7 +1386,7 @@ async function loadCurrentProxy() {
     proxyCountry.value = r.data.country || "";
     proxyError.value = "";
   } catch (e: any) {
-    proxyError.value = e?.response?.data?.detail || "未读到当前出口 IP（webshare 未启用？）";
+    proxyError.value = e?.response?.data?.detail || "Cannot read current exit IP (webshare not enabled?)";
   }
 }
 
@@ -1421,11 +1425,11 @@ let autoLoopPollTimer: ReturnType<typeof setInterval> | undefined;
 const autoLoopSummary = computed(() => {
   if (!autoLoop.value.running) {
     if (autoLoop.value.stop_reason) {
-      return `已停止 (${autoLoop.value.stop_reason})`;
+      return `Stopped (${autoLoop.value.stop_reason})`;
     }
-    return "未启动";
+    return "Not running";
   }
-  return `running · ${autoLoop.value.success_count}/${autoLoop.value.target_success} 成功 · ${autoLoop.value.fail_count} 失败`;
+  return `running · ${autoLoop.value.success_count}/${autoLoop.value.target_success} success · ${autoLoop.value.fail_count} failed`;
 });
 
 async function refreshAutoLoop() {
@@ -1447,12 +1451,12 @@ async function startAutoLoop() {
       register_only: false,
       register_mode: form.value.register_mode,
     });
-    message.success("Auto Loop 已启动");
+    message.success("Auto Loop started");
     await refreshAutoLoop();
-    // 没活的 SSE 就开一个，让用户能看到子进程的日志和 [auto-loop] marker
+    // No active SSE, open one so user sees subprocess logs + [auto-loop] marker
     if (!eventSource) openStream();
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || "启动失败");
+    message.error(e?.response?.data?.detail || "Start failed");
   } finally {
     autoLoopBusy.value = false;
   }
@@ -1462,26 +1466,26 @@ async function stopAutoLoop() {
   autoLoopBusy.value = true;
   try {
     await api.post("/auto-loop/stop");
-    message.success("已发送停止信号");
+    message.success("Stop signal sent");
     await refreshAutoLoop();
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || "停止失败");
+    message.error(e?.response?.data?.detail || "Stop failed");
   } finally {
     autoLoopBusy.value = false;
   }
 }
 
 async function rotateProxyIp() {
-  if (!confirm("确认切换出口 IP？会消耗 Webshare 月度替换额度。")) return;
+  if (!confirm("Confirm IP rotation? Will consume Webshare monthly rotation quota.")) return;
   rotatingIp.value = true;
   proxyError.value = "";
   try {
     const r = await api.post<{ prev_ip: string; new_ip: string; country: string }>("/proxy/rotate-ip");
     proxyIp.value = r.data.new_ip || "";
     proxyCountry.value = r.data.country || "";
-    message.success(`IP 已切换：${r.data.prev_ip || "?"} → ${r.data.new_ip}`);
+    message.success(`IP rotated: ${r.data.prev_ip || "?"} → ${r.data.new_ip}`);
   } catch (e: any) {
-    proxyError.value = e?.response?.data?.detail || "切换失败";
+    proxyError.value = e?.response?.data?.detail || "Rotation failed";
     message.error(proxyError.value);
   } finally {
     rotatingIp.value = false;
@@ -1502,14 +1506,14 @@ async function refreshLinkStates() {
     linkStates.value = r.data.items || [];
     linkStateUpdatedAt.value = Date.now();
   } catch (e: any) {
-    linkStateError.value = e?.response?.data?.detail || e?.message || "拉取失败";
+    linkStateError.value = e?.response?.data?.detail || e?.message || "Fetch failed";
   }
 }
 
 async function setLinkState(phone: string, linked: boolean) {
   const digits = (phone || "").replace(/\D/g, "");
   if (!digits) {
-    message.warning("手机号为空");
+    message.warning("Phone empty");
     return;
   }
   linkBusy.value = digits;
@@ -1519,13 +1523,13 @@ async function setLinkState(phone: string, linked: boolean) {
       linked,
       source: "webui_manual",
     });
-    message.success(linked ? `已标记 ${digits} 为 linked` : `已 unlink ${digits}`);
+    message.success(linked ? `Marked ${digits} as linked` : `Unlinked ${digits}`);
     if (linkManualPhone.value.replace(/\D/g, "") === digits) {
       linkManualPhone.value = "";
     }
     await refreshLinkStates();
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || "更新失败");
+    message.error(e?.response?.data?.detail || "Update failed");
   } finally {
     linkBusy.value = "";
   }
@@ -1545,8 +1549,8 @@ function onQrisToggle(v: boolean) {
   }
 }
 
-// QRIS PNG 走 nginx /webui/api/...（剥前缀后命中 /api/run/qris/qr.png）
-// 加 ready_at cache-bust 让浏览器换新 QR 不命中旧缓存
+// QRIS PNG via nginx /webui/api/... (strip prefix hits /api/run/qris/qr.png)
+// Add ready_at cache-bust so browser fetches new QR, not old cache
 const qrPngUrl = computed(() => {
   const ra = status.value.qris?.ready_at || 0;
   return `${import.meta.env.BASE_URL}api/run/qris/qr.png?t=${ra}`;
@@ -1610,7 +1614,7 @@ const isNoCardPlusMode = computed(() => form.value.mode === "no_card_plus");
 const modeSupportsPayment = computed(() => paymentModes.has(form.value.mode));
 const showRunModifiers = computed(() => modeSupportsPayment.value);
 const showPaymentSelector = computed(() => modeSupportsPayment.value && !form.value.register_only);
-// no_card_plus 走 promo_link 已注册账号 + PayPal RPA, 不涉及 ChatGPT 注册环节
+// no_card_plus uses promo_link registered accounts + PayPal RPA, not ChatGPT register steps
 const requiresRegistration = computed(() => !form.value.pay_only && !isFreeBackfillMode.value && !isNoCardPlusMode.value);
 const showRegisterPath = computed(() => requiresRegistration.value);
 const showMailSource = computed(() => requiresRegistration.value);
@@ -1653,13 +1657,13 @@ const runtimeText = computed(() => {
   }
   if (status.value.started_at && status.value.ended_at) {
     const elapsed = Math.floor(status.value.ended_at - status.value.started_at);
-    return `耗时 ${formatElapsed(elapsed)}`;
+    return `Elapsed ${formatElapsed(elapsed)}`;
   }
   return "";
 });
 
 const inventoryUpdatedText = computed(() =>
-  inventory.value.generated_at ? formatInventoryTs(inventory.value.generated_at) : "未刷新"
+  inventory.value.generated_at ? formatInventoryTs(inventory.value.generated_at) : "Not refreshed"
 );
 
 const visibleHealthChecks = computed(() => {
@@ -1703,25 +1707,25 @@ function authSummary(acc: InventoryAccount) {
 }
 
 function payStateLabel(acc: InventoryAccount) {
-  if (acc.pay_state === "reusable") return "可复用";
-  if (acc.pay_state === "consumed") return "已消耗";
-  return "缺 auth";
+  if (acc.pay_state === "reusable") return "Reusable";
+  if (acc.pay_state === "consumed") return "Consumed";
+  return "Missing Auth";
 }
 
 function rtStateLabel(acc: InventoryAccount) {
   switch (acc.rt_state) {
     case "has_rt":
-      return "有 RT";
+      return "Has RT";
     case "oauth_succeeded":
-      return "RT 已处理";
+      return "RT Processed";
     case "dead":
       return "dead";
     case "cooldown":
-      return "RT 冷却";
+      return "RT Cooldown";
     case "retryable":
-      return "可重试";
+      return "Retryable";
     default:
-      return "RT 待补";
+      return "RT Missing";
   }
 }
 
@@ -1746,19 +1750,20 @@ function healthStatusLabel(status: ConfigHealthCheck["status"]) {
 
 function healthErrorText(payload: any) {
   const detail = payload?.response?.data?.detail;
-  if (!detail) return payload?.message || "配置健康检查失败";
+  if (!detail) return payload?.message || "Config health check failed";
   if (typeof detail === "string") return detail;
-  return detail.message || "配置健康检查未通过";
+  return detail.message || "Config health check did not pass";
 }
 
 function logClass(line: string) {
   if (/\b(ERROR|FAIL|TRACE|Traceback)\b/i.test(line)) return "log-err";
   if (/\b(WARN|WARNING)\b/i.test(line)) return "log-warn";
-  if (/\b(OK|SUCCESS|✓|完成|成功)\b/i.test(line)) return "log-ok";
+  if (/\b(OK|SUCCESS|✓|Complete|Success)\b/i.test(line)) return "log-ok";
   return "";
 }
 
-// 滚到底部用 RAF 去重：高频日志推送时单帧只滚一次，不再每行 nextTick
+// Scroll-to-bottom deduped by RAF: frequent log push only scrolls once per frame,
+// not every nextTick
 let _scrollPending = false;
 function scheduleScrollToBottom() {
   if (!autoScroll.value || _scrollPending) return;
@@ -1771,12 +1776,12 @@ function scheduleScrollToBottom() {
   });
 }
 
-// ── 库存：选择 + 验证 + 删除 ─────────────────────────────────
+// ── Inventory: select + verify + delete ─────────────────────────────────
 function checkLabel(s: InventoryAccount["last_check_status"]) {
-  if (s === "valid") return "✓ 有效";
-  if (s === "invalid") return "✗ 失效";
-  if (s === "unknown") return "？未知";
-  return "○ 未验";
+  if (s === "valid") return "✓ Valid";
+  if (s === "invalid") return "✗ Invalid";
+  if (s === "unknown") return "？Unknown";
+  return "○ Unchecked";
 }
 function checkBadgeClass(s: InventoryAccount["last_check_status"]) {
   if (s === "valid") return "badge-ok";
@@ -1802,7 +1807,7 @@ function toggleSelectAll() {
   }
 }
 
-// ── 账号库存筛选 ───────────────────────────────────────────────
+// ── Account inventory filtering ───────────────────────────────────────────────
 const invFilters = ref({
   search: "",
   plan: "",
@@ -1866,7 +1871,7 @@ const selectedFilteredCount = computed(() => {
 function toggleSelectAllFiltered() {
   const ids = filteredAccounts.value.map(a => a.id).filter(Boolean);
   if (allFilteredSelected.value) {
-    // 反选：把当前筛选结果中的 id 从 selection 移除
+    // Deselect: remove filtered result ids from selection
     const next = new Set(selectedIds.value);
     for (const id of ids) next.delete(id);
     selectedIds.value = next;
@@ -1892,36 +1897,36 @@ const planRefreshableIds = computed(() =>
 );
 
 async function runCheck(ids: number[], label: string) {
-  if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
+  if (!ids.length) { message.warning(`No accounts to ${label}`); return; }
   inventoryBusy.value = true;
   ids.forEach(id => checkingIds.value.add(id));
   try {
     const r = await api.post("/inventory/accounts/check", { ids });
     const s = r.data?.summary || {};
     message.success(
-      `${label}完成：valid=${s.valid || 0}  invalid=${s.invalid || 0}  unknown=${s.unknown || 0}` +
+      `${label} complete: valid=${s.valid || 0}  invalid=${s.invalid || 0}  unknown=${s.unknown || 0}` +
       `  |  plus=${s.plus || 0}  team=${s.team || 0}  pro=${s.pro || 0}  free=${s.free || 0}`
     );
     await refreshInventory();
   } catch (e: any) {
-    message.error(`${label}失败：${e?.response?.data?.detail || e?.message || e}`);
+    message.error(`${label} failed: ${e?.response?.data?.detail || e?.message || e}`);
   } finally {
     ids.forEach(id => checkingIds.value.delete(id));
     inventoryBusy.value = false;
   }
 }
 function verifySelected() {
-  runCheck(Array.from(selectedIds.value), "验证选中");
+  runCheck(Array.from(selectedIds.value), "Verify selected");
 }
 function verifyAllUnknown() {
-  runCheck(unknownOrUncheckedIds.value, "验证未检/未知");
+  runCheck(unknownOrUncheckedIds.value, "Verify unchecked/unknown");
 }
 function refreshPlanAll() {
-  runCheck(planRefreshableIds.value, "实时 API 刷新全部 Plan");
+  runCheck(planRefreshableIds.value, "Realtime API refresh all Plans");
 }
 
 async function runRtStatusRefresh(ids: number[], label: string) {
-  if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
+  if (!ids.length) { message.warning(`No accounts to ${label}`); return; }
   inventoryBusy.value = true;
   ids.forEach(id => checkingIds.value.add(id));
   try {
@@ -1932,41 +1937,41 @@ async function runRtStatusRefresh(ids: number[], label: string) {
     });
     const s = r.data?.summary || {};
     message.success(
-      `${label}完成：plus=${s.plus || 0}  team=${s.team || 0}  pro=${s.pro || 0}  free=${s.free || 0}  invalid=${s.invalid || 0}  no_rt=${s.no_rt || 0}`
+      `${label} complete: plus=${s.plus || 0}  team=${s.team || 0}  pro=${s.pro || 0}  free=${s.free || 0}  invalid=${s.invalid || 0}  no_rt=${s.no_rt || 0}`
     );
     await refreshInventory();
   } catch (e: any) {
-    message.error(`${label}失败：${e?.response?.data?.detail || e?.message || e}`);
+    message.error(`${label} failed: ${e?.response?.data?.detail || e?.message || e}`);
   } finally {
     ids.forEach(id => checkingIds.value.delete(id));
     inventoryBusy.value = false;
   }
 }
 function refreshRtStatusSelected() {
-  runRtStatusRefresh(Array.from(selectedIds.value), "RT刷新选中状态");
+  runRtStatusRefresh(Array.from(selectedIds.value), "RT refresh selected status");
 }
 function refreshRtStatusAll() {
-  runRtStatusRefresh(rtRefreshableIds.value, "RT刷新全部有RT");
+  runRtStatusRefresh(rtRefreshableIds.value, "RT refresh all with RT");
 }
 
-// 单账号快捷操作: 包成 list 复用批量入口, label 带 email 提高可读性
+// Single account quick action: wrap into list reusing bulk entry, label has email for readability
 function _emailOf(id: number): string {
   const acc = inventory.value.accounts.find(a => a.id === id);
   return acc?.email || `id=${id}`;
 }
 function verifyOne(id: number) {
-  runCheck([id], `验证 ${_emailOf(id)}`);
+  runCheck([id], `Verify ${_emailOf(id)}`);
 }
 function refreshRtStatusOne(id: number) {
-  runRtStatusRefresh([id], `RT刷新 ${_emailOf(id)}`);
+  runRtStatusRefresh([id], `RT refresh ${_emailOf(id)}`);
 }
 function pushOneToAutofill(id: number) {
-  pushCpaAutofill([id], `推送 ${_emailOf(id)} → 散户面板`);
+  pushCpaAutofill([id], `Push ${_emailOf(id)} → Autofill Panel`);
 }
 async function payOnlyOne(id: number) {
   const email = _emailOf(id);
-  if (!email || email.startsWith("id=")) { message.warning("找不到该账号 email"); return; }
-  if (!confirm(`对 ${email} 跑 pay-only？\n\n模式：${form.value.gopay ? "GoPay" : (form.value.paypal ? "PayPal" : "Card")}`)) return;
+  if (!email || email.startsWith("id=")) { message.warning("Cannot find this account email"); return; }
+  if (!confirm(`Run pay-only for ${email}?\n\nMode: ${form.value.gopay ? "GoPay" : (form.value.paypal ? "PayPal" : "Card")}`)) return;
   starting.value = true;
   try {
     await api.post("/run/start", {
@@ -1978,19 +1983,19 @@ async function payOnlyOne(id: number) {
       register_mode: form.value.register_mode,
       target_emails: [email],
     });
-    message.success(`已对 ${email} 启动 pay-only`);
+    message.success(`Started pay-only for ${email}`);
     await refreshStatus();
     if (status.value.running) openStream();
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || "启动失败");
+    message.error(e?.response?.data?.detail || "Start failed");
   } finally {
     starting.value = false;
   }
 }
 async function rtOnlyOne(id: number) {
   const email = _emailOf(id);
-  if (!email || email.startsWith("id=")) { message.warning("找不到该账号 email"); return; }
-  if (!confirm(`对 ${email} 跑 rt-only（补 refresh_token，不付款）？`)) return;
+  if (!email || email.startsWith("id=")) { message.warning("Cannot find this account email"); return; }
+  if (!confirm(`Run rt-only for ${email} (backfill refresh_token, no payment)？`)) return;
   starting.value = true;
   try {
     await api.post("/run/start", {
@@ -2003,17 +2008,17 @@ async function rtOnlyOne(id: number) {
       register_mode: form.value.register_mode,
       target_emails: [email],
     });
-    message.success(`已对 ${email} 启动 rt-only`);
+    message.success(`Started rt-only for ${email}`);
     await refreshStatus();
     if (status.value.running) openStream();
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || "启动失败");
+    message.error(e?.response?.data?.detail || "Start failed");
   } finally {
     starting.value = false;
   }
 }
 function deleteOne(id: number) {
-  confirmAndDelete([id], `删除 ${_emailOf(id)}`);
+  confirmAndDelete([id], `Delete ${_emailOf(id)}`);
 }
 
 function emailsForIds(ids: number[]): string[] {
@@ -2021,26 +2026,26 @@ function emailsForIds(ids: number[]): string[] {
   return ids.map(i => map.get(i) || `id=${i}`);
 }
 function confirmAndDelete(ids: number[], label: string) {
-  if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
+  if (!ids.length) { message.warning(`No accounts to ${label}`); return; }
   const emails = emailsForIds(ids);
-  const preview = emails.slice(0, 5).join(", ") + (emails.length > 5 ? `, ... 共 ${emails.length} 个` : "");
+  const preview = emails.slice(0, 5).join(", ") + (emails.length > 5 ? `, ... ${emails.length} total` : "");
   dialog.warning({
-    title: `确认${label}？`,
+    title: `Confirm ${label}?`,
     content: () => h("div", { style: "font-size:12px; line-height:1.6" }, [
-      h("div", `将永久删除 ${ids.length} 个账号（pipeline_results / card_results 等审计行保留）。`),
+      h("div", `Will permanently delete ${ids.length} accounts (pipeline_results / card_results audit rows kept).`),
       h("div", { style: "margin-top:6px; color:#7a7363; word-break:break-all" }, preview),
     ]),
-    positiveText: "确认删除",
-    negativeText: "取消",
+    positiveText: "Confirm Delete",
+    negativeText: "Cancel",
     onPositiveClick: async () => {
       inventoryBusy.value = true;
       try {
         const r = await api.post("/inventory/accounts/delete", { ids });
-        message.success(`已删除 ${r.data?.deleted ?? 0} 个`);
+        message.success(`Deleted ${r.data?.deleted ?? 0} accounts`);
         selectedIds.value = new Set();
         await refreshInventory();
       } catch (e: any) {
-        message.error(`删除失败：${e?.response?.data?.detail || e?.message || e}`);
+        message.error(`Delete failed: ${e?.response?.data?.detail || e?.message || e}`);
       } finally {
         inventoryBusy.value = false;
       }
@@ -2053,9 +2058,9 @@ function _selectedEmails(): string[] {
 
 async function payOnlySelected() {
   const emails = _selectedEmails();
-  if (!emails.length) { message.warning("没有选中账号"); return; }
-  const preview = emails.slice(0, 3).join(", ") + (emails.length > 3 ? `... 共 ${emails.length}` : "");
-  if (!confirm(`对 ${emails.length} 个选中账号跑 pay-only？\n${preview}\n\n模式：${form.value.gopay ? "GoPay" : (form.value.paypal ? "PayPal" : "Card")}`)) return;
+  if (!emails.length) { message.warning("No accounts selected"); return; }
+  const preview = emails.slice(0, 3).join(", ") + (emails.length > 3 ? `... ${emails.length} total` : "");
+  if (!confirm(`Run pay-only for ${emails.length} selected accounts?\n${preview}\n\nMode: ${form.value.gopay ? "GoPay" : (form.value.paypal ? "PayPal" : "Card")}`)) return;
   starting.value = true;
   try {
     await api.post("/run/start", {
@@ -2067,11 +2072,11 @@ async function payOnlySelected() {
       register_mode: form.value.register_mode,
       target_emails: emails,
     });
-    message.success(`已对 ${emails.length} 个账号启动 pay-only`);
+    message.success(`Started pay-only for ${emails.length} accounts`);
     await refreshStatus();
     if (status.value.running) openStream();
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || "启动失败");
+    message.error(e?.response?.data?.detail || "Start failed");
   } finally {
     starting.value = false;
   }
@@ -2079,9 +2084,9 @@ async function payOnlySelected() {
 
 async function rtOnlySelected() {
   const emails = _selectedEmails();
-  if (!emails.length) { message.warning("没有选中账号"); return; }
-  const preview = emails.slice(0, 3).join(", ") + (emails.length > 3 ? `... 共 ${emails.length}` : "");
-  if (!confirm(`对 ${emails.length} 个选中账号跑 rt-only（只补 refresh_token，不付款）？\n${preview}`)) return;
+  if (!emails.length) { message.warning("No accounts selected"); return; }
+  const preview = emails.slice(0, 3).join(", ") + (emails.length > 3 ? `... ${emails.length} total` : "");
+  if (!confirm(`Run rt-only for ${emails.length} selected accounts (backfill refresh_token only, no payment)?\n${preview}`)) return;
   starting.value = true;
   try {
     await api.post("/run/start", {
@@ -2094,24 +2099,24 @@ async function rtOnlySelected() {
       register_mode: form.value.register_mode,
       target_emails: emails,
     });
-    message.success(`已对 ${emails.length} 个账号启动 rt-only`);
+    message.success(`Started rt-only for ${emails.length} accounts`);
     await refreshStatus();
     if (status.value.running) openStream();
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || "启动失败");
+    message.error(e?.response?.data?.detail || "Start failed");
   } finally {
     starting.value = false;
   }
 }
 
 function deleteSelected() {
-  confirmAndDelete(Array.from(selectedIds.value), "删除选中");
+  confirmAndDelete(Array.from(selectedIds.value), "Delete selected");
 }
 function deleteAllInvalid() {
-  confirmAndDelete(invalidIds.value, "删除所有失效");
+  confirmAndDelete(invalidIds.value, "Delete all invalid");
 }
 
-// ── plan + CPA 推送 ─────────────────────────────────
+// ── plan + CPA push ─────────────────────────────────
 function planLabel(p: string) {
   if (p === "team") return "team";
   if (p === "plus") return "plus";
@@ -2125,9 +2130,9 @@ function planBadgeClass(p: string) {
   return "badge-ghost";
 }
 function cpaLabel(acc: InventoryAccount) {
-  if (acc.cpa_pushed) return "✓ 已推 CPA";
+  if (acc.cpa_pushed) return "✓ Pushed CPA";
   if (acc.cpa_status && acc.cpa_status !== "ok") return `✗ ${acc.cpa_status}`;
-  return "○ 未推 CPA";
+  return "○ Not Pushed CPA";
 }
 function cpaBadgeClass(acc: InventoryAccount) {
   if (acc.cpa_pushed) return "badge-ok";
@@ -2139,36 +2144,36 @@ const unpushedIds = computed(() =>
 );
 
 async function pushCpa(ids: number[], label: string) {
-  if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
+  if (!ids.length) { message.warning(`No accounts to ${label}`); return; }
   inventoryBusy.value = true;
   try {
     const r = await api.post("/inventory/accounts/cpa-push", { ids });
     const s = r.data?.summary || {};
-    message.success(`${label}完成：ok=${s.ok || 0}  no_rt=${s.no_rt || 0}  fail=${s.fail || 0}`);
+    message.success(`${label} complete: ok=${s.ok || 0}  no_rt=${s.no_rt || 0}  fail=${s.fail || 0}`);
     await refreshInventory();
   } catch (e: any) {
-    message.error(`${label}失败：${e?.response?.data?.detail || e?.message || e}`);
+    message.error(`${label} failed: ${e?.response?.data?.detail || e?.message || e}`);
   } finally {
     inventoryBusy.value = false;
   }
 }
-function pushOneToCpa(id: number) { pushCpa([id], "推送 CPA"); }
-function pushSelectedToCpa() { pushCpa(Array.from(selectedIds.value), "批量推送选中"); }
-function pushAllUnpushed() { pushCpa(unpushedIds.value, "推送所有未推送"); }
+function pushOneToCpa(id: number) { pushCpa([id], "Push CPA"); }
+function pushSelectedToCpa() { pushCpa(Array.from(selectedIds.value), "Bulk push selected"); }
+function pushAllUnpushed() { pushCpa(unpushedIds.value, "Push all unpushed"); }
 
 async function pushCpaAutofill(ids: number[], label: string) {
-  if (!ids.length) { message.warning(`没有可${label}的账号`); return; }
-  // 散户面板会做 RT-refresh 反双花,本地一旦推上去就别再用了 — 先确价再确认
+  if (!ids.length) { message.warning(`No accounts to ${label}`); return; }
+  // Autofill panel does RT-refresh anti-double-spend, once pushed can't reuse locally — price-check before confirm
   const lastPriceRaw = localStorage.getItem("cpa_autofill_last_price") || "1.0";
   const priceInput = window.prompt(
-    `${ids.length} 个账号挂到散户面板出售\n\n请输入本批挂单价 (元/号,卖家到手 = 此价 × 出号数):\n` +
-    `⚠ 服务端会立即 refresh 一次 OAuth token,推完这些号的本地 refresh_token 会失效,本地不能再用。`,
+    `${ids.length} accounts to autofill panel\n\nEnter listing price this batch (yuan/account, seller net = this price × quantity):\n` +
+    `⚠ Backend immediately refreshes OAuth token; after pushing, local refresh_token for these becomes invalid, cannot reuse locally.`,
     lastPriceRaw,
   );
   if (priceInput === null) return;
   const price = parseFloat(priceInput.trim());
   if (!Number.isFinite(price) || price < 0) {
-    message.error("挂单价必须是非负数字");
+    message.error("Listing price must be non-negative number");
     return;
   }
   localStorage.setItem("cpa_autofill_last_price", String(price));
@@ -2178,20 +2183,20 @@ async function pushCpaAutofill(ids: number[], label: string) {
     const s = r.data?.summary || {};
     const errs = (r.data?.api_errors || []) as string[];
     const lines = [
-      `${label}完成 (price=${r.data?.price ?? "?"} 元/号, 分 ${r.data?.batches ?? 0} 批)`,
+      `${label} complete (price=${r.data?.price ?? "?"} yuan/account, ${r.data?.batches ?? 0} batches)`,
       `accepted=${s.accepted || 0}  rejected=${s.rejected || 0}  missing_field=${s.missing_field || 0}  api_error=${s.api_error || 0}  missing=${s.missing || 0}`,
     ];
-    if (errs.length) lines.push(`API 错误: ${errs.slice(0, 2).join(" | ")}`);
+    if (errs.length) lines.push(`API errors: ${errs.slice(0, 2).join(" | ")}`);
     message.success(lines.join("\n"));
     await refreshInventory();
   } catch (e: any) {
-    message.error(`${label}失败：${e?.response?.data?.detail || e?.message || e}`);
+    message.error(`${label} failed: ${e?.response?.data?.detail || e?.message || e}`);
   } finally {
     inventoryBusy.value = false;
   }
 }
-function pushSelectedToAutofill() { pushCpaAutofill(Array.from(selectedIds.value), "批量推送选中到散户面板"); }
-function pushAllUnpushedToAutofill() { pushCpaAutofill(unpushedIds.value, "推送所有未推送到散户面板"); }
+function pushSelectedToAutofill() { pushCpaAutofill(Array.from(selectedIds.value), "Bulk push selected to autofill panel"); }
+function pushAllUnpushedToAutofill() { pushCpaAutofill(unpushedIds.value, "Push all unpushed to autofill panel"); }
 
 function toggleInventoryContent() {
   inventoryExpanded.value = !inventoryExpanded.value;
@@ -2210,7 +2215,7 @@ async function refreshInventory() {
   } catch (e: any) {
     inventoryError.value = e?.response?.status
       ? `HTTP ${e.response.status}${e.response.data?.detail ? `: ${e.response.data.detail}` : ""}`
-      : (e?.message || "请求失败");
+      : (e?.message || "Request failed");
   }
   finally {
     inventoryLoading.value = false;
@@ -2252,17 +2257,17 @@ async function start() {
     const health = await checkConfigHealth();
     if (!health?.ok) {
       const first = health?.blocking?.[0];
-      message.error(first?.message || "配置健康检查未通过，已阻止启动");
+      message.error(first?.message || "Config health check did not pass, startup blocked");
       return;
     }
     await api.post("/run/start", form.value);
-    message.success("已启动");
+    message.success("Started");
     lines.value = [];
     await refreshStatus();
     await refreshInventory();
     openStream();
   } catch (e: any) {
-    message.error(healthErrorText(e) || "启动失败");
+    message.error(healthErrorText(e) || "Start failed");
   } finally {
     starting.value = false;
   }
@@ -2272,10 +2277,10 @@ async function stop() {
   stopping.value = true;
   try {
     await api.post("/run/stop");
-    message.success("已发送 SIGTERM");
+    message.success("SIGTERM sent");
     await refreshStatus();
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "停止失败");
+    message.error(e.response?.data?.detail || "Stop failed");
   } finally {
     stopping.value = false;
   }
@@ -2288,18 +2293,18 @@ function openStream() {
   eventSource.addEventListener("line", (e) => {
     try {
       const entry = JSON.parse((e as MessageEvent).data);
-      // 预计算渲染只读字段，避免每次 re-render 跑 regex / Date 构造，
-      // 5000+ 行循环时省下大量主线程时间
+      // Pre-compute render-only fields, avoid per-re-render regex / Date construct,
+      // saves main thread time in 5000+ line loops
       entry.cls = logClass(entry.line || "");
       entry.tsLabel = formatTs(entry.ts);
-      Object.freeze(entry); // 阻止 Vue 把每行也代理成 reactive
+      Object.freeze(entry); // prevent Vue making each line reactive
       lines.value.push(entry);
       if (lines.value.length > 1500) lines.value.splice(0, 500);
       scheduleScrollToBottom();
     } catch {}
   });
   eventSource.addEventListener("otp_pending", () => {
-    if (otpDialog.value.dismissed) return; // 用户已手动关闭这次 run 的弹窗
+    if (otpDialog.value.dismissed) return; // user manually closed this run's modal
     if (!otpDialog.value.open) {
       otpDialog.value.open = true;
       otpDialog.value.value = "";
@@ -2312,11 +2317,11 @@ function openStream() {
     eventSource?.close();
     eventSource = null;
     otpDialog.value.open = false;
-    otpDialog.value.dismissed = false; // 新一轮 run 重新允许弹窗
+    otpDialog.value.dismissed = false; // new run, allow modal again
     stopOtpPolling();
     await refreshStatus();
     await refreshInventory();
-    // Auto-loop 还在跑就重连 SSE，等 runner.start 启下一 iteration 的进程
+    // Auto-loop still running, reconnect SSE, wait for runner.start to spawn next iteration process
     if (autoLoop.value.running) {
       setTimeout(() => {
         if (autoLoop.value.running && !eventSource) openStream();
@@ -2324,7 +2329,7 @@ function openStream() {
     }
   });
   eventSource.onerror = () => {
-    // 连接断开，不自动 retry
+    // Connection dropped, no auto-retry
     eventSource?.close();
     eventSource = null;
   };
@@ -2338,7 +2343,7 @@ async function logout() {
 async function submitOtp() {
   const v = otpDialog.value.value.trim();
   if (!v) {
-    message.warning("请输入 OTP");
+    message.warning("Enter OTP");
     return;
   }
   otpDialog.value.submitting = true;
@@ -2347,9 +2352,9 @@ async function submitOtp() {
     otpDialog.value.open = false;
     otpDialog.value.value = "";
     stopOtpPolling();
-    message.success("OTP 已提交");
+    message.success("OTP submitted");
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "提交失败");
+    message.error(e.response?.data?.detail || "Submit failed");
   } finally {
     otpDialog.value.submitting = false;
   }
@@ -2360,7 +2365,7 @@ function dismissOtpModal() {
   otpDialog.value.value = "";
   otpDialog.value.dismissed = true;
   stopOtpPolling();
-  message.info("已关闭 OTP 弹窗（这次 run 内不再自动弹）");
+  message.info("OTP modal closed (won't auto-reopen this run)");
 }
 
 function startOtpPolling() {
@@ -2375,21 +2380,21 @@ function startOtpPolling() {
         const code = String(r.data.otp);
         otpDialog.value.value = code;
         otpDialog.value.autoFilled = true;
-        // gopay.py 自己也在 polling /latest-otp，OTP 一旦进 wa_state 就被它取走了，
-        // 弹窗的 /run/otp 提交只是为了清后端 _otp_pending 标记 + 日志可见性。
-        // 不论提交成功与否，弹窗立刻关掉，避免残留。
+        // gopay.py also polling /latest-otp, once OTP in wa_state it's taken,
+        // modal /run/otp submit just clears backend _otp_pending flag + log visibility.
+        // Regardless of submit result, close modal immediately, avoid residual modal.
         otpDialog.value.open = false;
         otpDialog.value.value = "";
-        // 关键：标 dismissed=true 阻止 SSE otp_pending 心跳（每 300ms 一次）
-        // 把模态框又弹回来。`done` 事件会自动 reset 给下一轮 run 用。
+        // Critical: set dismissed=true block SSE otp_pending heartbeat (every 300ms)
+        // popping modal back up. `done` event auto-resets for next run.
         otpDialog.value.dismissed = true;
         stopOtpPolling();
-        message.success(`OTP 自动填入并关闭：${code}（gopay 自取中）`);
-        // 后台 fire-and-forget，不阻塞、不影响关弹
+        message.success(`OTP auto-filled and closed: ${code} (gopay fetching)`);
+        // Background fire-and-forget, don't block / affect modal close
         api.post("/run/otp", { otp: code }).catch(() => {});
       }
     } catch {
-      // 静默；下一轮再试
+      // Silent; retry next cycle
     }
   }, 1500);
 }
@@ -2475,7 +2480,7 @@ onMounted(async () => {
   tick();
   clockTimer = setInterval(tick, 1000);
 
-  // 从 wizard store 推断默认支付方式：card 不带 --paypal，其它都带
+  // Infer default payment method from wizard store: card no --paypal, others have it
   try {
     await store.loadFromServer();
     const pm = (store.answers.payment as any)?.method;
@@ -2515,9 +2520,7 @@ onBeforeUnmount(() => {
   if (eventSource) eventSource.close();
   stopOtpPolling();
 });
-</script>
-
-<style scoped>
+</script><style scoped>
 .run-root { height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
 
 .wizard-header {

@@ -1,8 +1,7 @@
-"""OTP 提供器工厂：五种 source（CLI / 文件 / WhatsApp HTTP / 子命令 / config 自动派发）。
+"""OTP provider factory: five sources (CLI / file / WhatsApp HTTP / subcommand / config auto-dispatch).
 
-返回值统一是 `Callable[[], str]`：调一次返回当前可用 OTP，超时抛 OTPCancelled。
-跟 gopay/sentinel/webui 都解耦，仅依赖 otp_extractor 做载荷解析。
-"""
+Return value is uniformly `Callable[[], str]`: call once to get the current available OTP, timeout throws OTPCancelled.
+Decoupled from gopay/sentinel/webui, only depends on otp_extractor for payload parsing."""
 
 from __future__ import annotations
 

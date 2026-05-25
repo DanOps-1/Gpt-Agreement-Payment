@@ -1,9 +1,9 @@
-"""OTP 提取：从任意文本 / JSON payload 中挖出 4-8 位验证码。
+"""OTP Extraction: Mining 4-8 digit verification codes from arbitrary text / JSON payload.
 
-WhatsApp / SMS / 邮件 / Meta Webhook 多种载荷统一一套规则：先关键字（otp / kode /
-verification / 验证码 …）窗口匹配，再退到原始 regex。JSON 类 payload 走深度遍历，
-带时间戳的事件还会按 issued_after 滤掉过期消息。
-"""
+WhatsApp / SMS / Email / Meta Webhook multi-format payloads unified under one rule set:
+First keyword-based window matching (otp / kode / verification / verification code ...),
+then fallback to raw regex. JSON-type payloads traverse recursively,
+and timestamped events are further filtered by issued_after to discard expired messages."""
 
 from __future__ import annotations
 

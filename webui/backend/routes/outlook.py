@@ -1,4 +1,4 @@
-"""Outlook 池 HTTP 路由：批量导入 / 列表 / 状态 / 删除 / OAuth refresh_token 续期。"""
+"""Outlook account pool HTTP routing: bulk import / list / status / delete / OAuth refresh_token renewal."""
 from __future__ import annotations
 
 import asyncio
@@ -31,7 +31,7 @@ class RevalidateRequest(BaseModel):
 
 @router.post("/import")
 def import_pool(req: ImportRequest, user: str = CurrentUser):
-    """批量入库。空行/#开头/格式错的行自动跳过。"""
+    """Bulk data insertion. Empty lines / lines starting with # / malformed lines are automatically skipped."""
     return outlook_pool.import_lines(req.text)
 
 
@@ -57,11 +57,10 @@ def delete_one(email: str, user: str = CurrentUser):
 
 @router.post("/revalidate-all")
 async def revalidate_all_pool(req: RevalidateRequest, user: str = CurrentUser):
-    """并发对池子里非 used 的号跑 RT + IMAP 验证, 直接更新 status + fail_reason.
+    """Run RT + IMAP verification concurrently on non-used accounts in the pool, directly update status + fail_reason.
 
-    阻塞 ~N*0.3s (并发 8); 100 号约 4-8s; 300 号约 15s.
-    返 transitions 列表让前端能高亮 "X 从 dead → available" 之类变化.
-    """
+    Blocking ~N*0.3s (concurrency 8); ~4-8s for 100 accounts; ~15s for 300 accounts.
+    Return transitions list to allow frontend to highlight changes like "X transitioned from dead → available"."""
     try:
         result = await asyncio.to_thread(
             outlook_pool.revalidate_all,
@@ -81,11 +80,10 @@ class DeviceCodePollReq(BaseModel):
 
 @router.post("/device-code/start")
 def device_code_start(user: str = CurrentUser):
-    """Step 1: 拿 user_code + verification_uri 让用户去自己浏览器输入授权.
+    """Step 1: Get user_code + verification_uri for user to authorize in their own browser.
 
-    返 {user_code, device_code, verification_uri, expires_in, interval, message}.
-    前端弹框显示 user_code + URL; 同时把 device_code 保留 (传给 /poll).
-    """
+    Return {user_code, device_code, verification_uri, expires_in, interval, message}.
+    Frontend shows dialog with user_code + URL; save device_code (pass to /poll)."""
     try:
         return outlook_oauth_refresh.device_code_start()
     except Exception as e:
@@ -94,26 +92,24 @@ def device_code_start(user: str = CurrentUser):
 
 @router.post("/device-code/poll")
 def device_code_poll(req: DeviceCodePollReq, user: str = CurrentUser):
-    """Step 2: 前端定时 poll 直到 status != 'pending'.
+    """Step 2: Frontend polls periodically until status != 'pending'.
 
-    成功: status=ok, RT 已写 DB (如 email 在池子里), IMAP 真验证一遍.
-    失败: status=error, error 说明根因.
-    """
+    Success: status=ok, RT already written to DB (if email is in pool), IMAP verified.
+    Failure: status=error, error field explains root cause."""
     return outlook_oauth_refresh.device_code_poll(req.device_code, req.email)
 
 
 @router.post("/refresh-rt")
 async def refresh_rt(req: RefreshRtRequest, user: str = CurrentUser):
-    """走 OAuth Code Flow + Playwright Firefox 拿新 refresh_token, 并立刻验证 IMAP.
+    """Use OAuth Code Flow + Playwright Firefox to obtain new refresh_token, immediately verify IMAP.
 
-    阻塞 ~20-40s (开浏览器 + 跳 proofs/Add + Consent + 抓 code + IMAP 验证).
-    Playwright sync API → asyncio.to_thread 包不阻塞 uvicorn worker.
+    Blocking ~20-40s (open browser + navigate proofs/Add + Consent + capture code + IMAP verification).
+    Playwright sync API → asyncio.to_thread wrapper to avoid blocking uvicorn worker.
 
-    成功: status → available, RT 已更新, IMAP 可登
-    失败:
-      - 拿不到 OAuth code: 不动 DB
-      - 拿到 RT 但 IMAP 仍拒 (supplier client_id 限制): RT 写入 DB, status=dead 标原因
-    """
+    Success: status → available, RT updated, IMAP login works
+    Failure:
+      - Cannot obtain OAuth code: do not modify DB
+      - Obtained RT but IMAP still rejected (supplier client_id restriction): write RT to DB, status=dead with reason"""
     try:
         result = await asyncio.to_thread(outlook_oauth_refresh.refresh_and_update_db, req.email)
     except Exception as e:

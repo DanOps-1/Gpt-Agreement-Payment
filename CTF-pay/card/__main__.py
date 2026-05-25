@@ -1,4 +1,4 @@
-"""`python -m card` 入口 (cwd=CTF-pay)。"""
+"""Entry point for `python -m card` (cwd=CTF-pay)."""
 
 from card._monolith import main
 

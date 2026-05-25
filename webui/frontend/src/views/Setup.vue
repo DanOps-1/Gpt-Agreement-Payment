@@ -3,32 +3,32 @@
     <header class="auth-banner">
       <pre class="banner-art">
 ┌─────────────────────────────────────────────────────────────┐
-│  GPT-AGREEMENT-PAYMENT // 配置向导                                       │
-│  初始化管理员凭据 // 仅首次运行                             │
+│  GPT-AGREEMENT-PAYMENT // Configuration Wizard                                       │
+│  Initialize Admin Credentials // First Run Only                             │
 └─────────────────────────────────────────────────────────────┘</pre>
     </header>
 
     <main class="auth-main">
-      <h1 class="auth-headline">$&nbsp;初始化管理员<span class="term-cursor"></span></h1>
-      <p class="auth-sub">未找到管理员账户。设置凭据以锁定本实例。</p>
+      <h1 class="auth-headline">$&nbsp;Initialize Admin<span class="term-cursor"></span></h1>
+      <p class="auth-sub">No admin account found. Set credentials to lock down this instance.</p>
 
       <form class="auth-form" @submit.prevent="submit">
         <label class="field-row">
-          <span class="field-tag">用户</span>
+          <span class="field-tag">Username</span>
           <input v-model="form.username" type="text" autofocus class="term-input" placeholder="admin" />
         </label>
         <label class="field-row">
-          <span class="field-tag">密码</span>
-          <input v-model="form.password" type="password" class="term-input" placeholder="至少 8 字符" />
+          <span class="field-tag">Password</span>
+          <input v-model="form.password" type="password" class="term-input" placeholder="At least 8 characters" />
         </label>
 
         <div class="auth-actions">
-          <button class="term-btn" :disabled="loading" type="submit">{{ loading ? '创建中…' : '创建' }}</button>
+          <button class="term-btn" :disabled="loading" type="submit">{{ loading ? 'Creating…' : 'Create' }}</button>
         </div>
       </form>
 
       <footer class="auth-foot">
-        // bcrypt cost=12 // session 走 httponly cookie
+        // bcrypt cost=12 // session uses httponly cookie
       </footer>
     </main>
   </div>
@@ -45,31 +45,32 @@ const message = useMessage();
 const loading = ref(false);
 const form = ref({ username: "admin", password: "" });
 
-// 二次保险：router beforeEach 可能因为 fetch 失败把已初始化的用户也放进了
-// /setup。组件挂载后再确认一次，已经有账号就立刻送去登录页，避免用户填完表
-// 单点"创建"才看到 409 "already initialized"。
+// Double safety: router beforeEach may have routed already initialized users to
+// /setup due to fetch failure. Confirm again after component mount. If account
+// already exists, redirect to login page immediately to avoid users seeing a 409
+// "already initialized" error after clicking "Create".
 onMounted(async () => {
   try {
     const r = await api.get<{ initialized: boolean }>("/setup/status");
     if (r.data.initialized) router.replace("/login");
-  } catch { /* status 拿不到就维持当前页让用户看到表单 */ }
+  } catch { /* If status cannot be retrieved, keep current page to show form */ }
 });
 
 async function submit() {
-  if (form.value.password.length < 8) { message.error("密码至少 8 字符"); return; }
+  if (form.value.password.length < 8) { message.error("Password must be at least 8 characters"); return; }
   loading.value = true;
   try {
     await api.post("/setup", form.value);
-    message.success("管理员已创建，跳转登录…");
+    message.success("Admin created, redirecting to login…");
     setTimeout(() => router.push("/login"), 600);
   } catch (e: any) {
-    // 409 already initialized 是常见的"用户走错路径"场景，直接送去登录
+    // 409 already initialized is a common "user took wrong path" scenario, redirect to login
     if (e.response?.status === 409) {
-      message.info("管理员已存在，转登录页…");
+      message.info("Admin already exists, redirecting to login…");
       setTimeout(() => router.replace("/login"), 600);
       return;
     }
-    message.error(e.response?.data?.detail || "创建失败");
+    message.error(e.response?.data?.detail || "Creation failed");
   } finally { loading.value = false; }
 }
 </script>

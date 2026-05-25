@@ -1,1 +1,1 @@
-"""pipeline.oauth: OpenAI OAuth / team API helpers (从 _monolith 抽出来)。"""
+"""pipeline.oauth: OpenAI OAuth / team API helpers (extracted from _monolith)."""

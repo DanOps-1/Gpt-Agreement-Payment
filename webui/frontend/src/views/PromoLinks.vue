@@ -4,27 +4,27 @@
       <div class="brand">
         <span class="brand-prompt">$</span>
         <span class="brand-name">gpt-pay</span>
-        <span class="brand-sub">// Promo 长链接池</span>
+        <span class="brand-sub">// Promo Long URL Pool</span>
         <span class="brand-clock">{{ clock }}</span>
       </div>
       <div class="run-nav">
-        <RouterLink to="/wizard" class="nav-link">配置向导</RouterLink>
-        <RouterLink to="/run" class="nav-link">运行</RouterLink>
-        <RouterLink to="/outlook" class="nav-link">Outlook 池</RouterLink>
+        <RouterLink to="/wizard" class="nav-link">Configuration Wizard</RouterLink>
+        <RouterLink to="/run" class="nav-link">Run</RouterLink>
+        <RouterLink to="/outlook" class="nav-link">Outlook Pool</RouterLink>
         <RouterLink to="/whatsapp" class="nav-link">WhatsApp</RouterLink>
-        <button class="header-btn" @click="logout">退出</button>
+        <button class="header-btn" @click="logout">Logout</button>
       </div>
     </header>
 
     <main class="pl-main">
       <section class="pl-panel">
-        <div class="term-divider" data-tail="──────────">优惠长链接 (promo_links)</div>
-        <h2 class="pl-title">ChatGPT promo 命中的 hosted long URL<span class="term-cursor"></span></h2>
+        <div class="term-divider" data-tail="──────────">Promo Long URLs (promo_links)</div>
+        <h2 class="pl-title">ChatGPT promo matched hosted long URL<span class="term-cursor"></span></h2>
         <p class="pl-sub">
-          <code>mode=promo_link</code> 跑出来的 URL 存这里。打开 <code>checkout_url</code> 即可走 promo 价格付款
-          (命中 <code>plus-1-month-free</code> 时 <code>amount_due ≤ 1 currency unit</code>)。
-          现在可以自由选择 <code>country/currency</code> 生成新链接，也可以把库存里的链接用同账号重建到其它区域。
-          点 "复制" 拿 URL, 用完按 "标 used" 防重复用; URL 一般 30 分钟过期, 过期按 "标 expired"。
+          URLs generated with <code>mode=promo_link</code> are stored here. Open <code>checkout_url</code> to proceed with promo pricing
+          (when <code>plus-1-month-free</code> is matched, <code>amount_due ≤ 1 currency unit</code>).
+          You can now freely choose <code>country/currency</code> to generate new links, or rebuild existing links in other regions using the same account.
+          Click "Copy" to get the URL. After use, mark as "used" to prevent reuse. URLs typically expire in 30 minutes; mark as "expired" if expired.
         </p>
 
         <div class="pl-stats">
@@ -37,22 +37,22 @@
         </div>
 
         <div class="pl-actions">
-          <button class="header-btn ghost" @click="loadList">刷新列表</button>
+          <button class="header-btn ghost" @click="loadList">Refresh List</button>
           <button class="header-btn ghost" :disabled="busy || stats.used === 0" @click="bulkDelete('used')">
-            清 used ({{ stats.used }})
+            Clear used ({{ stats.used }})
           </button>
           <button class="header-btn ghost" :disabled="busy || stats.expired === 0" @click="bulkDelete('expired')">
-            清 expired ({{ stats.expired }})
+            Clear expired ({{ stats.expired }})
           </button>
-          <RouterLink to="/run?mode=promo_link" class="header-btn">▶ 去运行抓新链接</RouterLink>
+          <RouterLink to="/run?mode=promo_link" class="header-btn">▶ Go fetch new links</RouterLink>
         </div>
 
         <div class="convert-panel">
           <div class="convert-head">
-            <strong>区域转换 / 重建 checkout</strong>
+            <strong>Region conversion / rebuild checkout</strong>
             <span class="convert-meta">
-              选中库存行后，用该 email 在 <code>registered_accounts</code> 里的 access_token
-              重新调用 ChatGPT checkout；不是简单替换 URL 文本。
+              After selecting an inventory row, use the access_token for that email from <code>registered_accounts</code>
+              to call ChatGPT checkout again; not just simple URL text replacement.
             </span>
           </div>
           <div class="region-presets">
@@ -68,7 +68,7 @@
             <label>
               plan
               <select v-model="convertForm.plan">
-                <option value="">沿用原行</option>
+                <option value="">Keep original</option>
                 <option value="plus">plus</option>
                 <option value="team">team</option>
               </select>
@@ -83,17 +83,17 @@
             </label>
             <label class="wide">
               campaign
-              <input v-model="convertForm.promo_campaign_id" placeholder="空=沿用原行优惠码；原行空则 plus/team 默认" />
+              <input v-model="convertForm.promo_campaign_id" placeholder="Empty=keep original promo code; if original empty, use plus/team default" />
             </label>
-            <label class="check-row" title="建议保持开启：目标区域优惠不命中时不写入库存，避免误用全价链接">
+            <label class="check-row" title="Recommended to keep enabled: avoid saving links if target region promo doesn't match, to prevent accidental use of full-price links">
               <input type="checkbox" v-model="convertForm.require_promo_hit" />
-              只保存优惠命中
+              Save only promo hits
             </label>
             <label>
-              写入方式
+              Write mode
               <select v-model="convertForm.mode">
-                <option value="clone">新增副本</option>
-                <option value="replace">覆盖原行</option>
+                <option value="clone">Add copy</option>
+                <option value="replace">Replace original</option>
               </select>
             </label>
             <button
@@ -101,24 +101,24 @@
               :disabled="convertBusy || selectedIds.size === 0 || !convertRegionOk"
               @click="convertSelected"
             >
-              {{ convertBusy ? "转换中..." : `转换选中 (${selectedIds.size})` }}
+              {{ convertBusy ? "Converting..." : `Convert selected (${selectedIds.size})` }}
             </button>
           </div>
           <div v-if="convertMsg" class="convert-msg" :class="{ err: convertMsgIsErr }">{{ convertMsg }}</div>
         </div>
 
-        <div class="term-divider" data-tail="──────────">列表</div>
+        <div class="term-divider" data-tail="──────────">List</div>
         <div class="pl-filter">
-          <label>状态过滤：</label>
+          <label>Status filter:</label>
           <select v-model="statusFilter" @change="loadList">
-            <option value="">全部</option>
+            <option value="">All</option>
             <option value="fresh">fresh</option>
             <option value="used">used</option>
             <option value="expired">expired</option>
           </select>
         </div>
         <div v-if="items.length === 0" class="pl-empty">
-          {{ statusFilter ? `无 ${statusFilter} 状态` : "池为空，去 /run 选 mode=promo_link 抓一批" }}
+          {{ statusFilter ? `No ${statusFilter} status` : "Pool is empty. Go to /run and select mode=promo_link to fetch some" }}
         </div>
         <table v-else class="pl-table">
           <thead>
@@ -129,10 +129,10 @@
               <th>id</th>
               <th>email</th>
               <th>plan / promo</th>
-              <th>区域</th>
+              <th>Region</th>
               <th>amount_due</th>
-              <th>状态</th>
-              <th>时间</th>
+              <th>Status</th>
+              <th>Time</th>
               <th class="url-col">URL</th>
               <th></th>
             </tr>
@@ -166,13 +166,13 @@
               </td>
               <td class="ops">
                 <button class="link-btn" @click="copy(row.checkout_url, row.id)">
-                  {{ copiedId === row.id ? "✓ 已复制" : "复制" }}
+                  {{ copiedId === row.id ? "✓ Copied" : "Copy" }}
                 </button>
-                <button class="link-btn" v-if="row.status === 'fresh'" @click="markUsed(row.id)">标 used</button>
-                <button class="link-btn" v-if="row.status === 'fresh'" @click="setStatus(row.id, 'expired')">标 expired</button>
-                <button class="link-btn" v-if="row.status !== 'fresh'" @click="setStatus(row.id, 'fresh')">复活</button>
-                <button class="link-btn" :disabled="convertBusy || !convertRegionOk" @click="convertOne(row)">转区域</button>
-                <button class="link-btn danger" @click="doDelete(row.id, row.email)">删</button>
+                <button class="link-btn" v-if="row.status === 'fresh'" @click="markUsed(row.id)">Mark used</button>
+                <button class="link-btn" v-if="row.status === 'fresh'" @click="setStatus(row.id, 'expired')">Mark expired</button>
+                <button class="link-btn" v-if="row.status !== 'fresh'" @click="setStatus(row.id, 'fresh')">Revive</button>
+                <button class="link-btn" :disabled="convertBusy || !convertRegionOk" @click="convertOne(row)">Convert region</button>
+                <button class="link-btn danger" @click="doDelete(row.id, row.email)">Delete</button>
               </td>
             </tr>
           </tbody>
@@ -324,11 +324,11 @@ async function convertOne(row: any) {
   try {
     const r = await api.post(`/promo-links/${row.id}/convert`, convertPayload());
     const out = r.data || {};
-    convertMsg.value = `#${row.id} 已转换为 ${out.billing_country}/${out.billing_currency}，campaign=${out.promo_campaign_id || "—"}，amount=${out.amount_due_cents}，${out.mode === "replace" ? "已覆盖原行" : `新行 #${out.id}`}`;
+    convertMsg.value = `#${row.id} converted to ${out.billing_country}/${out.billing_currency}, campaign=${out.promo_campaign_id || "—"}, amount=${out.amount_due_cents}, ${out.mode === "replace" ? "original replaced" : `new row #${out.id}`}`;
     await loadList();
   } catch (e: any) {
     convertMsgIsErr.value = true;
-    convertMsg.value = "转换失败：" + detailText(e);
+    convertMsg.value = "Conversion failed: " + detailText(e);
   } finally {
     convertBusy.value = false;
   }
@@ -337,7 +337,7 @@ async function convertOne(row: any) {
 async function convertSelected() {
   const ids = [...selectedIds.value];
   if (!ids.length) return;
-  if (convertForm.value.mode === "replace" && !confirm(`确认覆盖 ${ids.length} 条长链接？旧 URL 会被替换为新区 checkout。`)) return;
+  if (convertForm.value.mode === "replace" && !confirm(`Confirm replacing ${ids.length} long links? Old URLs will be replaced with new region checkout.`)) return;
   convertBusy.value = true;
   convertMsg.value = "";
   convertMsgIsErr.value = false;
@@ -347,12 +347,12 @@ async function convertSelected() {
     const errors = r.data?.errors || [];
     convertMsgIsErr.value = errors.length > 0;
     convertMsg.value = errors.length
-      ? `转换完成 ${ok} 条，失败 ${errors.length} 条：${errors.slice(0, 3).map((x: any) => `#${x.id} ${x.error}`).join("；")}`
-      : `已转换 ${ok} 条到 ${convertForm.value.country}/${convertForm.value.currency}`;
+      ? `Conversion complete: ${ok} succeeded, ${errors.length} failed: ${errors.slice(0, 3).map((x: any) => `#${x.id} ${x.error}`).join("; ")}`
+      : `Converted ${ok} links to ${convertForm.value.country}/${convertForm.value.currency}`;
     await loadList();
   } catch (e: any) {
     convertMsgIsErr.value = true;
-    convertMsg.value = "批量转换失败：" + detailText(e);
+    convertMsg.value = "Bulk conversion failed: " + detailText(e);
   } finally {
     convertBusy.value = false;
   }
@@ -363,7 +363,7 @@ async function markUsed(id: number) {
     await api.post(`/promo-links/${id}/mark-used`);
     await loadList();
   } catch (e: any) {
-    alert("标 used 失败：" + (e?.response?.data?.detail || e.message));
+    alert("Failed to mark used: " + (e?.response?.data?.detail || e.message));
   }
 }
 
@@ -372,29 +372,29 @@ async function setStatus(id: number, status: "fresh" | "used" | "expired") {
     await api.post(`/promo-links/${id}/status`, { status });
     await loadList();
   } catch (e: any) {
-    alert(`改 ${status} 失败：` + (e?.response?.data?.detail || e.message));
+    alert(`Failed to set ${status}: ` + (e?.response?.data?.detail || e.message));
   }
 }
 
 async function doDelete(id: number, email: string) {
-  if (!confirm(`确定删 #${id} (${email})？`)) return;
+  if (!confirm(`Delete #${id} (${email})?`)) return;
   try {
     await api.delete(`/promo-links/${id}`);
     await loadList();
   } catch (e: any) {
-    alert("删除失败：" + (e?.response?.data?.detail || e.message));
+    alert("Delete failed: " + (e?.response?.data?.detail || e.message));
   }
 }
 
 async function bulkDelete(status: "used" | "expired") {
-  if (!confirm(`确定删所有 ${status} 状态？`)) return;
+  if (!confirm(`Delete all ${status} status links?`)) return;
   busy.value = true;
   try {
     const r = await api.delete(`/promo-links?status=${status}`);
     await loadList();
-    alert(`已删 ${r.data?.deleted ?? 0} 条`);
+    alert(`Deleted ${r.data?.deleted ?? 0} items`);
   } catch (e: any) {
-    alert("批量删失败：" + (e?.response?.data?.detail || e.message));
+    alert("Bulk delete failed: " + (e?.response?.data?.detail || e.message));
   } finally {
     busy.value = false;
   }
@@ -451,7 +451,7 @@ onMounted(() => {
   tick();
   clockTimer = setInterval(tick, 1000);
   loadList();
-  // 自动每 10s 刷新 (promo_link mode 跑的时候有新条目进来)
+  // Auto-refresh every 10s (new entries come in when promo_link mode is running)
   pollTimer = setInterval(loadList, 10000);
 });
 onBeforeUnmount(() => {

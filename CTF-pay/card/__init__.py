@@ -1,15 +1,14 @@
-"""Stripe Checkout / 3D Secure / hCaptcha 自动化支付包。
+"""Stripe Checkout / 3D Secure / hCaptcha automated payment package.
 
-Wave F-1 (2026-05-18): 原 CTF-pay/card.py (9050 行) 整体进 _monolith.py,
-后续 Wave 再拆 cli / flow / checkout / stripe_3ds / fingerprint / datadome /
-oauth_exchange / errors 等子模块。
+Wave F-1 (2026-05-18): Original CTF-pay/card.py (9050 lines) moved entirely into _monolith.py,
+subsequent Waves will split into cli / flow / checkout / stripe_3ds / fingerprint / datadome /
+oauth_exchange / errors and other submodules.
 
-__init__.py 这里 re-export 整个 _monolith 命名空间, 让 pipeline._monolith
-的三处 `from card import (...)` / `import card as card_mod` 都仍可用。
-"""
+__init__.py re-exports the entire _monolith namespace here, so that the three places in pipeline._monolith
+`from card import (...)` / `import card as card_mod` remain usable."""
 
 from card._monolith import *  # noqa: F401, F403
-from card._monolith import (  # 显式 re-export 确保 wildcard 不漏 _ 开头符号
+from card._monolith import (  # Explicit re-export ensures wildcard does not miss symbols starting with _
     _exchange_refresh_token_with_session,
     _build_proxy_url_from_cfg,
     _codex_oauth_client_id_from_config,

@@ -1,19 +1,17 @@
-"""GoPay 自动化 module — adb UI 驱动 emulator 上的 GoPay app 完成 deeplink + PIN 支付。
+"""GoPay automation module — adb UI driver to complete deeplink + PIN payment on emulator's GoPay app.
 
-用途：替代 qris.py 里"等用户扫 QR + 输 PIN"的人工卡点。
-前提：emulator 已 root + frida-friendly 不需要（GoPay 自己跑业务，我们只是用户）；
-GoPay 主号已登录 + KYC + 余额 ≥ 1 IDR；adb 可达（本地或 ssh tunnel）。
+Purpose: Replace the manual checkpoint "wait for user to scan QR + enter PIN" in qris.py.
+Prerequisites: emulator already rooted + frida-friendly not needed (GoPay runs its own business, we're just the user); GoPay main account logged in + KYC + balance ≥ 1 IDR; adb reachable (local or via ssh tunnel).
 
-设计假设（基于 2026-05-10 实测，PD2203 mumu 12 emulator，900x1600）：
-  - GoPay v2.8.0 是 Flutter app；UI 用 content-desc 不用 resource-id
-  - PIN 用自定义数字键盘（不接受 input text；必须 input tap 每个数字）
-  - 数字键盘坐标固定（Flutter render 在 900x1600 是 deterministic）
-  - deeplink 入口：am start -n com.gojek.gopay/.MainActivity -a VIEW -d <url>
-  - "Bayar X Rp" 按钮在 Review pembayaran 页底部
-  - PIN 页标题 "Masukkin PIN kamu"
+Design assumptions (based on 2026-05-10 live testing, PD2203 mumu 12 emulator, 900x1600):
+  - GoPay v2.8.0 is a Flutter app; UI uses content-desc not resource-id
+  - PIN uses custom digit keyboard (doesn't accept input text; must input tap each digit)
+  - Digit keyboard coordinates are fixed (Flutter render on 900x1600 is deterministic)
+  - deeplink entry: am start -n com.gojek.gopay/.MainActivity -a VIEW -d <url>
+  - "Bayar X Rp" button at bottom of Review pembayaran page
+  - PIN page title "Masukkin PIN kamu"
 
-不同分辨率会失败，需要按比例 rescale。先 hardcode 900x1600 上线，后续按需改。
-"""
+Different resolutions will fail, need to rescale proportionally. Hardcode 900x1600 for now, adjust later as needed."""
 from __future__ import annotations
 import os
 import re
@@ -24,12 +22,12 @@ from pathlib import Path
 from typing import Optional
 
 
-# ─── 数字键盘坐标（900x1600 实测） ────────────────────
-# 列 X：左/中/右
+# ─── Digit keyboard coordinates (900x1600 live tested) ────────────────────
+# Column X: left/center/right
 PIN_X = {0: 148, 1: 449, 2: 746}
-# 行 Y：keypad 4 行
+# Row Y: keypad 4 rows
 PIN_Y = [1067, 1218, 1369, 1521]
-# 数字 → (col, row)
+# Digit → (col, row)
 PIN_DIGIT_POS: dict[str, tuple[int, int]] = {
     "1": (PIN_X[0], PIN_Y[0]),
     "2": (PIN_X[1], PIN_Y[0]),
@@ -50,13 +48,12 @@ class GoPayAutoError(Exception):
 
 
 class GoPayAuto:
-    """adb 驱动 GoPay 自动化操作。
+    """adb driver for GoPay automation.
 
     Args:
-      serial: adb device serial (None=用 ANDROID_SERIAL env)
-      adb_port: adb-server port (None=用 ANDROID_ADB_SERVER_PORT env)
-      log: print-like callback
-    """
+      serial: adb device serial (None=use ANDROID_SERIAL env)
+      adb_port: adb-server port (None=use ANDROID_ADB_SERVER_PORT env)
+      log: print-like callback"""
 
     PKG = "com.gojek.gopay"
     MAIN_ACT = f"{PKG}/.MainActivity"
@@ -81,7 +78,7 @@ class GoPayAuto:
         return r.stdout
 
     def tap(self, x: int, y: int, jitter: int = 0) -> None:
-        """Tap at (x, y). 加可选 jitter (±N px) 让 tap 不那么机械避反作弊。"""
+        """Tap at (x, y). Optional jitter (±N px) to make tap less mechanical and avoid anti-cheat."""
         if jitter > 0:
             import random as _r
             x += _r.randint(-jitter, jitter)
@@ -89,7 +86,7 @@ class GoPayAuto:
         self._adb("shell", "input", "tap", str(x), str(y))
 
     def tap_humanlike(self, x: int, y: int) -> None:
-        """坐标 ±10px 抖动 + 30-120ms 随机延迟。模拟真人触摸。"""
+        """Coordinates ±10px jitter + 30-120ms random delay. Simulate human touch."""
         import random as _r
         self.tap(x, y, jitter=10)
         time.sleep(_r.uniform(0.03, 0.12))
@@ -119,11 +116,11 @@ class GoPayAuto:
         return self.PKG in self.current_focus()
 
     def open_deeplink(self, deeplink: str) -> None:
-        """强制 GoPay 处理 deeplink（不让系统路由到浏览器）。"""
+        """Force GoPay to handle deeplink (don't let system route to browser)."""
         self.log(f"[gopay-adb] open_deeplink: {deeplink[:120]}")
-        # -W 等到 activity 启动完成。注意 deeplink 含 & 要 shell quote。
-        # 用 -d 'url' 而不是 input；通过 adb shell 直传 url 时，& 需转义。
-        # subprocess args 形式直接传，adb 不走 shell 解析。
+        # -W wait until activity starts. Note deeplink contains & needs shell quoting.
+        # Use -d 'url' instead of input; when passing url via adb shell, & needs escaping.
+        # subprocess args form passed directly, adb doesn't parse through shell.
         self._adb(
             "shell", "am", "start", "-W",
             "-n", self.MAIN_ACT,
@@ -135,7 +132,7 @@ class GoPayAuto:
     def wait_for_text(
         self, patterns: list[str], timeout_s: float = 30.0, poll_s: float = 1.0
     ) -> Optional[tuple[str, tuple[int, int, int, int]]]:
-        """轮询 ui dump，匹配 content-desc 含任一 pattern 的节点。返回 (matched_pattern, bounds)。"""
+        """Poll ui dump, match nodes whose content-desc contains any pattern. Return (matched_pattern, bounds)."""
         result = self.wait_for_groups({"_": patterns}, timeout_s=timeout_s, poll_s=poll_s)
         if not result:
             return None
@@ -150,12 +147,11 @@ class GoPayAuto:
         class_filter: Optional[str] = None,
         exact: bool = False,
     ) -> Optional[tuple[str, str, tuple[int, int, int, int]]]:
-        """同时等多组模式，返回第一个匹配的 (group, pattern, bounds)。
+        """Wait for multiple pattern groups, return first match (group, pattern, bounds).
 
         Args:
-          class_filter: 节点 class 过滤（如 "android.widget.Button"）。None=不过滤。
-          exact: True 时 content-desc 必须精确等于 pattern；False 时允许子串匹配。
-        """
+          class_filter: node class filter (e.g. "android.widget.Button"). None=no filter.
+          exact: True means content-desc must exactly equal pattern; False allows substring match."""
         deadline = time.time() + timeout_s
         compiled: list[tuple[str, str, re.Pattern]] = []
         for tag, pats in groups.items():
@@ -194,9 +190,8 @@ class GoPayAuto:
         self.tap((x1 + x2) // 2, (y1 + y2) // 2)
 
     def _read_pin_keypad_coords(self) -> dict[str, tuple[int, int]]:
-        """从 UI dump 动态读 PIN 键盘按钮中心坐标. content-desc 是数字字符串.
-        cloudphone#1 (900x1600) 跟 #2 (1080x1920) 分辨率不同, 硬编码坐标会输错.
-        """
+        """Dynamically read PIN keyboard button center coordinates from UI dump. content-desc is digit string.
+        cloudphone#1 (900x1600) and #2 (1080x1920) have different resolutions, hardcoded coordinates will error."""
         xml = self.ui_dump()
         import re
         coords: dict[str, tuple[int, int]] = {}
@@ -208,21 +203,20 @@ class GoPayAuto:
                 coords[cd] = (cx, cy)
         return coords
 
-    # ─── PIN 输入 ──────────────────────────────────────────
+    # ─── PIN input ──────────────────────────────────────────
     def enter_pin(self, pin: str, humanize: bool = True) -> None:
-        """点击数字键盘输 6 位 PIN。GoPay 自定义键盘不接受 input text。
+        """Tap digit keyboard to enter 6-digit PIN. GoPay custom keyboard doesn't accept input text.
 
-        humanize=True：每位间随机 250-650ms + ±10px 坐标抖动 + 偶尔 1-2s 停顿
-        （模拟真人犹豫）。GoPay 反作弊会检测机械等距 tap，必须人化。
-        """
+        humanize=True: random 250-650ms between each digit + ±10px coordinate jitter + occasional 1-2s pause
+        (simulate human hesitation). GoPay anti-cheat detects mechanical equidistant taps, must humanize."""
         if not pin or not pin.isdigit() or len(pin) != 6:
             raise GoPayAutoError(f"PIN 必须 6 位数字，给的是 {pin!r}")
-        # 动态读 keypad 坐标 — 硬编码对 1080x1920 不准
+        # Dynamically read keypad coordinates — hardcoded wrong for 1080x1920
         try:
             dynamic = self._read_pin_keypad_coords()
         except Exception:
             dynamic = {}
-        # 必须 10 个数字全有, 否则不开始 (防止部分输错锁号)
+        # Must have all 10 digits, otherwise don't start (prevent partial input errors locking account)
         if len(dynamic) != 10 or not all(d in dynamic for d in "0123456789"):
             raise GoPayAutoError(
                 f"PIN keypad UI dump 不完整 ({len(dynamic)}/10 digit 找到), 拒绝盲点击防锁号"
@@ -233,7 +227,7 @@ class GoPayAuto:
             x, y = dynamic[d]
             if humanize:
                 self.tap(x, y, jitter=10)
-                # 第 3-4 位之间偶尔长停（模拟真人犹豫）
+                # Occasional long pause between digits 3-4 (simulate human hesitation)
                 if i in (2, 3) and _r.random() < 0.4:
                     time.sleep(_r.uniform(1.0, 2.0))
                 else:
@@ -247,7 +241,7 @@ class GoPayAuto:
             self.tap(*PIN_BACKSPACE)
             time.sleep(0.05)
 
-    # ─── 完整支付流程 ───────────────────────────────────────
+    # ─── Complete payment flow ───────────────────────────────────────
     def pay_with_deeplink(
         self,
         deeplink: str,
@@ -257,12 +251,11 @@ class GoPayAuto:
         max_result_wait_s: float = 60.0,
         screenshot_dir: Optional[str | Path] = None,
     ) -> dict:
-        """全流程：deeplink → Review → Bayar → PIN → 等结果。
+        """Full flow: deeplink → Review → Bayar → PIN → wait result.
 
         Returns:
             {state: "success"|"failed"|"timeout"|"expired"|"insufficient",
-             screenshots: [...], message: ...}
-        """
+             screenshots: [...], message: ...}"""
         result: dict = {"state": "unknown", "screenshots": [], "message": ""}
         sd = Path(screenshot_dir) if screenshot_dir else None
 
@@ -273,13 +266,13 @@ class GoPayAuto:
                 self.screencap(p)
                 result["screenshots"].append(str(p))
 
-        # 1) 打开 deeplink
+        # 1) Open deeplink
         self.open_deeplink(deeplink)
         time.sleep(2)
         snap("01_after_deeplink")
 
-        # 2) 等 Review 页：用 class_filter+exact 找真正的 "Bayar" Button（避免标题
-        # "Review pembayaran" 子串匹配）；同时并行检测过期 / 余额不足 dialog
+        # 2) Wait Review page: use class_filter+exact to find actual "Bayar" Button (avoid title
+        # "Review pembayaran" substring match); parallel detect expiry/insufficient balance dialog
         ev = self.wait_for_groups(
             {"ok": ["Bayar", "Lanjut", "Pay"]},
             timeout_s=max_review_wait_s,
@@ -287,7 +280,7 @@ class GoPayAuto:
             exact=True,
         )
         if not ev:
-            # 检查过期 / 错误对话框
+            # Check expiry/error dialogs
             err = self.wait_for_groups(
                 {"err": ["Waktu pembayaran habis", "expired", "Saldo tidak cukup",
                          "tidak tersedia", "kadaluarsa"]},
@@ -307,7 +300,7 @@ class GoPayAuto:
 
         _, bayar_text, bayar_bounds = ev
         self.log(f"[gopay-adb] 找到付款按钮: {bayar_text!r} bounds={bayar_bounds}")
-        # 反作弊：用户读 review 页通常 2-5s（看金额、商户、确认），不会立刻按
+        # Anti-cheat: users typically read review page 2-5s (check amount, merchant, confirm), won't tap immediately
         import random as _r
         time.sleep(_r.uniform(2.0, 5.0))
         x1, y1, x2, y2 = bayar_bounds
@@ -315,7 +308,7 @@ class GoPayAuto:
         time.sleep(_r.uniform(2.0, 3.0))
         snap("02_after_bayar")
 
-        # 3) 等 PIN 页 / 错误 dialog（同步轮询，第一个匹配的决定路径）
+        # 3) Wait PIN page/error dialog (sync poll, first match decides path)
         ev = self.wait_for_groups(
             {
                 "pin": ["Masukkin PIN kamu", "Masukkan PIN", "Enter your PIN"],
@@ -335,18 +328,18 @@ class GoPayAuto:
             result["state"] = tag
             result["message"] = msg
             snap(f"err_{tag}")
-            # 友善关闭 dialog（点 Oke / Kembali）
+            # Gracefully close dialog (tap Oke/Kembali)
             ok = self.wait_for_text(["Oke", "Kembali", "Mengerti"], timeout_s=1)
             if ok:
                 self.tap_bounds_center(ok[1])
             return result
 
-        # 4) 输 PIN
+        # 4) Enter PIN
         self.enter_pin(pin)
         time.sleep(2)
         snap("03_after_pin")
 
-        # 5) 等结果（可能：success / 错 PIN / 网络错 / verify 中）
+        # 5) Wait result (possible: success/wrong PIN/network error/verify in progress)
         deadline = time.time() + max_result_wait_s
         last_snap_t = 0.0
         while time.time() < deadline:
@@ -368,7 +361,7 @@ class GoPayAuto:
                 result["message"] = err[0]
                 snap("err_pin_or_other")
                 return result
-            # 周期性截图供 debug
+            # Periodic screenshots for debug
             now = time.time()
             if now - last_snap_t > 8:
                 snap(f"polling_{int(now - deadline + max_result_wait_s)}")
@@ -397,7 +390,7 @@ def _cli():
         adb_port=args.adb_port or None,
     )
     if not g.is_gopay_focused():
-        # GoPay 不在前台无所谓，open_deeplink 会拉起
+        # GoPay not in foreground is fine, open_deeplink will bring it up
         pass
     res = g.pay_with_deeplink(
         deeplink=args.deeplink,

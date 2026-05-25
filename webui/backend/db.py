@@ -219,7 +219,7 @@ class Database:
             c.execute("ALTER TABLE registered_accounts ADD COLUMN last_check_message TEXT DEFAULT ''")
         if "last_plan_type" not in existing_acc:
             c.execute("ALTER TABLE registered_accounts ADD COLUMN last_plan_type TEXT DEFAULT ''")
-        # 并发跑 no_card_plus 时多 worker 抢占同一 promo_link 的原子化锁字段
+        # Atomic lock field for multiple workers competing to seize the same promo_link when concurrently running no_card_plus
         existing_pl = {row["name"] for row in c.execute("PRAGMA table_info(promo_links)").fetchall()}
         if "claimed_by" not in existing_pl:
             c.execute("ALTER TABLE promo_links ADD COLUMN claimed_by TEXT DEFAULT ''")
@@ -318,7 +318,7 @@ class Database:
         return row is not None
 
     def add_promo_link(self, row: dict) -> int:
-        """写一条 promo 长链接记录, 返新 row id."""
+        """Write a promo long-link record, return new row id."""
         email = _email(row.get("email"))
         if not email or not row.get("checkout_url"):
             return 0
@@ -392,12 +392,11 @@ class Database:
             return cur.rowcount > 0
 
     def mark_promo_link_status(self, link_id: int, new_status: str) -> bool:
-        """通用 status 更新, 支持 fresh / used / expired / in_use.
+        """Generic status update, supports fresh / used / expired / in_use.
 
-        no_card_paypal_plus.py 检测到 stripe due > 0 (promo 不命中) 时调
-        mark_promo_link_status(id, 'expired') 标该 link 废, 防止下次 auto pick
-        再选中跑同样浪费几分钟.
-        """
+        Called by no_card_paypal_plus.py when detecting stripe due > 0 (promo miss)
+        mark_promo_link_status(id, 'expired') marks the link as waste, preventing auto pick next time
+        from selecting and wasting the same few minutes again."""
         valid = {"fresh", "used", "expired", "in_use"}
         if new_status not in valid:
             return False
@@ -416,18 +415,17 @@ class Database:
         max_due_cents: int = 100,
         exclude_ids: list[int] | None = None,
     ) -> dict | None:
-        """原子地占用一条 fresh promo_link：UPDATE...WHERE status='fresh' 一次性把
-        最早匹配的行翻到 status='in_use' + claimed_by=worker_id，并 RETURNING 行内容。
+        """Atomically claim a fresh promo_link: UPDATE...WHERE status='fresh' one-shot flip
+        the earliest matching row to status='in_use' + claimed_by=worker_id, and RETURNING row content.
 
-        SQLite 3.35+ 支持 RETURNING；老版本走 SELECT+UPDATE in IMMEDIATE 事务兜底。
-        多个 worker 并发调时 SQLite 行级 BUSY 重试 + WHERE status='fresh' 二次校验
-        保证不会两个 worker 拿到同一行。
-        """
+        SQLite 3.35+ supports RETURNING; older versions fall back to SELECT+UPDATE in IMMEDIATE transaction.
+        When multiple workers call concurrently, SQLite row-level BUSY retry + WHERE status='fresh' double-check
+        ensures no two workers get the same row."""
         worker_id = _text(worker_id).strip() or "anon"
         plan_like = _text(plan_like).strip() or "plus"
         email = _text(email).strip()
         now = time.time()
-        # 先选最匹配 id 的 fresh 行：lower(plan_name) LIKE '%plus%'，可选 email 过滤
+        # First select the freshest row with best-match id: lower(plan_name) LIKE '%plus%', optional email filter
         where = ["status='fresh'", "lower(plan_name) LIKE ?"]
         params: list = [f"%{plan_like.lower()}%"]
         if max_due_cents and max_due_cents > 0:
@@ -442,7 +440,7 @@ class Database:
             where.append(f"id NOT IN ({placeholders})")
             params.extend(excl)
         with self._conn() as c:
-            # SQLite 3.35+: 用 RETURNING + 子查询 LIMIT 1 一句话原子完成
+            # SQLite 3.35+: use RETURNING + subquery LIMIT 1 to complete atomically in one statement
             try:
                 row = c.execute(
                     f"""
@@ -463,7 +461,7 @@ class Database:
                 return dict(row) if row else None
             except sqlite3.OperationalError:
                 pass
-            # 兜底：BEGIN IMMEDIATE → SELECT → UPDATE
+            # Fallback: BEGIN IMMEDIATE → SELECT → UPDATE
             c.execute("BEGIN IMMEDIATE")
             try:
                 sel = c.execute(
@@ -492,8 +490,8 @@ class Database:
                 raise
 
     def claim_promo_link_by_id(self, worker_id: str, link_id: int) -> dict | None:
-        """显式 --promo-link-id 模式：atomic claim 指定 id 的 fresh 行，
-        被别的 worker 抢了就返 None。"""
+        """Explicit --promo-link-id mode: atomic claim the specified fresh row id,
+        return None if snatched by another worker."""
         worker_id = _text(worker_id).strip() or "anon"
         with self._conn() as c:
             try:
@@ -534,7 +532,7 @@ class Database:
                 raise
 
     def release_promo_link(self, link_id: int, new_status: str = "fresh") -> bool:
-        """worker 失败时把 in_use 状态退回 fresh（或标 expired）让其它 worker 复用。"""
+        """Revert in_use status back to fresh (or mark expired) when worker fails, for reuse by other workers."""
         if new_status not in ("fresh", "expired"):
             return False
         with self._conn() as c:
@@ -606,10 +604,9 @@ class Database:
                               plan_type: str = "") -> bool:
         """Record validity probe outcome (status: 'valid' | 'invalid' | 'unknown').
 
-        ``plan_type`` 可选: 当 caller 从实时 API (/backend-api/accounts/check)
-        拿到了订阅状态时一并写入,避免下次 inventory 渲染读到 stale JWT claim。
-        空字符串表示不更新 plan_type 字段(向后兼容)。
-        """
+        ``plan_type`` optional: when caller fetches subscription status from realtime API (/backend-api/accounts/check)
+        write it together, avoiding stale JWT claim reads on next inventory render.
+        Empty string means do not update plan_type field (backward compatible)."""
         sets = [
             "last_check_at = ?",
             "last_check_status = ?",

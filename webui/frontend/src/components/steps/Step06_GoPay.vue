@@ -1,108 +1,107 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">步骤 07: GoPay 账号</div>
-    <h2 class="step-h">$&nbsp;GoPay (印尼 e-wallet)<span class="term-cursor"></span></h2>
-    <p class="step-sub">每个 ChatGPT Plus 订阅消耗 1 次 WhatsApp OTP + 2 次 PIN 输入。Lite 账号 (无印尼 KYC) 月限额约 IDR 2M ≈ 5-6 单。</p>
+    <div class="term-divider" data-tail="──────────">Step 07: GoPay Account</div>
+    <h2 class="step-h">$&nbsp;GoPay (Indonesia e-wallet)<span class="term-cursor"></span></h2>
+    <p class="step-sub">Each ChatGPT Plus subscription consumes 1 WhatsApp OTP + 2 PIN entries. Lite account (no Indonesia KYC) monthly limit ~IDR 2M ≈ 5-6 transactions.</p>
 
     <div class="form-stack">
-      <TermField v-model="form.country_code" label="国家码 · country_code" placeholder="86 (中国大陆) / 62 (印尼)" />
-      <TermField v-model="form.phone_number" label="手机号 · phone_number" placeholder="不带国家码，11 位数字" />
-      <TermField v-model="form.pin" label="6 位 PIN · pin" type="password" placeholder="登录 GoJek/GoPay 时设的 PIN" />
-      <TermField v-model.number="form.otp_timeout" label="OTP 等待超时秒数" type="number" />
+      <TermField v-model="form.country_code" label="Country Code · country_code" placeholder="86 (Mainland China) / 62 (Indonesia)" />
+      <TermField v-model="form.phone_number" label="Phone Number · phone_number" placeholder="Without country code, 11 digits" />
+      <TermField v-model="form.pin" label="6-digit PIN · pin" type="password" placeholder="PIN set when logging into GoJek/GoPay" />
+      <TermField v-model.number="form.otp_timeout" label="OTP Wait Timeout (seconds)" type="number" />
       <TermSelect
         v-model="form.whatsapp_engine"
-        label="WhatsApp 引擎"
+        label="WhatsApp Engine"
         :options="engineOptions"
       />
     </div>
 
     <RouterLink class="wa-login-entry" to="/whatsapp">
       <span class="wa-login-prompt">$</span>
-      WhatsApp 登录 / 扫码接收 GoPay OTP
+      WhatsApp Login / Scan to Receive GoPay OTP
     </RouterLink>
 
     <div class="hint-box">
-      <p>前端只保留上面的 WhatsApp 登录入口。扫码连接后，后台会自动监听 WhatsApp 消息并把 GoPay OTP 写给支付流程读取。</p>
-      <p>PIN 配置后自动用，绑定 + 扣款各用一次。</p>
-      <p>同号重复绑定时第一次会返 406「account already linked」，gopay.py 会自动重试一次。</p>
+      <p>Frontend only retains the WhatsApp login entry above. After scanning to connect, the backend automatically monitors WhatsApp messages and writes GoPay OTP for the payment process to read.</p>
+      <p>PIN is automatically used after configuration, once for binding and once for deduction.</p>
+      <p>When rebinding with the same number, the first attempt returns 406 "account already linked", and gopay.py will automatically retry once.</p>
     </div>
 
     <details class="ingest-box">
-      <summary>外部服务推送 OTP（HTTP 接口）</summary>
+      <summary>External Service Push OTP (HTTP Interface)</summary>
       <p class="ingest-desc">
-        让任意第三方服务（短信网关、邮件解析、运营商回执等）把验证码 POST 到下面这个接口。
-        <strong>窗口期机制</strong>：接口默认关闭，只有当运行页面弹出 OTP 输入框（即 pipeline 在等 OTP）时才打开；
-        其余时间 POST 会返 409。POST 成功后，运行页会自动填入并提交，pipeline 立即继续。
+        Let any third-party service (SMS gateway, email parser, carrier receipt, etc.) POST verification code to the interface below.
+        <strong>Time Window Mechanism</strong>: The interface is closed by default and only opens when the runtime page displays OTP input box (i.e., pipeline is waiting for OTP);
+        POST returns 409 at other times. After successful POST, the runtime page automatically fills and submits, pipeline continues immediately.
       </p>
       <div class="ingest-status" :class="ingestInfo?.active ? 'on' : 'off'">
         <span class="status-dot">●</span>
-        <span>{{ ingestInfo?.active ? "接口窗口已开（pipeline 正在等 OTP）" : "接口窗口已关（启动一次 GoPay 流程后才会开）" }}</span>
-        <TermBtn variant="ghost" class="refresh-btn" @click="loadIngestInfo(true)">刷新</TermBtn>
+        <span>{{ ingestInfo?.active ? "Interface window is open (pipeline is waiting for OTP)" : "Interface window is closed (will open after starting a GoPay process)" }}</span>
+        <TermBtn variant="ghost" class="refresh-btn" @click="loadIngestInfo(true)">Refresh</TermBtn>
       </div>
       <div class="ingest-meta">
-        <div><span class="ingest-label">方法</span><code>POST</code></div>
-        <div><span class="ingest-label">URL</span><code>{{ ingestUrl || "加载中…" }}</code></div>
-        <div><span class="ingest-label">鉴权</span><code>X-WA-Relay-Token</code> 头 或 <code>?token=</code> 查询参数</div>
-        <div><span class="ingest-label">请求体</span><code>{"otp":"123456"}</code>（非数字字符会被自动剔除）</div>
+        <div><span class="ingest-label">Method</span><code>POST</code></div>
+        <div><span class="ingest-label">URL</span><code>{{ ingestUrl || "Loading…" }}</code></div>
+        <div><span class="ingest-label">Auth</span><code>X-WA-Relay-Token</code> header or <code>?token=</code> query parameter</div>
+        <div><span class="ingest-label">Request Body</span><code>{"otp":"123456"}</code>(non-numeric characters are automatically stripped)</div>
         <div v-if="ingestInfo?.token"><span class="ingest-label">Token</span><code class="ingest-token">{{ ingestInfo.token }}</code></div>
       </div>
-      <pre class="ingest-pre">{{ ingestCurl || "加载中…" }}</pre>
+      <pre class="ingest-pre">{{ ingestCurl || "Loading…" }}</pre>
       <div v-if="ingestError" class="ingest-error">
-        加载失败：{{ ingestError }}
-        <TermBtn variant="ghost" @click="loadIngestInfo(true)">重试</TermBtn>
+        Load failed: {{ ingestError }}
+        <TermBtn variant="ghost" @click="loadIngestInfo(true)">Retry</TermBtn>
       </div>
       <div class="ingest-actions">
-        <TermBtn variant="ghost" :disabled="!ingestCurl" @click="copyIngestCurl">复制 curl</TermBtn>
-        <TermBtn variant="ghost" :disabled="!ingestInfo?.token" @click="copyIngestToken">仅复制 Token</TermBtn>
+        <TermBtn variant="ghost" :disabled="!ingestCurl" @click="copyIngestCurl">Copy curl</TermBtn>
+        <TermBtn variant="ghost" :disabled="!ingestInfo?.token" @click="copyIngestToken">Copy Token Only</TermBtn>
       </div>
       <p class="ingest-note">
-        Token 与 WhatsApp sidecar / <code>/latest-otp</code> 共用同一个；在 WebUI「WhatsApp 登录」页点「退出 WhatsApp 登录」不会重置它。
+        Token is shared with WhatsApp sidecar / <code>/latest-otp</code>; clicking "Logout WhatsApp" on the WebUI "WhatsApp Login" page will not reset it.
       </p>
     </details>
 
     <details class="ingest-box">
-      <summary>GoPay 链接状态（HTTP 接口）</summary>
+      <summary>GoPay Link Status (HTTP Interface)</summary>
       <p class="ingest-desc">
-        每次成功扣款后，本系统把当前手机号标记为 <strong>linked</strong>。
-        下次启动 GoPay 流程会先查这个状态：如果还 linked，运行页直接 409 拒绝启动，避免命中
-        GoPay 的 406「account already linked」。
-        外部服务在 GoPay 侧手动解绑后必须 POST <code>/unlink</code> 把状态翻回去，pipeline 才能继续。
+        After each successful charge, this system marks the current phone number as <strong>linked</strong>.
+        The next time GoPay process starts, it checks this status first: if still linked, the runtime page directly returns 409 to refuse startup, avoiding
+        GoPay's 406 "account already linked". After manual unbinding on GoPay side, external services must POST <code>/unlink</code> to flip the status back so pipeline can continue.
       </p>
       <div class="ingest-status" :class="linkStatus?.linked ? 'on' : 'off'">
         <span class="status-dot">●</span>
-        <span v-if="!form.phone_number">未配置手机号</span>
-        <span v-else-if="linkStatus?.linked">已 linked（{{ formatTs(linkStatus.linked_at) }}）— 启动 GoPay 流程将被拒绝</span>
-        <span v-else>未 linked — pipeline 可以启动</span>
-        <TermBtn variant="ghost" class="refresh-btn" @click="loadLinkStatus(true)">刷新</TermBtn>
+        <span v-if="!form.phone_number">Phone number not configured</span>
+        <span v-else-if="linkStatus?.linked">Linked ({{ formatTs(linkStatus.linked_at) }}) — Starting GoPay process will be rejected</span>
+        <span v-else>Not linked — pipeline can start</span>
+        <TermBtn variant="ghost" class="refresh-btn" @click="loadLinkStatus(true)">Refresh</TermBtn>
       </div>
       <div class="ingest-meta">
-        <div><span class="ingest-label">手机号</span><code>{{ currentPhoneKey || "未配置" }}</code></div>
-        <div v-if="linkStatus?.payment_ref"><span class="ingest-label">支付 ref</span><code>{{ linkStatus.payment_ref }}</code></div>
+        <div><span class="ingest-label">Phone</span><code>{{ currentPhoneKey || "Not configured" }}</code></div>
+        <div v-if="linkStatus?.payment_ref"><span class="ingest-label">Payment ref</span><code>{{ linkStatus.payment_ref }}</code></div>
         <div v-if="linkStatus?.linked_at"><span class="ingest-label">linked at</span><code>{{ formatTs(linkStatus.linked_at) }}</code></div>
         <div v-if="linkStatus?.unlinked_at"><span class="ingest-label">unlinked at</span><code>{{ formatTs(linkStatus.unlinked_at) }}</code></div>
-        <div v-if="linkStatus?.last_changed_by"><span class="ingest-label">改动方</span><code>{{ linkStatus.last_changed_by }}</code></div>
+        <div v-if="linkStatus?.last_changed_by"><span class="ingest-label">Changed by</span><code>{{ linkStatus.last_changed_by }}</code></div>
       </div>
       <div class="ingest-meta">
-        <div><span class="ingest-label">查询</span><code>GET {{ ingestOrigin }}/api/gopay/link-state</code> 或 <code>/{phone}</code>（接受 session 或 token）</div>
-        <div><span class="ingest-label">解绑</span><code>POST {{ ingestOrigin }}/api/gopay/link-state/unlink</code>（仅 token）</div>
-        <div><span class="ingest-label">请求体</span><code>{"phone":"86138...","source":"my-worker"}</code></div>
+        <div><span class="ingest-label">Query</span><code>GET {{ ingestOrigin }}/api/gopay/link-state</code> or <code>/{phone}</code>(accept session or token)</div>
+        <div><span class="ingest-label">Unlink</span><code>POST {{ ingestOrigin }}/api/gopay/link-state/unlink</code>(token only)</div>
+        <div><span class="ingest-label">Request Body</span><code>{"phone":"86138...","source":"my-worker"}</code></div>
       </div>
-      <pre class="ingest-pre">{{ unlinkCurl || "加载中…" }}</pre>
+      <pre class="ingest-pre">{{ unlinkCurl || "Loading…" }}</pre>
       <div v-if="linkError" class="ingest-error">
-        加载失败：{{ linkError }}
-        <TermBtn variant="ghost" @click="loadLinkStatus(true)">重试</TermBtn>
+        Load failed: {{ linkError }}
+        <TermBtn variant="ghost" @click="loadLinkStatus(true)">Retry</TermBtn>
       </div>
       <div class="ingest-actions">
-        <TermBtn variant="ghost" :disabled="!unlinkCurl" @click="copyUnlinkCurl">复制 unlink curl</TermBtn>
+        <TermBtn variant="ghost" :disabled="!unlinkCurl" @click="copyUnlinkCurl">Copy unlink curl</TermBtn>
         <TermBtn
           variant="danger"
           :loading="unlinking"
           :disabled="!linkStatus?.linked"
           @click="unlinkNow"
-        >立即 unlink（仅本机）</TermBtn>
+        >Unlink Now (This Machine Only)</TermBtn>
       </div>
       <p class="ingest-note">
-        手动 unlink 仅清除本系统的标记；GoPay 服务端的实际链接需要你或外部服务在 GoPay/Midtrans 侧自行处理。
+        Manual unlink only clears this system's marking; the actual link on GoPay server side needs to be handled by you or external services on GoPay/Midtrans side.
       </p>
     </details>
   </section>
@@ -131,8 +130,8 @@ const form = ref({
 });
 
 const engineOptions = [
-  { value: "baileys", label: "Baileys (推荐)", desc: "直连 WhatsApp multi-device socket，启动更轻" },
-  { value: "wwebjs", label: "whatsapp-web.js", desc: "Chromium 路径，兼容旧环境 / 调试用" },
+  { value: "baileys", label: "Baileys (Recommended)", desc: "Direct connection to WhatsApp multi-device socket, lighter startup" },
+  { value: "wwebjs", label: "whatsapp-web.js", desc: "Chromium path, compatible with legacy environments / debugging" },
 ];
 
 interface IngestInfo {
@@ -177,7 +176,7 @@ async function loadIngestInfo(force = false) {
     const r = await api.get<IngestInfo>("/whatsapp/ingest-info");
     ingestInfo.value = r.data;
   } catch (e: any) {
-    ingestError.value = e?.response?.data?.detail || e?.message || "未知错误";
+    ingestError.value = e?.response?.data?.detail || e?.message || "Unknown error";
   } finally {
     ingestLoading = false;
   }
@@ -203,13 +202,13 @@ onBeforeUnmount(() => {
 async function copyIngestCurl() {
   if (!ingestCurl.value) return;
   await navigator.clipboard.writeText(ingestCurl.value);
-  message.success("已复制 curl 示例");
+  message.success("curl example copied");
 }
 
 async function copyIngestToken() {
   if (!ingestInfo.value?.token) return;
   await navigator.clipboard.writeText(ingestInfo.value.token);
-  message.success("已复制 Token");
+  message.success("Token copied");
 }
 
 interface LinkStatus {
@@ -266,7 +265,7 @@ async function loadLinkStatus(force = false) {
     const r = await api.get<LinkStatus>(`/gopay/link-state/${encodeURIComponent(phone)}`);
     linkStatus.value = r.data;
   } catch (e: any) {
-    linkError.value = e?.response?.data?.detail || e?.message || "未知错误";
+    linkError.value = e?.response?.data?.detail || e?.message || "Unknown error";
   } finally {
     linkLoading = false;
   }
@@ -275,17 +274,17 @@ async function loadLinkStatus(force = false) {
 async function copyUnlinkCurl() {
   if (!unlinkCurl.value) return;
   await navigator.clipboard.writeText(unlinkCurl.value);
-  message.success("已复制 unlink curl");
+  message.success("unlink curl copied");
 }
 
 async function unlinkNow() {
   if (!ingestInfo.value?.token) {
-    message.error("Token 未加载");
+    message.error("Token not loaded");
     return;
   }
   const phone = currentPhoneKey.value;
   if (!phone) {
-    message.warning("先填手机号");
+    message.warning("Please enter phone number first");
     return;
   }
   unlinking.value = true;
@@ -296,9 +295,9 @@ async function unlinkNow() {
       { headers: { [ingestInfo.value.header_name]: ingestInfo.value.token } },
     );
     await loadLinkStatus(true);
-    message.success("已 unlink");
+    message.success("Unlinked");
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || "unlink 失败");
+    message.error(e?.response?.data?.detail || "Unlink failed");
   } finally {
     unlinking.value = false;
   }

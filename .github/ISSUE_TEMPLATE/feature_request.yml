@@ -1,60 +1,60 @@
-name: Feature 请求
-description: 提议新能力、新 solver 题型、新自愈环
+name: Feature Request
+description: Propose new capabilities, new solver question types, new self-healing loops
 title: "[feat] "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        提交之前先看下：
+        Before submitting, please check:
 
-        - **新 hCaptcha 题型**：附 prompt 截图和 `/tmp/hcaptcha_auto_solver*/` 里的 `round_XX.json`
-        - **协议阶段变更**（Stripe / PayPal / OpenAI 出 breaking change）：附相关流量抓包或 response body 让我们核对新结构
-        - **涉及未授权使用**第三方服务的请求：别提交。看 [`SECURITY.md`](https://github.com/DanOps-1/Gpt-Agreement-Payment/blob/main/SECURITY.md)
+        - **New hCaptcha question type**: Attach prompt screenshot and `round_XX.json` from `/tmp/hcaptcha_auto_solver*/`
+        - **Protocol phase changes** (Stripe / PayPal / OpenAI breaking changes): Attach relevant traffic captures or response body for us to verify new structure
+        - **Requests involving unauthorized use** of third-party services: Do not submit. See [`SECURITY.md`](https://github.com/DanOps-1/Gpt-Agreement-Payment/blob/main/SECURITY.md)
 
   - type: textarea
     id: motivation
     attributes:
-      label: 这解决什么问题
-      description: 你想做的事现在做不到？
+      label: What problem does this solve
+      description: Can't accomplish what you want to do right now?
     validations:
       required: true
 
   - type: textarea
     id: proposal
     attributes:
-      label: 怎么做
-      description: 你打算怎么实现？粗略思路也行
+      label: How to do it
+      description: How do you plan to implement it? A rough idea is fine
     validations:
       required: true
 
   - type: textarea
     id: alternatives
     attributes:
-      label: 考虑过的替代方案
-      description: 现有 workaround、其他工具的类似功能等
+      label: Alternative solutions considered
+      description: Existing workarounds, similar features in other tools, etc.
 
   - type: dropdown
     id: category
     attributes:
-      label: 分类
+      label: Category
       options:
-        - hCaptcha solver —— 新题型
-        - hCaptcha solver —— 现有 solver 改进
-        - 协议重放 —— 新阶段 / 新端点
-        - Daemon —— 新自愈环
-        - 配置 —— 新 flag / 选项
-        - 文档
-        - 工具链 / CI / 开发体验
-        - 其他
+        - hCaptcha solver — New question type
+        - hCaptcha solver — Improvement to existing solver
+        - Protocol replay — New phase / New endpoint
+        - Daemon — New self-healing loop
+        - Configuration — New flag / option
+        - Documentation
+        - Toolchain / CI / Development experience
+        - Other
     validations:
       required: true
 
   - type: checkboxes
     id: contribute
     attributes:
-      label: 你愿意亲自实现吗
+      label: Are you willing to implement this yourself
       options:
-        - label: 我可以提 PR
-        - label: 我可以协助测试
-        - label: 我只是建议，需要别人实现
+        - label: I can submit a PR
+        - label: I can help with testing
+        - label: I'm just making a suggestion, someone else needs to implement it

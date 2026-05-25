@@ -1,16 +1,14 @@
-"""
-Stripe Checkout 自动化支付脚本
+"""Stripe Checkout Automated Payment Script
 
-⚠️ 仅限授权范围内使用（你拥有的系统 / 合法 CTF / 授权 bug bounty in-scope 资产 /
-   安全研究）。运行本程序即视为同意仓库根目录 NOTICE 文件全部条款。AS IS 提供，
-   无任何担保，一切后果使用者自负。
+⚠️ For use only within authorized scope (systems you own / legitimate CTF / authorized bug bounty in-scope assets /
+   security research). Running this program constitutes acceptance of all terms in the NOTICE file in the repository root. Provided AS IS,
+   without any warranty; all consequences are the user's responsibility.
 
-用法:
+Usage:
   python pay.py <session_id> [--card N] [--config path] [--token TOKEN]
 
-示例:
-  python pay.py cs_live_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-"""
+Example:
+  python pay.py cs_live_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"""
 
 import argparse
 import base64
@@ -36,7 +34,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import requests
-# Wave F: card.py → card/_monolith.py, 多套了一层, 再加一个 dirname 让 _REPO_DIR_BOOT 回到仓库根
+# Wave F: card.py → card/_monolith.py, added one more layer, plus one dirname to bring _REPO_DIR_BOOT back to repo root
 _REPO_DIR_BOOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _REPO_DIR_BOOT not in sys.path:
     sys.path.insert(0, _REPO_DIR_BOOT)
@@ -53,24 +51,24 @@ _OUTPUT_DIR = os.path.join(_REPO_DIR_BOOT, "output")
 os.makedirs(os.path.join(_OUTPUT_DIR, "logs"), exist_ok=True)
 LOG_FILE = os.path.join(_OUTPUT_DIR, "logs", "card.log")
 
-# 让 `from mail.cf_kv import ...` (Wave H 前: cf_kv_otp_provider) 在 card.py 直接执行/
-# 被 pipeline 子进程拉起时都能命中 `CTF-reg/mail/cf_kv.py` 下的实现。否则 RT / PayPal OTP
-# 会在 `python CTF-pay/card.py ...` 的默认 sys.path 里找不到该模块。
-# Wave F: 同 _REPO_DIR_BOOT, 增一层 dirname
+# Allow `from mail.cf_kv import ...` (Wave H before: cf_kv_otp_provider) to execute directly in card.py/
+# When pulled up by pipeline subprocess, can always hit the implementation under `CTF-reg/mail/cf_kv.py`. Otherwise RT / PayPal OTP
+# will not find the module in the default sys.path of `python CTF-pay/card.py ...`.
+# Wave F: same as _REPO_DIR_BOOT, add one more dirname
 _REPO_DIR = _REPO_DIR_BOOT
 _CTF_REG_DIR = os.path.join(_REPO_DIR, "CTF-reg")
 if os.path.isdir(_CTF_REG_DIR) and _CTF_REG_DIR not in sys.path:
     sys.path.insert(0, _CTF_REG_DIR)
 
 def _init_log():
-    """清空并初始化 log.txt"""
+    """Clear and initialize log.txt"""
     with open(LOG_FILE, "w", encoding="utf-8") as f:
         f.write(f"{'='*80}\n")
         f.write(f"  Stripe 自动化支付 日志  —  {datetime.now().isoformat()}\n")
         f.write(f"{'='*80}\n\n")
 
 def _log(msg: str):
-    """追加一行到 log.txt 并同时 print"""
+    """Append one line to log.txt and print simultaneously"""
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     line = f"[{ts}] {msg}"
     print(line, flush=True)
@@ -78,19 +76,19 @@ def _log(msg: str):
         f.write(line + "\n")
 
 def _log_raw(text: str):
-    """追加原始文本到 log.txt（不 print）"""
+    """Append raw text to log.txt (no print)"""
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(text + "\n")
 
 def _log_request(method: str, url: str, data=None, params=None, tag: str = ""):
-    """记录 HTTP 请求详情"""
+    """Record HTTP request details"""
     _log_raw(f"\n{'─'*70}")
     _log_raw(f">>> REQUEST  {tag}")
     _log_raw(f"    {method} {url}")
     if params:
         _log_raw(f"    PARAMS: {json.dumps(params, ensure_ascii=False, indent=6)}")
     if data:
-        # 脱敏卡号
+        # Desensitize card number
         safe = dict(data) if isinstance(data, dict) else {}
         if "card[number]" in safe:
             safe["card[number]"] = "****" + str(safe["card[number]"])[-4:]
@@ -99,7 +97,7 @@ def _log_request(method: str, url: str, data=None, params=None, tag: str = ""):
         _log_raw(f"    BODY: {json.dumps(safe, ensure_ascii=False, indent=6)}")
 
 def _log_response(resp: requests.Response, tag: str = ""):
-    """记录 HTTP 响应详情"""
+    """Record HTTP response details"""
     _log_raw(f"<<< RESPONSE {tag}  status={resp.status_code}")
     try:
         body = resp.json()
@@ -116,17 +114,17 @@ def _describe_challenge_artifact(name: str, value: str) -> str:
 
 
 class ChallengeReconfirmRequired(RuntimeError):
-    """当前 challenge 已失效或被拒，需要重新 confirm 获取新的 challenge。"""
+    """Current challenge has expired or been rejected, need to confirm again to get a new challenge."""
     pass
 
 
 class CheckoutSessionInactive(RuntimeError):
-    """当前 Checkout Session 已失活，需要生成新的 session。"""
+    """Current Checkout Session has become inactive, need to generate a new session."""
     pass
 
 
 class FreshCheckoutAuthError(RuntimeError):
-    """无法通过 ChatGPT 侧生成 fresh checkout。"""
+    """Unable to generate fresh checkout via ChatGPT side."""
     pass
 
 
@@ -311,13 +309,12 @@ def _build_cfg_with_fresh_auth(
 
 
 def _load_existing_auth_from_local_bundle_config(cfg: dict, fresh_cfg: dict) -> dict:
-    """从本地 CTF-reg 配置中读取现成登录态。
+    """Read ready-made login state from local CTF-reg configuration.
 
-    目标：
-    - 优先复用已经在本地 bundle 中拿到的 `session_token/access_token/device_id`
-    - 仅当 bundle 中完全没有可用认证信息，或后续 fresh checkout 返回 401 时，
-      再回退到真正的新注册流程
-    """
+    Goal:
+    - Prioritize reusing `session_token/access_token/device_id` already obtained in local bundle
+    - Only when the bundle has no available authentication info at all, or subsequent fresh checkout returns 401,
+      fall back to genuine new registration flow"""
     auth_cfg = fresh_cfg.get("auth") or {}
     auto_cfg = (auth_cfg.get("auto_register") or fresh_cfg.get("auto_register") or {})
     auth_bundle_dir = (
@@ -451,7 +448,7 @@ def _provision_openai_auth_via_local_bundle(cfg: dict, fresh_cfg: dict) -> dict:
     with open(config_path, "r", encoding="utf-8") as f:
         ab_cfg = json.load(f)
 
-    # 强制走“新注册拿 fresh token”链路，避免复用已失效凭证。
+    # Force "new registration to get fresh token" path, avoid reusing expired credentials.
     if not auto_cfg.get("reuse_existing_auth", False):
         ab_cfg["session_token"] = ""
         ab_cfg["access_token"] = ""
@@ -464,8 +461,8 @@ def _provision_openai_auth_via_local_bundle(cfg: dict, fresh_cfg: dict) -> dict:
     if plan_cfg.get("plan_name"):
         team_plan["plan_name"] = plan_cfg["plan_name"]
     if is_plus:
-        # Plus 没有 workspace / seat；剥掉 example 里残留的 team 字段，
-        # 否则 CTF-reg 创建工作区时会跟 plan 不匹配
+        # Plus has no workspace / seat; strip the remaining team field in example,
+        # otherwise CTF-reg workspace creation will mismatch the plan
         team_plan.pop("workspace_name", None)
         team_plan.pop("seat_quantity", None)
     else:
@@ -485,8 +482,8 @@ def _provision_openai_auth_via_local_bundle(cfg: dict, fresh_cfg: dict) -> dict:
         billing["currency"] = str(plan_cfg["billing_currency"]).upper()
 
     mail_cfg = ab_cfg.setdefault("mail", {})
-    # IMAP/SMTP 字段已废弃（OTP 走 CF Email Worker → KV，见 cf_kv_otp_provider）；
-    # 这里只保留 catch_all_domain / catch_all_domains / auto_provision。
+    # IMAP/SMTP fields deprecated (OTP goes through CF Email Worker → KV, see cf_kv_otp_provider);
+    # only keep catch_all_domain / catch_all_domains / auto_provision here.
     for key in ("catch_all_domain", "catch_all_domains", "auto_provision"):
         if key in auto_cfg and auto_cfg.get(key) not in (None, ""):
             mail_cfg[key] = auto_cfg.get(key)
@@ -708,7 +705,7 @@ print("LOCALAUTH_RESULT_JSON=" + json.dumps(result.to_dict(), ensure_ascii=False
     return child_result
 
 # ---------------------------------------------------------------------------
-# 常量
+# Constants
 # ---------------------------------------------------------------------------
 STRIPE_API = "https://api.stripe.com"
 STRIPE_VERSION_FULL = "2025-03-31.basil; checkout_server_update_beta=v1; checkout_manual_approval_preview=v1"
@@ -722,14 +719,14 @@ HCAPTCHA_SITE_KEY_FALLBACK = "c7faac4c-1cd7-4b1b-b2d4-42ba98d09c7a"
 DEFAULT_TIMEZONE = "America/Chicago"
 DEFAULT_STRIPE_RUNTIME_VERSION = "6f8494a281"
 
-# 远端打码平台 API base URL（兼容 createTask / getTaskResult 协议）。
-# 由 load_config() 从 captcha.api_url 字段读取并写入。
-# 任何兼容此协议的服务商都可以填，比如自建打码网关。
+# Remote CAPTCHA solving platform API base URL (compatible with createTask / getTaskResult protocol).
+# Read from captcha.api_url field by load_config() and written here.
+# Any service provider compatible with this protocol can be filled, e.g., self-built solving gateway.
 _REMOTE_CAPTCHA_BASE_URL = ""
 
 
 def _remote_captcha_url(path: str = "") -> str:
-    """拼出远端打码平台的完整 URL。path 是 /createTask 或 /getTaskResult 这种。"""
+    """Splice the complete URL of the remote CAPTCHA solving platform. path is like /createTask or /getTaskResult."""
     base = (_REMOTE_CAPTCHA_BASE_URL or os.environ.get("CTF_CAPTCHA_API_URL", "")).rstrip("/")
     if not base:
         base = "https://YOUR_CAPTCHA_PROVIDER"
@@ -748,17 +745,17 @@ KNOWN_PUBLISHABLE_KEYS = {
     "1HOrSwC6h1nxGoI3": "pk_live_51HOrSwC6h1nxGoI3lTAgRjYVrz4dU3fVOabyCcKR3pbEJguCVAlqCxdxCUvoRh1XWwRacViovU3kLKvpkjh7IqkW00iXQsjo3n",
 }
 
-# PayPal 仅支持欧盟国家/地区
+# PayPal only supports EU countries/regions
 EU_COUNTRIES = {
     "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
     "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
     "PL", "PT", "RO", "SK", "SI", "ES", "SE",
-    # EEA + 常见关联
+    # EEA + common associations
     "NO", "IS", "LI", "CH", "GB",
 }
 
 # ---------------------------------------------------------------------------
-# 地域 / 浏览器配置 — 必须和代理 IP 出口一致
+# Geo / browser config — must match proxy IP exit
 # ---------------------------------------------------------------------------
 LOCALE_PROFILES = {
     "US": {
@@ -824,7 +821,7 @@ APATA_RBA_ORG_ID = "8t63q4n4"
 
 
 def _browser_tz_offset(locale_profile: dict) -> int:
-    """返回与浏览器 `Date.getTimezoneOffset()` 一致的分钟偏移。"""
+    """Return minute offset consistent with browser `Date.getTimezoneOffset()`."""
     tz_name = locale_profile["browser_timezone"]
     now = datetime.now(ZoneInfo(tz_name))
     offset = now.utcoffset()
@@ -838,7 +835,7 @@ def _locale_short(locale_profile: dict) -> str:
 
 
 def _accept_language_for_locale(locale_value: str | None) -> str:
-    """把 `zh` / `en-US` 之类的 locale 转成更像真实浏览器的 Accept-Language。"""
+    """Convert locale like `zh` / `en-US` to something more like real browser Accept-Language."""
     normalized = (locale_value or "").strip()
     lowered = normalized.lower()
     if lowered.startswith("zh"):
@@ -854,7 +851,7 @@ def _accept_language_for_locale(locale_value: str | None) -> str:
 
 
 def _browser_like_session_headers(locale_value: str | None) -> dict:
-    """补一组更接近 flows 的浏览器请求头。"""
+    """Add a set of request headers closer to flows."""
     return {
         "User-Agent": USER_AGENT,
         "Accept-Language": _accept_language_for_locale(locale_value),
@@ -907,7 +904,7 @@ def _extract_payment_method_types(payload: dict) -> list[str]:
     return ["card"]
 
 def _build_browser_fingerprint(locale_profile: dict) -> dict:
-    """构建 RecordBrowserInfo 的完整设备指纹 payload"""
+    """Build complete device fingerprint payload for RecordBrowserInfo"""
     sw = locale_profile["screen_w"]
     sh = locale_profile["screen_h"]
     dpr = locale_profile["dpr"]
@@ -916,7 +913,7 @@ def _build_browser_fingerprint(locale_profile: dict) -> dict:
     tz_name = locale_profile["browser_timezone"]
     tz_offset = _browser_tz_offset(locale_profile)
 
-    # 可用高度 = 屏幕高度 - 任务栏 (48-60px)
+    # Available height = screen height - taskbar (48-60px)
     avail_h = sh - random.randint(40, 60)
 
     return {
@@ -1027,7 +1024,7 @@ _AUDIO_FPS = [
 
 
 def _encode_m6(payload: dict) -> str:
-    """JSON → urlencode → base64 (m.stripe.com/6 编码格式)"""
+    """JSON → urlencode → base64 (m.stripe.com/6 encoding format)"""
     raw = json.dumps(payload, separators=(",", ":"))
     return base64.b64encode(urllib.parse.quote(raw, safe="").encode()).decode()
 
@@ -1037,14 +1034,13 @@ def _b64url_seg(n: int = 32) -> str:
 
 
 def register_fingerprint(http: "requests.Session") -> tuple[str, str, str]:
-    """向 m.stripe.com/6 发送 4 次指纹上报, 返回服务端分配的 (guid, muid, sid)。
-    如果请求失败, 返回本地随机生成的值。
-    """
-    # 本地备用值
+    """Send 4 fingerprint reports to m.stripe.com/6, return server-assigned (guid, muid, sid).
+    If request fails, return locally generated random values."""
+    # Local fallback values
     guid, muid, sid = _gen_fingerprint()
     fp_id = uuid.uuid4().hex
 
-    # 屏幕参数 (US 常见配置)
+    # Screen parameters (common US config)
     screens = [(1920, 1080, 1), (1536, 864, 1.25), (2560, 1440, 1), (1440, 900, 1)]
     sw, sh, dpr = random.choice(screens)
     vh = sh - random.randint(40, 70)  # viewport = screen - chrome
@@ -1109,7 +1105,7 @@ def register_fingerprint(http: "requests.Session") -> tuple[str, str, str]:
     m6_url = "https://m.stripe.com/6"
     _log("      [指纹] 向 m.stripe.com/6 注册设备指纹 ...")
 
-    # #1 完整指纹 (v2=1, 无 ID)
+    # #1 Complete fingerprint (v2=1, no ID)
     try:
         r1 = http.post(m6_url, data=_encode_m6(_build_full(1, False)), headers=m6_headers, timeout=10)
         if r1.status_code == 200:
@@ -1121,7 +1117,7 @@ def register_fingerprint(http: "requests.Session") -> tuple[str, str, str]:
     except Exception as e:
         _log(f"      [指纹] #1 失败: {e}")
 
-    # #2 完整指纹 (v2=2, 带 ID)
+    # #2 Complete fingerprint (v2=2, with ID)
     try:
         r2 = http.post(m6_url, data=_encode_m6(_build_full(2, True)), headers=m6_headers, timeout=10)
         if r2.status_code == 200:
@@ -1131,14 +1127,14 @@ def register_fingerprint(http: "requests.Session") -> tuple[str, str, str]:
     except Exception as e:
         _log(f"      [指纹] #2 失败: {e}")
 
-    # #3 鼠标行为 (mouse-timings-10-v2)
+    # #3 Mouse behavior (mouse-timings-10-v2)
     try:
         http.post(m6_url, data=_encode_m6(_build_mouse("mouse-timings-10-v2")), headers=m6_headers, timeout=10)
         _log("      [指纹] #3 OK (mouse-timings-v2)")
     except Exception:
         pass
 
-    # #4 鼠标行为 (mouse-timings-10)
+    # #4 Mouse behavior (mouse-timings-10)
     try:
         http.post(m6_url, data=_encode_m6(_build_mouse("mouse-timings-10")), headers=m6_headers, timeout=10)
         _log("      [指纹] #4 OK (mouse-timings)")
@@ -1150,7 +1146,7 @@ def register_fingerprint(http: "requests.Session") -> tuple[str, str, str]:
 
 
 def _gen_elements_session_id():
-    """生成类似 elements_session_15hfldlRpSm 的 session id"""
+    """Generate session id similar to elements_session_15hfldlRpSm"""
     import random, string
     chars = string.ascii_letters + string.digits
     return "elements_session_" + "".join(random.choices(chars, k=11))
@@ -1164,21 +1160,20 @@ def _stripe_headers():
         "Referer": "https://js.stripe.com/",
     }
 def parse_checkout_url(raw: str) -> tuple[str, str]:
-    """解析输入，返回 (session_id, stripe_checkout_url)
+    """Parse input, return (session_id, stripe_checkout_url)
 
-    支持以下格式:
-      - 裸 session_id: cs_live_xxx / cs_test_xxx
+    Supports the following formats:
+      - Bare session_id: cs_live_xxx / cs_test_xxx
       - Stripe URL: https://checkout.stripe.com/c/pay/cs_live_xxx
-      - ChatGPT URL: https://chatgpt.com/checkout/openai_llc/cs_live_xxx
-    """
+      - ChatGPT URL: https://chatgpt.com/checkout/openai_llc/cs_live_xxx"""
     raw = raw.strip()
     m = re.search(r"(cs_(?:live|test)_[A-Za-z0-9]+)", raw)
     if not m:
         raise ValueError(f"无法从输入中提取 checkout_session_id: {raw[:120]}...")
     session_id = m.group(1)
 
-    # 构建用于 Playwright 等回退方案的 Stripe checkout URL
-    # 如果输入是 checkout.stripe.com 的链接则直接使用，否则用标准格式构建
+    # Build Stripe checkout URL for fallback schemes like Playwright
+    # If input is a checkout.stripe.com link, use it directly; otherwise build with standard format
     if "checkout.stripe.com" in raw:
         stripe_url = raw
     else:
@@ -1378,17 +1373,15 @@ def _warm_chatgpt_checkout_context(
     billing_country: str,
     include_home_bounce: bool = True,
 ) -> dict:
-    """
-    在 fresh checkout 之前补齐 flows 中真实出现的 ChatGPT 侧预热请求：
-    - 首页 / auth/session
+    """Before fresh checkout, supplement real ChatGPT-side warmup requests that appear in flows:
+    - Homepage / auth/session
     - accounts/check
     - domain-density-eligibility
     - checkout_pricing_config
-    - （可选）home 页面的一组后台接口
+    - (Optional) a set of background interfaces on the home page
 
-    目的不是“证明本地像浏览器”，而是尽量补齐服务端在生成 checkout 前
-    依赖的 cookie / eligibility / pricing 上下文。
-    """
+    The purpose is not to "prove locally like a browser," but to supplement as much as possible
+    the cookie / eligibility / pricing context that the server depends on before generating checkout."""
     if not access_token:
         return {
             "cookie_header": cookie_header,
@@ -1996,14 +1989,14 @@ def _build_abcard_checkout_payload(fresh_cfg: dict) -> dict:
         "billing_country_code": billing_country,
         "billing_currency_code": str(plan_cfg.get("billing_currency") or "USD").upper(),
     }
-    # Plus 是单用户订阅，没有 workspace / seat 概念；后端会拒绝带这些字段的 payload
+    # Plus is single-user subscription with no workspace / seat concept; backend rejects payloads with these fields
     if not is_plus:
         payload["workspace_name"] = str(plan_cfg.get("workspace_name") or "MyWorkspace")
         payload["seat_quantity"] = int(plan_cfg.get("seat_quantity", 5) or 5)
     promo_campaign_id = plan_cfg.get("promo_campaign_id")
     if promo_campaign_id:
         payload["promo_campaign_id"] = promo_campaign_id
-    # 非 US 国家强制指定 processor_entity 为 openai_ie（爱尔兰实体）
+    # Non-US countries must specify processor_entity as openai_ie (Ireland entity)
     processor_entity = plan_cfg.get("processor_entity", "")
     if not processor_entity and billing_country != "US":
         processor_entity = "openai_ie"
@@ -2051,7 +2044,7 @@ def _build_fresh_checkout_body(fresh_cfg: dict, bootstrap: dict) -> dict:
     base.setdefault("plan_name", plan_name)
 
     if is_plus:
-        # Plus 没有 workspace/seat 概念，删掉防止后端拒绝
+        # Plus has no workspace/seat concept, delete to prevent backend rejection
         base.pop("team_plan_data", None)
     else:
         team_plan_data = dict(base.get("team_plan_data") or {})
@@ -2344,7 +2337,7 @@ def generate_fresh_checkout(
         f"cookie={'yes' if cookie_header else 'no'}"
     )
     _log(f"      [fresh] 当前账号: {user_email}  |  planType={plan_type}")
-    # 保存到上下文供后续记录
+    # Save to context for subsequent logging
     fresh_cfg["_chatgpt_email"] = user_email
 
     attempt_specs = []
@@ -2557,12 +2550,12 @@ def generate_fresh_checkout(
                             ),
                             referer_url=canonical_chatgpt_url or provider_url or fresh_url,
                         )
-                        # Promo 优惠不生效就直接 abort，避免真扣款。
-                        # 原项目仅把 check_coupon 当观测信号（README 说明），
-                        # 但这会导致 promo 失效时静默走完支付流程真扣 IDR ~35w。
-                        # 默认行为改成 fail-fast；要绕过设
+                        # Abort immediately if promo discount is ineffective, avoid actual charge.
+                        # Original project only treated check_coupon as observation signal (README notes),
+                        # but this causes silent completion of payment flow and actual charge when promo fails (IDR ~35w).
+                        # Changed default behavior to fail-fast; to bypass set
                         # `fresh_checkout.allow_charge_when_coupon_ineligible=true`
-                        # 或环境变量 `ALLOW_CHARGE_WHEN_COUPON_INELIGIBLE=1`。
+                        # or environment variable `ALLOW_CHARGE_WHEN_COUPON_INELIGIBLE=1`.
                         coupon_state = (coupon_check.get("state") or "").strip().lower()
                         allow_override = bool(fresh_cfg.get("allow_charge_when_coupon_ineligible"))
                         if not allow_override:
@@ -2688,9 +2681,9 @@ def generate_fresh_checkout(
             f"fresh checkout 返回无法解析的 200 响应: {json.dumps(last_response_data, ensure_ascii=False)[:400]}"
         )
 
-    # 提前识别「User is already paid」并落库带 email 标记 → 下次 pay-only
-    # `_paid_or_consumed_emails()` 能匹配到，跳过这个账号不再重试。
-    # 之前所有 raise 都不带 email，导致同一已付费账号反复被选中。
+    # Identify "User is already paid" early and store with email tag → next time pay-only
+    # `_paid_or_consumed_emails()` can match, skip this account and stop retrying.
+    # Previously all raises had no email, causing same paid account to be repeatedly selected.
     error_blob = " | ".join(errors[:8])
     if "user is already paid" in error_blob.lower():
         _email = fresh_cfg.get("_chatgpt_email") or ""
@@ -2780,7 +2773,7 @@ def _fetch_pk_playwright(checkout_url: str) -> str | None:
 
 
 def init_checkout(session: requests.Session, session_id: str, pk: str, locale_profile: dict = None) -> tuple[dict, str, dict]:
-    """返回 (init_resp, stripe_ver, ctx) — ctx 包含后续步骤需要的上下文"""
+    """Return (init_resp, stripe_ver, ctx) — ctx contains context needed for subsequent steps"""
     locale_profile = locale_profile or LOCALE_PROFILES["US"]
     url = f"{STRIPE_API}/v1/payment_pages/{session_id}/init"
     stripe_js_id = str(uuid.uuid4())
@@ -2861,7 +2854,7 @@ def extract_hcaptcha_config(init_resp: dict) -> dict:
 
 
 def extract_passive_captcha_config(init_resp: dict, elements_resp: dict | None = None) -> dict:
-    """优先使用 elements/sessions 返回的 passive_captcha，其次回退到 init 响应。"""
+    """Prioritize passive_captcha returned by elements/sessions, fallback to init response."""
     passive = (elements_resp or {}).get("passive_captcha") or {}
     site_key = passive.get("site_key") or init_resp.get("site_key") or HCAPTCHA_SITE_KEY_FALLBACK
     rqdata = passive.get("rqdata")
@@ -2883,9 +2876,9 @@ def fetch_elements_session(
     stripe_ver: str = STRIPE_VERSION_FULL,
     locale_profile: dict = None,
 ) -> dict:
-    """调用 elements/sessions, 返回响应 dict 并更新 ctx 中的 elements_session_id"""
+    """Call elements/sessions, return response dict and update elements_session_id in ctx"""
     locale_profile = locale_profile or LOCALE_PROFILES["US"]
-    locale_short = ctx.get("locale") or _locale_short(locale_profile)  # HAR: "zh" 而非 "zh-CN"
+    locale_short = ctx.get("locale") or _locale_short(locale_profile)  # HAR: "zh" not "zh-CN"
     stripe_js_id = ctx.get("stripe_js_id", str(uuid.uuid4()))
     currency = (ctx.get("currency") or "usd").lower()
     deferred_amount = ctx.get("checkout_amount")
@@ -2919,12 +2912,12 @@ def fetch_elements_session(
 
     if resp.status_code == 200:
         data = resp.json()
-        # 提取真实的 elements_session_id (如果有)
+        # Extract real elements_session_id (if present)
         real_es_id = data.get("session_id") or data.get("id")
         if real_es_id:
             ctx["elements_session_id"] = real_es_id
             _log(f"      [elements] 真实 session_id: {real_es_id}")
-        # 提取 config_id
+        # Extract config_id
         config_id = data.get("config_id")
         if config_id:
             ctx["elements_session_config_id"] = config_id
@@ -2998,7 +2991,7 @@ def lookup_consumer(
     ctx: dict | None = None,
     init_resp: dict | None = None,
 ):
-    """查询 Stripe Link 消费者会话，优先按 flows 的 cookie-based 链路重放。"""
+    """Query Stripe Link consumer session, prioritize replay by cookie-based link in flows."""
     url = f"{STRIPE_API}/v1/consumers/sessions/lookup"
     ctx = ctx or {}
     init_resp = init_resp or {}
@@ -3126,14 +3119,14 @@ def update_payment_page_address(
     ctx: dict,
     stripe_ver: str = STRIPE_VERSION_FULL,
 ):
-    """模拟浏览器逐字段提交地址/税区信息, 共 6 次 POST"""
+    """Simulate browser field-by-field submission of address/tax info, 6 POSTs total"""
     url = f"{STRIPE_API}/v1/payment_pages/{session_id}"
     addr = card.get("address", {})
     elements_session_id = ctx.get("elements_session_id", _gen_elements_session_id())
     stripe_js_id = ctx.get("stripe_js_id", str(uuid.uuid4()))
     locale = ctx.get("locale") or _locale_short(LOCALE_PROFILES["US"])
 
-    # 基础字段 — 每次 update 都要带
+    # Basic fields — must be included in every update
     base = {
         "elements_session_client[client_betas][0]": "custom_checkout_server_updates_1",
         "elements_session_client[client_betas][1]": "custom_checkout_manual_approval_1",
@@ -3150,10 +3143,10 @@ def update_payment_page_address(
     }
     base.update(ctx.get("elements_options_client") or _elements_options_client_payload())
 
-    # HAR 中的逐字段提交顺序: country → (重复一次) → line1 → city → state → postal_code
+    # Field-by-field submission order in HAR: country → (repeat once) → line1 → city → state → postal_code
     address_steps = [
         {"tax_region[country]": addr.get("country", "US")},
-        {},  # 重复提交 (无新字段, 模拟用户切换焦点)
+        {},  # Repeated submission (no new fields, simulating user focus switching)
         {"tax_region[line1]": addr.get("line1", "")},
         {"tax_region[city]": addr.get("city", "")},
         {"tax_region[state]": addr.get("state", "")},
@@ -3176,7 +3169,7 @@ def update_payment_page_address(
         if resp.status_code != 200:
             _log(f"      [address] step {step_idx + 1} 返回 {resp.status_code}, 继续 ...")
 
-        # 模拟人类输入间隔 (2-5 秒)
+        # Simulate human input interval (2-5 seconds)
         time.sleep(random.uniform(2.0, 4.5))
 
 def send_telemetry(
@@ -3185,7 +3178,7 @@ def send_telemetry(
     session_id: str,
     ctx: dict,
 ):
-    """向 r.stripe.com/b 发送遥测事件, 模拟 stripe.js 行为上报"""
+    """Send telemetry events to r.stripe.com/b, simulating stripe.js behavior reporting"""
     url = "https://r.stripe.com/b"
     muid = ctx.get("muid", "")
     sid = ctx.get("sid", "")
@@ -3220,7 +3213,7 @@ def send_telemetry_batch(
     ctx: dict,
     phase: str = "init",
 ):
-    """按阶段批量发送遥测事件"""
+    """Batch-send telemetry events by phase"""
     events_map = {
         "init": ["checkout.init", "elements.create", "payment_element.mount"],
         "address": ["address.update", "address.focus", "address.blur"],
@@ -3245,7 +3238,7 @@ def submit_apata_fingerprint(
 ):
 
 
-    # 1) POST acs-method.apata.io/v1/houston/method — 提交 threeDSMethodData
+    # 1) POST acs-method.apata.io/v1/houston/method — submit threeDSMethodData
     _log("      [apata] POST houston/method ...")
     method_data = base64.b64encode(json.dumps({
         "threeDSServerTransID": three_ds_server_trans_id,
@@ -3271,9 +3264,9 @@ def submit_apata_fingerprint(
 
     time.sleep(random.uniform(0.5, 1.0))
 
-    # 2) POST acs-method.apata.io/v1/RecordBrowserInfo — 设备指纹上报
+    # 2) POST acs-method.apata.io/v1/RecordBrowserInfo — device fingerprint reporting
     _log("      [apata] POST RecordBrowserInfo ...")
-    # 生成 possessionDeviceId (localStorage acsRbaDeviceId 模拟)
+    # Generate possessionDeviceId (simulate localStorage acsRbaDeviceId)
     possession_device_id = ctx.get("apata_device_id") or str(uuid.uuid4())
     ctx["apata_device_id"] = possession_device_id
 
@@ -3304,12 +3297,12 @@ def submit_apata_fingerprint(
 
     time.sleep(random.uniform(0.5, 1.0))
 
-    # 3) GET rba.apata.io/xxx.js — 模拟 RBA profile 脚本加载
+    # 3) GET rba.apata.io/xxx.js — simulate RBA profile script loading
     _log("      [apata] GET rba profile script ...")
     rba_session_id = ctx.get("rba_session_id") or str(uuid.uuid4())
     ctx["rba_session_id"] = rba_session_id
     try:
-        # HAR 中的 URL 格式: rba.apata.io/<random>.js?<random_param>=<org_id>&<random_param>=<session_id>
+        # URL format in HAR: rba.apata.io/<random>.js?<random_param>=<org_id>&<random_param>=<session_id>
         rba_script_name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16)) + ".js"
         rba_param1 = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
         rba_param2 = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
@@ -3319,10 +3312,10 @@ def submit_apata_fingerprint(
     except Exception as e:
         _log(f"      [apata] rba profile 异常: {e}")
 
-    # 4) 模拟 aa.online-metrix.net CONNECT (WebRTC beacon 不可模拟, 仅日志标记)
+    # 4) Simulate aa.online-metrix.net CONNECT (WebRTC beacon cannot be simulated, log marker only)
     _log("      [apata] online-metrix beacon (WebRTC, 已跳过 — 无法在 requests 中模拟)")
 
-    # 总等待: 让 Apata 有时间处理指纹结果 (HAR 中这个窗口约 8-12 秒)
+    # Total wait: give Apata time to process fingerprint results (this window in HAR is approximately 8-12 seconds)
     wait = random.uniform(5.0, 8.0)
     _log(f"      [apata] 等待指纹处理完成 ({wait:.1f}s) ...")
     time.sleep(wait)
@@ -3333,7 +3326,7 @@ def solve_hcaptcha(
     max_retries: int = 3,
     session: requests.Session | None = None,
 ) -> tuple[str, str]:
-    """返回 (token, ekey) 元组"""
+    """Return (token, ekey) tuple"""
     api_url = (captcha_cfg.get("api_url") or "").rstrip("/") or "https://YOUR_CAPTCHA_PROVIDER"
     client_key = captcha_cfg.get("api_key") or captcha_cfg.get("client_key", "")
     site_key = hcaptcha_config["site_key"]
@@ -3347,7 +3340,7 @@ def solve_hcaptcha(
 
         _log(f"      解 hCaptcha (siteKey: {site_key[:20]}...)")
 
-        # 创建 1 个任务
+        # Create 1 task
         task_body = {
             "type": "HCaptchaTaskProxyless",
             "websiteURL": website_url,
@@ -3402,7 +3395,7 @@ def solve_hcaptcha(
                 _log_raw(f"      solution keys: {list(solution.keys())}")
                 _log_raw(f"      solution full: {json.dumps(solution, ensure_ascii=False)[:500]}")
                 token = solution["gRecaptchaResponse"]
-                # eKey 可能在不同字段名下
+                # eKey may be under different field names
                 ekey = solution.get("eKey", "") or solution.get("respKey", "") or solution.get("ekey", "")
                 solved_user_agent = solution.get("userAgent", "")
                 if solved_user_agent and solved_user_agent != USER_AGENT:
@@ -3698,11 +3691,10 @@ def solve_stripe_hcaptcha_in_browser(
     verify_url: str = "",
     verify_form_base: dict | None = None,
 ) -> tuple[str, str, dict | None]:
-    """通过 Stripe 自带 HCaptcha 包装页获取 token。
+    """# Retrieve token through Stripe's built-in hCaptcha wrapper page.
 
-    - `is_invisible=true` 时优先用于 passive captcha，通常希望浏览器自动执行后直接回传 token
-    - `is_invisible=false` 时用于 challenge captcha，必要时可人工处理
-    """
+    - When `is_invisible=true`, prioritized for passive captcha, usually the browser auto-executes and returns the token directly
+    - When `is_invisible=false`, used for challenge captcha, manual intervention possible if needed"""
     browser_cfg = browser_cfg or {}
     timeout_ms = int(browser_cfg.get("timeout_ms", 5 * 60 * 1000))
     headless = bool(browser_cfg.get("headless", False))
@@ -3710,7 +3702,7 @@ def solve_stripe_hcaptcha_in_browser(
     invisible = bool(hcaptcha_config.get("is_invisible", False))
     external_solver_cfg = dict(browser_cfg.get("external_solver") or {})
     if not invisible and verify_url and not bool(external_solver_cfg.get("enabled")):
-        # Wave F/G: card.py → card/_monolith.py 且 hcaptcha_auto_solver → captcha/solver.py
+        # Wave F/G: card.py → card/_monolith.py and hcaptcha_auto_solver → captcha/solver.py
         bundled_solver = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "captcha", "solver.py",
@@ -3965,11 +3957,11 @@ def solve_stripe_hcaptcha_in_browser(
                 solver_python = str(external_solver_cfg.get("python") or sys.executable)
                 solver_script = str(
                     external_solver_cfg.get("script")
-                    # Wave F/G: card.py → card/_monolith.py 且 hcaptcha_auto_solver → captcha/solver.py
+                    # Wave F/G: card.py → card/_monolith.py and hcaptcha_auto_solver → captcha/solver.py
                     or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "captcha", "solver.py")
                 )
                 if not os.path.isabs(solver_script):
-                    # 相对路径基准: CTF-pay/ (card 的 parent), 因为 user 习惯把 script 写成 captcha/solver.py 之类
+                    # Relative path base: CTF-pay/ (card's parent), because users habitually write scripts like captcha/solver.py
                     solver_script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), solver_script)
                 solver_timeout_s = int(
                     external_solver_cfg.get("timeout_s")
@@ -4369,7 +4361,7 @@ def create_payment_method(
 
         "payment_user_agent": "stripe.js/5412f474d5; stripe-js-v3/5412f474d5; payment-element; deferred-intent",
         "referrer": "https://chatgpt.com",
-        # time_on_page: 模拟从页面加载到提交的真实耗时 (HAR: 31368ms / 249421ms)
+        # time_on_page: simulate real elapsed time from page load to submission (HAR: 31368ms / 249421ms)
         "time_on_page": str(ctx.get("time_on_page", random.randint(25000, 55000))),
         "client_attribution_metadata[client_session_id]": str(uuid.uuid4()),
         "client_attribution_metadata[checkout_session_id]": session_id,
@@ -4411,7 +4403,7 @@ def create_paypal_payment_method(
     stripe_ver: str = STRIPE_VERSION_BASE,
     ctx: dict = None,
 ) -> str:
-    """创建 type=paypal 的 payment_method（不含卡号信息）"""
+    """# Create payment_method of type=paypal (without card number info)"""
     ctx = ctx or {}
     guid = ctx.get("guid") or _gen_fingerprint()[0]
     muid = ctx.get("muid") or _gen_fingerprint()[0]
@@ -4484,14 +4476,13 @@ def _drive_gopay_from_redirect(
     otp_file: str = "",
     session_id: str = "",
 ) -> None:
-    """从 pm-redirects.stripe.com URL 接管 → Midtrans linking → GoPay PIN/OTP → 扣款。
+    """# Takeover from pm-redirects.stripe.com URL → Midtrans linking → GoPay PIN/OTP → debit.
 
-    复用 gopay 模块的 GoPayCharger.run_from_redirect。OTP 从 stdin（CLI）或
-    file-watch（webui runner）取。
-    """
+    Reuse GoPayCharger.run_from_redirect from the gopay module. OTP from stdin (CLI) or
+    file-watch (webui runner)."""
     import sys as _sys
     from pathlib import Path as _Path
-    # Wave F: card.py → card/_monolith.py, here.parent = CTF-pay/ 才能 import gopay 包
+    # Wave F: card.py → card/_monolith.py, here.parent = CTF-pay/ to import gopay package
     here = _Path(__file__).resolve().parent.parent
     if str(here) not in _sys.path:
         _sys.path.insert(0, str(here))
@@ -4529,7 +4520,7 @@ def create_gopay_payment_method(
     stripe_ver: str = STRIPE_VERSION_BASE,
     ctx: dict = None,
 ) -> str:
-    """创建 type=gopay 的 payment_method（印尼 e-wallet, ChatGPT Plus 用）"""
+    """# Create payment_method of type=gopay (Indonesian e-wallet, used by ChatGPT Plus)"""
     ctx = ctx or {}
     guid = ctx.get("guid") or _gen_fingerprint()[0]
     muid = ctx.get("muid") or _gen_fingerprint()[0]
@@ -4596,13 +4587,13 @@ def create_gopay_payment_method(
 
 
 def _solve_arkose_funcaptcha(api_key: str, public_key: str, page_url: str, timeout: int = 120) -> str:
-    """调用远端打码平台解 Arkose FunCaptcha"""
+    """# Call remote captcha-solving platform to solve Arkose FunCaptcha"""
     if not api_key:
         _log("      未配置打码平台 API key，无法解 Arkose")
         return ""
     _log(f"      提交 FunCaptcha 到打码平台 (pk={public_key[:20]}...)")
     import requests as _req
-    # 创建任务
+    # Create task
     create_resp = _req.post(_remote_captcha_url("/createTask"), json={
         "clientKey": api_key,
         "task": {
@@ -4618,7 +4609,7 @@ def _solve_arkose_funcaptcha(api_key: str, public_key: str, page_url: str, timeo
     task_id = result.get("taskId")
     _log(f"      打码平台 taskId: {task_id}")
 
-    # 轮询结果
+    # Poll result
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(5)
@@ -4641,7 +4632,7 @@ def _solve_arkose_funcaptcha(api_key: str, public_key: str, page_url: str, timeo
 
 
 def _generate_fn_sync_data(email_text: str = "", password_text: str = "") -> str:
-    """生成 PayPal fn_sync_data 设备指纹（键盘时序 + 屏幕信息）"""
+    """# Generate PayPal fn_sync_data device fingerprint (keyboard timing + screen info)"""
     def _keystroke_timing(text: str) -> str:
         if not text:
             return ""
@@ -4672,12 +4663,12 @@ def _solve_remote_hcaptcha_paypal(
     page_url: str,
     timeout: int = 120,
 ) -> str:
-    """通过远端打码平台解 PayPal 页面上的 hCaptcha（多策略尝试）"""
+    """# Solve hCaptcha on PayPal page through remote captcha-solving platform (multi-strategy retry)"""
     if not api_key:
         _log("      [hCaptcha] 未配置 captcha API key")
         return ""
 
-    # 多策略尝试：Enterprise → 普通 → 不同 URL
+    # Multi-strategy retry: Enterprise → Normal → different URLs
     strategies = [
         {"type": "HCaptchaTaskProxyless", "websiteURL": page_url,
          "websiteKey": site_key, "isEnterprise": True, "userAgent": USER_AGENT},
@@ -4734,7 +4725,7 @@ def _solve_remote_recaptcha_v3(
     action: str = "LOGIN",
     timeout: int = 60,
 ) -> str:
-    """通过远端打码平台解 Google reCAPTCHA Enterprise v3"""
+    """# Solve Google reCAPTCHA Enterprise v3 through remote captcha-solving platform"""
     if not api_key:
         return ""
     _log(f"      [reCAPTCHA v3] 提交到打码平台 ...")
@@ -4784,12 +4775,12 @@ def _paypal_full_login(
     ctx_id: str,
     recaptcha_key: str,
 ) -> None:
-    """完整 PayPal 登录（邮箱→密码→验证码→2FA）。成功后 http session 带有效 auth cookies。"""
+    """# Complete PayPal login (email → password → verification code → 2FA). After success, http session carries valid auth cookies."""
     paypal_email = paypal_cfg["email"]
     paypal_password = paypal_cfg["password"]
     _log("      ═══════ PayPal 完整登录 ═══════")
 
-    # [L1] POST /signin/load-resource → 建立 x-pp-s session cookie
+    # [L1] POST /signin/load-resource → establish x-pp-s session cookie
     _log("      [L1] load-resource ...")
     lr_data = {
         "_csrf": csrf, "flowId": flow_id,
@@ -4837,7 +4828,7 @@ def _paypal_full_login(
         }, timeout=30,
     )
     _log(f"      [L2] email status={resp_email.status_code}")
-    # 更新 csrf
+    # Update csrf
     try:
         ej = resp_email.json()
         if ej.get("nonce"):
@@ -4848,7 +4839,7 @@ def _paypal_full_login(
         if m:
             csrf = m.group(1)
 
-    # [L3] (可选) reCAPTCHA Enterprise v3 — 提升信任评分
+    # [L3] (optional) reCAPTCHA Enterprise v3 — improve trust score
     if recaptcha_key and captcha_api_key:
         _log("      [L3] 解 reCAPTCHA Enterprise v3 ...")
         grc_token = _solve_remote_recaptcha_v3(
@@ -4900,17 +4891,17 @@ def _paypal_full_login(
     )
     _log(f"      [L4] password status={resp_pwd.status_code}")
 
-    # ── 处理密码提交后的响应 ──
+    # ── Handle response after password submission ──
     request_id = ""
     _hash = ""
     current_resp = resp_pwd
 
     if resp_pwd.status_code == 200:
         pwd_html = resp_pwd.text
-        # debug: 页面标题 + 关键标记
+        # debug: page title + key markers
         _title = re.search(r'<title>(.*?)</title>', pwd_html)
         _log(f"      [L4-debug] title={_title.group(1) if _title else 'N/A'}")
-        # 调试: dump 完整 HTML
+        # debug: dump full HTML
         try:
             with open("/tmp/paypal_pwd_resp.html", "w", encoding="utf-8") as _df:
                 _df.write(pwd_html)
@@ -4931,12 +4922,12 @@ def _paypal_full_login(
             csrf = m.group(1)
         _log(f"      [L4-debug] requestId={bool(request_id)} hash={bool(_hash)}")
 
-        # 检查是否需要 hCaptcha
+        # Check if hCaptcha is needed
         needs_hcaptcha = has_hcaptcha_tag or bool(request_id)
         if needs_hcaptcha:
             if not captcha_api_key:
                 raise RuntimeError("PayPal 需要 hCaptcha 但未配置验证码 API key")
-            # 提取 sitekey（可能在 HTML 中）
+            # Extract sitekey (may be in HTML)
             hcaptcha_sitekey = ""
             m = re.search(r'data-sitekey="([^"]+)"', pwd_html)
             if m:
@@ -4974,7 +4965,7 @@ def _paypal_full_login(
             )
             _log(f"      [L5] hCaptcha submit status={current_resp.status_code}")
 
-    # ── 跟随重定向链 ──
+    # ── Follow redirect chain ──
     for _ in range(10):
         if current_resp.status_code not in (301, 302, 303, 307, 308):
             break
@@ -4989,7 +4980,7 @@ def _paypal_full_login(
     current_url = getattr(current_resp, "url", "") or ""
     current_html = current_resp.text
 
-    # ── 处理 2FA (authflow) ──
+    # ── Handle 2FA (authflow) ──
     if "/authflow" in current_url or "authflow" in current_html[:5000]:
         _log("      [L6] 进入 2FA 流程 ...")
         af_csrf = ""
@@ -5041,14 +5032,14 @@ def _paypal_full_login(
         except Exception:
             pass
 
-        # 获取 OTP
+        # Fetch OTP
         _log("      [L6-2] 等待 PayPal OTP ...")
         otp = _fetch_paypal_otp(paypal_cfg, timeout=90)
         if not otp:
             raise RuntimeError("PayPal 2FA OTP 获取失败")
         _log(f"      [L6-2] OTP: {otp}")
 
-        # 提交 OTP
+        # Submit OTP
         answer_body = {
             "_csrf": af_csrf,
             "anw_sid": af_sid,
@@ -5083,7 +5074,7 @@ def _paypal_full_login(
         except Exception:
             _log("      [L6-3] 无法解析 OTP 响应，继续")
 
-        # 回到 signin/return
+        # Return to signin/return
         _log("      [L6-4] signin/return ...")
         resp_return = http.get(
             f"https://www.paypal.com/signin/return?flowFrom=anw-stepup&ctxId={ctx_id}",
@@ -5095,7 +5086,7 @@ def _paypal_full_login(
 
 
 def _safe_screenshot(page, path: str):
-    """取截图，失败不影响主流程"""
+    """# Take screenshot, failure does not affect main flow"""
     try:
         page.screenshot(path=path, timeout=5000)
     except Exception:
@@ -5104,18 +5095,17 @@ def _safe_screenshot(page, path: str):
 
 def _fetch_openai_login_otp(target_email: str, timeout: int = 180,
                             issued_after: float | None = None) -> str:
-    """取 OpenAI 登录 OTP。
+    """# Retrieve OpenAI login OTP.
 
-    - Outlook 池邮箱：走 outlook_accounts 里保存的 refresh_token/client_id，
-      用 IMAP XOAUTH2 纯协议收码。
-    - catch-all 域名邮箱：走 CF Email Worker → KV。
+    - Outlook pool mailbox: use refresh_token/client_id saved in outlook_accounts,
+      retrieve code via IMAP XOAUTH2 pure protocol.
+    - catch-all domain mailbox: go through CF Email Worker → KV.
 
-    之前这里只走 CF KV，导致 @outlook.com 补 RT 卡到 180s 超时。
-    返回空串表示超时或接码配置缺失。
-    """
+    Previously this only went through CF KV, causing @outlook.com RT supplement to timeout at 180s.
+    Return empty string for timeout or missing code retrieval config."""
     target = (target_email or "").strip().lower()
-    # Outlook 池账号已被 mark used，但 outlook_accounts 里仍保留 IMAP OAuth2
-    # 凭证。先查同 email / chatgpt_email，命中就不能走 CF KV。
+    # Outlook pool account already marked used, but IMAP OAuth2 credentials still retained in outlook_accounts.
+    # Check same email / chatgpt_email first, if hit cannot go through CF KV.
     try:
         with get_db()._conn() as c:
             row = c.execute(
@@ -5162,7 +5152,7 @@ def _fetch_openai_login_otp(target_email: str, timeout: int = 180,
     except Exception as e:
         _log(f"      [RT-OTP] 查询 Outlook 池凭证异常，回退 CF KV: {e}")
 
-    # 非 Outlook 池账号：从 CF KV 取 OpenAI 登录 OTP（worker 已替代 IMAP→QQ 转发链路）。
+    # Non-Outlook pool account: retrieve OpenAI login OTP from CF KV (worker has replaced IMAP→QQ forwarding chain).
     try:
         from mail.cf_kv import CloudflareKVOtpProvider  # Wave H: cf_kv_otp_provider.py → mail/cf_kv.py
     except ImportError as e:
@@ -5216,17 +5206,15 @@ def _codex_oauth_client_id_from_config(cfg: dict) -> str:
 def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: dict,
                                           proxy_url: str = "",
                                           oauth_client_id: str = "") -> str:
-    """
-    支付成功后重新登录换 refresh_token。
-    流程：
-      1. Camoufox 打开 Codex authorize URL
-      2. 重定向到 auth.openai.com/log-in
-      3. 填邮箱 → 继续 → 填密码 → 继续
-      4. 可能触发 Turnstile (Camoufox 自动过) / OTP (IMAP 取)
-      5. workspace/select (选择默认 workspace)
-      6. 自动 authorize Codex client → localhost callback
-      7. POST /oauth/token 换 refresh_token
-    """
+    """# After successful payment, re-login to exchange refresh_token.
+    Flow:
+      1. Camoufox opens Codex authorize URL
+      2. Redirect to auth.openai.com/log-in
+      3. Fill email → Continue → Fill password → Continue
+      4. May trigger Turnstile (Camoufox auto-pass) / OTP (IMAP fetch)
+      5. workspace/select (select default workspace)
+      6. Auto authorize Codex client → localhost callback
+      7. POST /oauth/token exchange refresh_token"""
     import base64 as _b64
     import hashlib as _hashlib
     import secrets as _secrets
@@ -5291,7 +5279,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
         ) as ctx:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
-            # localhost 拦截
+            # localhost interception
             def _intercept(route):
                 url = route.request.url
                 if "localhost:1455" in url and "code=" in url:
@@ -5304,7 +5292,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                     except Exception: pass
             page.route("http://localhost:1455/**", _intercept)
 
-            # [1] goto Codex authorize → 触发登录
+            # [1] goto Codex authorize → trigger login
             _log("      [RT] 打开 Codex authorize URL ...")
             try:
                 page.goto(auth_url, wait_until="domcontentloaded", timeout=30000)
@@ -5313,7 +5301,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
             time.sleep(3)
             _log(f"      [RT] 当前 URL: {page.url[:120]}")
 
-            # [2] 填邮箱
+            # [2] fill email
             email_submitted_ts = time.time()
             try:
                 page.wait_for_selector('input[type="email"], input[name="email"]',
@@ -5335,7 +5323,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                 _log(f"      [RT] 邮箱填写失败: {e}")
                 return ""
 
-            # [3] 填密码（OpenAI 现在很多场景走 passwordless，没密码框就跳过到 OTP）
+            # [3] fill password (OpenAI now has many scenarios with passwordless, skip to OTP if no password field)
             try:
                 page.wait_for_selector('input[type="password"]', state="visible", timeout=20000)
                 pwd_input = page.query_selector('input[type="password"]:visible')
@@ -5353,10 +5341,10 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                 _log(f"      [RT] 密码框超时（passwordless 路径），跳过到 OTP 等待: {str(e)[:80]}")
                 _safe_screenshot(page, "/tmp/rt_pwd_skip.png")
 
-            # [4] 处理 OTP / Turnstile / 各种中间页
+            # [4] handle OTP / Turnstile / various intermediate pages
             _log(f"      [RT] 密码后 URL: {page.url[:120]}")
             _safe_screenshot(page, "/tmp/rt_after_pwd.png")
-            # 最长等 4 分钟看能不能到 localhost callback
+            # wait max 4 minutes to see if we can reach localhost callback
             end = time.time() + 240
             otp_sent_ts = email_submitted_ts
             otp_fetched = False
@@ -5369,13 +5357,13 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                     code_captured["url"] = page.url
                     break
                 cur = page.url
-                # URL 变化或每 15s 打印一次
+                # print every 15s or on URL change
                 now = time.time()
                 if cur != last_url or (now - last_log_ts) > 15:
                     _log(f"      [RT] URL: {cur[:140]}")
                     last_url = cur
                     last_log_ts = now
-                # OTP 页
+                # OTP page
                 if ("/email-otp" in cur or "passwordless" in cur or
                     page.query_selector('input[autocomplete="one-time-code"]') or
                     page.query_selector('input[inputmode="numeric"]')):
@@ -5390,7 +5378,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                             _log("      [RT] OTP 获取超时")
                             return ""
                         _log(f"      [RT] OTP 已获取 (len={len(otp_code)})")
-                        # 填入 OTP
+                        # fill OTP
                         filled = False
                         single = page.query_selector('input[autocomplete="one-time-code"]:visible') or \
                                  page.query_selector('input[inputmode="numeric"]:not([maxlength="1"]):visible')
@@ -5414,7 +5402,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                                     break
                             otp_fetched = True
                             time.sleep(3)
-                # /about-you 页（偶尔会出现）— 跳过
+                # /about-you page (occasionally appears) — skip
                 if "/about-you" in cur:
                     for sel in ['button:has-text("Finish")', 'button:has-text("Continue")',
                                 'button[type="submit"]']:
@@ -5425,7 +5413,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                             except Exception:
                                 pass
                             break
-                # /add-phone 页（OpenAI 风控强制塞这一步）— 找 Skip 按钮跳过
+                # /add-phone page (OpenAI risk control forces this step) — find Skip button and skip
                 if "/add-phone" in cur or "phone-number" in cur:
                     if not getattr(page, "_addphone_dumped", False):
                         try:
@@ -5462,13 +5450,13 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                                 break
                         except Exception:
                             pass
-                    # 找不到 Skip：OpenAI 强制要求 phone 验证，本次 OAuth 必失败。
-                    # 提前 break 避免 240s 空等（caller 通过 callback 没拿到 code 判失败）。
+                    # cannot find Skip: OpenAI requires phone verification, this OAuth must fail.
+                    # break early to avoid 240s idle wait (caller determines failure if no code received via callback).
                     if not skipped and not getattr(page, "_addphone_gaveup", False):
                         page._addphone_gaveup = True
                         _log("      [RT] add-phone 找不到 Skip 按钮，提前放弃避免 240s 空等")
                         break
-                # Codex consent 授权页 — 自动点 Authorize
+                # Codex consent authorization page — auto click Authorize
                 if "/consent" in cur or "/authorize" in cur:
                     if not getattr(page, "_consent_dumped", False):
                         try:
@@ -5510,7 +5498,7 @@ def _exchange_refresh_token_with_session(email: str, password: str, mail_cfg: di
                                 _log(f"      [RT] consent 点击异常 {sel}: {e_c}")
                             break
                     if not clicked:
-                        # 兜底：表单 submit
+                        # fallback: form submit
                         try:
                             ok = page.evaluate("""
                                 () => {
@@ -5579,9 +5567,8 @@ def _paypal_browser_authorize(
     captcha_api_key: str = "",
     proxy_url: str = "",
 ) -> bool:
-    """Playwright 浏览器完成 PayPal 授权全流程（登录+hCaptcha+2FA+授权）。
-    当纯 HTTP 因 hCaptcha 失败时的回退路径。
-    """
+    """Playwright browser completes full PayPal authorization flow (login + hCaptcha + 2FA + authorization).
+    fallback path when pure HTTP fails due to hCaptcha."""
     from playwright.sync_api import sync_playwright
     import subprocess, shutil
 
@@ -5590,7 +5577,7 @@ def _paypal_browser_authorize(
     if not paypal_email or not paypal_password:
         raise RuntimeError("PayPal 浏览器模式需要 email + password")
 
-    # VLM 配置（用于 hCaptcha 视觉识别）
+    # VLM config (for hCaptcha visual recognition)
     vlm_base_url = os.environ.get("CTF_VLM_BASE_URL", "https://YOUR_VLM_ENDPOINT/api")
     vlm_api_key = os.environ.get("CTF_VLM_API_KEY", "")
     vlm_model = os.environ.get("CTF_VLM_MODEL", "gpt-5.4")
@@ -5599,7 +5586,7 @@ def _paypal_browser_authorize(
     has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
     _log(f"      [Browser] display={'yes' if has_display else 'no (virtual)'}")
 
-    # 代理配置 (Camoufox 格式 — socks5 auth 需要 gost 中继)
+    # proxy config (Camoufox format — socks5 auth requires gost relay)
     cf_proxy = None
     if proxy_url:
         from urllib.parse import urlparse as _urlparse
@@ -5625,10 +5612,10 @@ def _paypal_browser_authorize(
     success = False
     from camoufox.sync_api import Camoufox
     from browserforge.fingerprints import Screen
-    # 持久化 profile: 首次成功登录后 PayPal "Remember this computer" 生效
-    # 后续跑批量时跳过 email+password+2FA，直接到 /agreements/approve
-    # 保存在项目目录（/tmp 会重启丢失 + tmpfs 空间有限）
-    # 若遇到损坏/DDC 失败状态，删除 CTF-pay/paypal_cf_persist 即可重置
+    # persistent profile: after first successful login PayPal "Remember this computer" takes effect
+    # skip email + password + 2FA in subsequent batch runs, go directly to /agreements/approve
+    # save in project directory (/tmp loses data on restart + tmpfs has limited space)
+    # if profile is corrupted / DDC fails, delete CTF-pay/paypal_cf_persist to reset
     _persist_profile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paypal_cf_persist")
     os.makedirs(_persist_profile, exist_ok=True)
     profile_existed = any(os.scandir(_persist_profile))
@@ -5644,23 +5631,23 @@ def _paypal_browser_authorize(
         geoip=True,
         locale="zh-CN",
     ) as ctx:
-        # persistent_context 返回的是 BrowserContext 而不是 Browser
+        # persistent_context returns BrowserContext not Browser
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
-        # 不注入旧 cookies — 过期 cookies 会让 DDC 更严格
+        # do not inject old cookies — expired cookies make DDC stricter
 
         try:
-            # [B1] 跟随 Stripe redirect → PayPal
+            # [B1] follow Stripe redirect → PayPal
             _log("      [B1] 打开 PayPal 授权页 ...")
             page.goto(redirect_url, wait_until="domcontentloaded", timeout=60000)
             _log(f"      [B1] URL: {page.url[:100]}")
 
-            # [B-DDC] 等待 DDC 自然通过（Camoufox 反检测指纹 + 全新 profile）
+            # [B-DDC] wait for DDC to naturally pass (Camoufox anti-detection fingerprint + fresh profile)
             time.sleep(3)
             _SLIDER_KWS = ("将滑块", "确认您是人类", "Slide the puzzle",
                             "move the slider", "Move the slider", "滑动到最右")
             def _slider_visible() -> bool:
-                """主文档 + 所有 iframe（尤其 geo.ddc.paypal.com/captcha）里搜滑块关键字。"""
+                """search slider keywords in main document + all iframes (especially geo.ddc.paypal.com/captcha)."""
                 try:
                     pt = page.inner_text("body")[:1500]
                     if any(kw in pt for kw in _SLIDER_KWS):
@@ -5671,7 +5658,7 @@ def _paypal_browser_authorize(
                     u = fr.url or ""
                     if fr.url == page.url:
                         continue
-                    # 只对 DataDome 相关 iframe 取文本（其它 iframe 如 PayPal 内部 about:srcdoc 无意义）
+                    # only get text from DataDome-related iframes (other iframes like PayPal internal about:srcdoc are meaningless)
                     if not ("ddc" in u or "captcha" in u or "datadome" in u):
                         continue
                     try:
@@ -5692,12 +5679,12 @@ def _paypal_browser_authorize(
                 return None
 
             def _try_solve_ddc_slider(attempts: int = 2) -> bool:
-                """尝试拖拽 DataDome 可见滑块。成功返回 True。"""
+                """try to drag visible DataDome slider. return True on success."""
                 for attempt in range(attempts):
                     fr = _find_ddc_iframe()
                     if not fr:
                         return False
-                    # iframe 元素在主文档里的位置
+                    # position of iframe element in main document
                     iframe_el = None
                     for sel in ['iframe[src*="ddc"]', 'iframe[src*="captcha"]',
                                 'iframe[src*="datadome"]']:
@@ -5711,7 +5698,7 @@ def _paypal_browser_authorize(
                         iframe_box = None
                     if not iframe_box:
                         return False
-                    # 滑块 handle：常见 selector
+                    # slider handle: common selectors
                     handle = None
                     for sel in ['.slider', '[role="slider"]',
                                 '.slider-handle', '.sliderIcon',
@@ -5736,15 +5723,15 @@ def _paypal_browser_authorize(
                         hb = None
                     if not hb:
                         return False
-                    # 绝对坐标 = iframe 左上 + handle 在 iframe 内的位置
+                    # absolute coords = iframe top-left + handle position within iframe
                     start_x = iframe_box["x"] + hb["x"] + hb["width"] / 2
                     start_y = iframe_box["y"] + hb["y"] + hb["height"] / 2
-                    # 滑块 track 通常 iframe 宽度减去两侧边距；保守拖到距离 iframe 右边 10px
+                    # slider track usually iframe width minus side margins; conservatively drag to 10px from iframe right edge
                     end_x = iframe_box["x"] + iframe_box["width"] - 10
                     end_y = start_y
                     _log(f"      [B-DDC] 拖拽 solver attempt={attempt+1} "
                           f"start=({start_x:.0f},{start_y:.0f}) → end=({end_x:.0f},{end_y:.0f})")
-                    # 人类化拖动：移近 → 按下 → smoothstep 多段 → 抬起
+                    # humanized drag: approach → press down → smoothstep multiple segments → release
                     try:
                         page.mouse.move(start_x - random.uniform(20, 40),
                                          start_y + random.uniform(-5, 5))
@@ -5804,13 +5791,13 @@ def _paypal_browser_authorize(
                        page.query_selector('#consentButton'):
                         _log("      [B-DDC] DDC 通过 (检测到页面元素)")
                         break
-                    # 中途升级到可见滑块的情况
+                    # mid-process upgrade to visible slider scenario
                     if _slider_visible():
                         _safe_screenshot(page, "/tmp/paypal_ddc_slider.png")
                         _log("      [B-DDC] 等待中升级为可见滑块，中止以便外层换 IP")
                         _log("CARD_DATADOME_SLIDER=1")
                         raise RuntimeError("DataDome 可见滑块，放弃当前 IP")
-                    # 如果出现"重试"按钮，点击它刷新
+                    # if "retry" button appears, click it to refresh
                     retry_btn = page.query_selector('button:has-text("重试")') or \
                                 page.query_selector('button:has-text("Retry")')
                     if retry_btn and retry_btn.is_visible():
@@ -5824,9 +5811,9 @@ def _paypal_browser_authorize(
                     _safe_screenshot(page, "/tmp/paypal_ddc_timeout.png")
                     _log(f"      [B-DDC] DDC 50s 超时: {page.url[:80]}")
 
-            # [B2-onetouch] 持久化 profile 识别账号时 PayPal 会显示 "Continue as XXX" /
-            # WebAuthn 等一键登录入口，此时 login_email input 仍在 DOM 但被隐藏。
-            # 先尝试顺着登录态走一键登录，避免落到 B2 死等 email input 可见。
+            # [B2-onetouch] when persistent profile recognizes account, PayPal shows "Continue as XXX" /
+            # WebAuthn etc one-tap login entry, at this time login_email input is still in DOM but hidden.
+            # try one-tap login first to avoid falling into B2 infinite wait for email input visibility.
             onetouch_clicked = False
             try:
                 onetouch_selectors = [
@@ -5858,7 +5845,7 @@ def _paypal_browser_authorize(
             except Exception as e_det:
                 _log(f"      [B2-onetouch] 检测异常: {e_det}")
 
-            # 一键登录后若仍在 /signin，说明需要进一步认证，继续走 B2
+            # if still on /signin after one-tap login, further authentication is needed, continue with B2
             email_visible = False
             try:
                 ei = page.query_selector('input[name="login_email"]')
@@ -5866,11 +5853,11 @@ def _paypal_browser_authorize(
             except Exception:
                 pass
 
-            # [B2] 需要填写邮箱登录的条件：没走一键登录 + (仍在 signin 页 or email input 可见)
+            # [B2] condition for needing to fill email for login: no one-tap login + (still on signin page or email input visible)
             if (not onetouch_clicked) and ("/signin" in page.url or email_visible):
                 _log("      [B2] 需要登录，填写邮箱 ...")
                 page.wait_for_selector('input[name="login_email"]', state="visible", timeout=15000)
-                # 先关闭 cookie 弹窗（如果有）
+                # Close cookie popup (if present)
                 for cookie_sel in ['button:has-text("接受")', 'button:has-text("Accept")', '#acceptAllButton']:
                     try:
                         cb = page.query_selector(cookie_sel)
@@ -5880,8 +5867,8 @@ def _paypal_browser_authorize(
                             break
                     except Exception:
                         pass
-                # PayPal 记住账号时 email input 会被 disabled + 预填（value 已有），此时 fill 会卡住
-                # 判断：input.disabled 且 value 非空 → 跳过 fill，直接走 Next/Log In
+                # When PayPal remembers account, email input is disabled + pre-filled (value already exists), fill will hang at this point
+                # Judgment: input.disabled and value is non-empty → skip fill, proceed directly to Next/Log In
                 skip_fill = False
                 try:
                     ei_now = page.query_selector('input[name="login_email"]')
@@ -5897,7 +5884,7 @@ def _paypal_browser_authorize(
                     page.fill('input[name="login_email"]', paypal_email)
                     time.sleep(random.uniform(0.8, 1.5))
 
-                # 点击 Next (下一步)
+                # Click Next (next step)
                 _log("      [B2] 点击 Next ...")
                 for btn_sel in ['#btnNext', 'button[name="signin-submit"]',
                                 'button:has-text("下一步")', 'button:has-text("Next")',
@@ -5908,7 +5895,7 @@ def _paypal_browser_authorize(
                         _log(f"      [B2] 点击了: {btn_sel}")
                         break
 
-                # [B3] 等待密码输入框变为可见
+                # [B3] Wait for password input to become visible
                 _log("      [B3] 等待密码输入框 ...")
                 try:
                     page.wait_for_selector(
@@ -5916,7 +5903,7 @@ def _paypal_browser_authorize(
                         state="visible", timeout=30000,
                     )
                 except Exception:
-                    # 可能是单页登录或需要更长等待
+                    # May be single-page login or requires longer wait
                     _log("      [B3] 标准等待超时，尝试等待 URL 变化 ...")
                     time.sleep(5)
                 pwd_input = page.query_selector('input[name="login_password"]:visible') or \
@@ -5939,14 +5926,14 @@ def _paypal_browser_authorize(
                     _safe_screenshot(page, "/tmp/paypal_no_pwd.png")
                     _log("      [B3] 截图: /tmp/paypal_no_pwd.png")
 
-            # 登录后截图 + 状态
+            # Screenshot + status after login
             time.sleep(2)
             _safe_screenshot(page, "/tmp/paypal_after_login.png")
             _log(f"      [B-diag] 登录后 URL: {page.url[:100]}")
             _log(f"      [B-diag] frames: {[f.url[:60] for f in page.frames[:5]]}")
             _log(f"      [B-diag] 截图: /tmp/paypal_after_login.png")
 
-            # [B4] 处理 hCaptcha（如果出现）
+            # [B4] Handle hCaptcha (if present)
             hcaptcha_frame = None
             for _ in range(8):
                 for frame in page.frames:
@@ -5959,24 +5946,24 @@ def _paypal_browser_authorize(
 
             if hcaptcha_frame:
                 _log("      [B4] 检测到 hCaptcha，使用人类模拟点击 ...")
-                # 用真实鼠标移动 + 点击（避免被检测为自动化）
+                # Use real mouse movement + click (avoid detection as automation)
                 clicked = False
                 try:
                     hc_iframes = page.locator('iframe[src*="hcaptcha"]')
                     for i in range(hc_iframes.count()):
                         iframe_el = hc_iframes.nth(i)
                         box = iframe_el.bounding_box()
-                        if box and box["height"] < 200:  # checkbox iframe 较小
-                            # 模拟人类鼠标移动: 先随机位置 → 目标附近 → checkbox
-                            cx = box["x"] + box["width"] * 0.3  # checkbox 在左侧
+                        if box and box["height"] < 200:  # checkbox iframe is relatively small
+                            # Simulate human mouse movement: first random position → near target → checkbox
+                            cx = box["x"] + box["width"] * 0.3  # checkbox is on the left side
                             cy = box["y"] + box["height"] * 0.5
-                            # 先移动到随机位置
+                            # First move to random position
                             page.mouse.move(
                                 random.uniform(100, 800),
                                 random.uniform(200, 500),
                             )
                             time.sleep(random.uniform(0.3, 0.7))
-                            # 分多步移动到目标
+                            # Move to target in multiple steps
                             for step in range(5):
                                 frac = (step + 1) / 5
                                 mx = 400 + (cx - 400) * frac + random.uniform(-3, 3)
@@ -6003,19 +5990,19 @@ def _paypal_browser_authorize(
                             pass
                 time.sleep(5)
 
-                # 等待安全检查完成（最长 60 秒）
+                # Wait for security check to complete (max 60 seconds)
                 _log("      [B4] 等待安全检查完成 ...")
                 captcha_passed = False
                 for wait_sec in range(25):
                     cur = page.url
-                    # 检查是否跳转到 hermes/consent/2FA/pay
+                    # Check if redirected to hermes/consent/2FA/pay
                     if any(kw in cur for kw in ["/webapps/hermes", "/pay/", "/pay?",
                                                  "/authflow", "checkoutweb",
                                                  "chatgpt.com", "pm-redirects"]):
                         captcha_passed = True
                         _log(f"      [B4] 安全检查通过! URL: {cur[:80]}")
                         break
-                    # 检查是否还有 hcaptcha iframe（可能已消失）
+                    # Check if hcaptcha iframe still exists (may have disappeared)
                     if wait_sec > 10:
                         has_hc = any("hcaptcha" in f.url for f in page.frames)
                         if not has_hc and "signin" not in cur:
@@ -6031,11 +6018,11 @@ def _paypal_browser_authorize(
                     time.sleep(1)
 
                 if not captcha_passed:
-                    # 可能触发了视觉挑战或仍在加载
+                    # May have triggered visual challenge or still loading
                     _safe_screenshot(page, "/tmp/paypal_hcaptcha_timeout.png")
                     _log(f"      [B4] 60s 超时，URL: {page.url[:80]}")
                     _log("      [B4] 截图: /tmp/paypal_hcaptcha_timeout.png")
-                    # 检查是否有视觉挑战
+                    # Check if there is a visual challenge
                     has_visual = page.query_selector('.task-image') or \
                                  page.query_selector('[class*="challenge"]')
                     if has_visual:
@@ -6055,13 +6042,13 @@ def _paypal_browser_authorize(
                     if not captcha_passed:
                         raise RuntimeError("PayPal hCaptcha 安全检查超时")
 
-            # [B5] 处理 2FA（如果出现）
+            # [B5] Handle 2FA (if present)
             if "/authflow" in page.url:
                 _log(f"      [B5] 进入 2FA 流程: {page.url[:80]}")
                 _safe_screenshot(page, "/tmp/paypal_2fa.png")
                 time.sleep(3)
 
-                # 确保 Remember this device 勾选（让 trusted device 保存到 profile）
+                # Ensure Remember this device is checked (let trusted device save to profile)
                 for sel in ['input[type="checkbox"]']:
                     cbs = page.query_selector_all(sel)
                     for cb in cbs:
@@ -6072,7 +6059,7 @@ def _paypal_browser_authorize(
                         except Exception:
                             pass
 
-                # 点击 Next 触发 2FA（email 或 push）
+                # Click Next to trigger 2FA (email or push)
                 _log("      [B5] 点击 Next 触发 2FA ...")
                 for sel in ['button:has-text("Next")', 'button:has-text("下一步")',
                             'button[type="submit"]', 'button[class*="primary"]']:
@@ -6084,11 +6071,11 @@ def _paypal_browser_authorize(
                         break
                 _safe_screenshot(page, "/tmp/paypal_2fa_after_next.png")
 
-                # 根据 URL 判断走 email 还是 push
+                # Determine email or push path based on URL
                 cur_url = page.url
                 is_email_flow = "/challenges/email" in cur_url
                 is_push_flow = "/challenges/pn" in cur_url or "/challenges/push" in cur_url
-                # 兼容：URL 还没变时，看页面是否有 OTP 输入框
+                # Compatible: when URL hasn't changed yet, check if page has OTP input box
                 if not is_email_flow and not is_push_flow:
                     if page.query_selector('input[autocomplete="one-time-code"]') or \
                        page.query_selector('input[inputmode="numeric"]'):
@@ -6110,7 +6097,7 @@ def _paypal_browser_authorize(
                         _safe_screenshot(page, "/tmp/paypal_push_timeout.png")
                         raise RuntimeError("PayPal 手机推送 5 分钟未确认")
                 else:
-                    # 邮件 OTP 模式：等 IMAP 收码（3 分钟，PayPal 有时要 2 分钟才发）
+                    # Email OTP mode: wait for IMAP to retrieve code (3 minutes, PayPal sometimes takes 2 minutes to send)
                     _log("      [B5] 等待 PayPal 邮件 OTP (最长 180s) ...")
                     otp = _fetch_paypal_otp(paypal_cfg, timeout=180)
                     if not otp:
@@ -6158,7 +6145,7 @@ def _paypal_browser_authorize(
                     time.sleep(5)
                 _log(f"      [B5] 2FA 完成，当前 URL: {page.url[:80]}")
 
-            # [B6] 等待到达 consent 页面 / hermes
+            # [B6] Wait to reach consent page / hermes
             _log("      [B6] 等待授权页面 ...")
             for wait_i in range(30):
                 cur = page.url
@@ -6169,7 +6156,7 @@ def _paypal_browser_authorize(
                     _log(f"      [B6] 已完成: {cur[:80]}")
                     success = True
                     break
-                # B6 原地转：check 是否卡在 DataDome 可见滑块
+                # B6 stay in place: check if stuck on visible DataDome slider
                 if wait_i >= 5 and "/agreements/approve" in cur:
                     ddc_frame_now = any(("ddc" in (f.url or "") or
                                            "captcha" in (f.url or "") or
@@ -6192,11 +6179,11 @@ def _paypal_browser_authorize(
                 time.sleep(1)
 
             if not success:
-                # [B7] 到达 hermes 页面 — 提取参数，用纯 HTTP 完成 authorize + return
+                # [B7] Reached hermes page — extract parameters, use pure HTTP to complete authorize + return
                 _log("      [B7] 到达 hermes，提取授权参数 ...")
                 hermes_html = page.content()
                 hermes_url = page.url
-                # 提取 cookies 供 HTTP 使用
+                # Extract cookies for HTTP use
                 browser_cookies = ctx.cookies()
                 http_finish = requests.Session()
                 http_finish.headers.update({
@@ -6218,7 +6205,7 @@ def _paypal_browser_authorize(
                         )
                 _log(f"      [B7] 提取了 {len(browser_cookies)} 个 cookies")
 
-                # 提取 fundingOptionId + EC token
+                # Extract fundingOptionId + EC token
                 funding_m = re.search(r'"fundingOptionId"\s*:\s*"([^"]+)"', hermes_html)
                 funding_id = funding_m.group(1) if funding_m else ""
                 ec_token = ""
@@ -6277,14 +6264,14 @@ def _paypal_browser_authorize(
                         try:
                             ret_url = resp_gql.json()[0]["data"]["billing"]["authorize"]["returnURL"]["href"]
                             _log(f"      [B8] returnURL: {ret_url[:200]}")
-                            # 确保 returnURL 有完整参数
+                            # Ensure returnURL has complete parameters
                             if "status=" not in ret_url:
                                 sep = "&" if "?" in ret_url else "?"
                                 ret_url += f"{sep}status=success"
                             if "ba_token=" not in ret_url and ba_token_h:
                                 ret_url += f"&ba_token={ba_token_h}"
                             _log(f"      [B8] 完整 returnURL: {ret_url[:200]}")
-                            # [B9] 用浏览器导航到 returnURL（保留完整 session 上下文）
+                            # [B9] Use browser to navigate to returnURL (preserve complete session context)
                             _log("      [B9] 浏览器导航到 returnURL ...")
                             page.goto(ret_url, wait_until="domcontentloaded", timeout=30000)
                             _log(f"      [B9] 最终 URL: {page.url[:120]}")
@@ -6300,7 +6287,7 @@ def _paypal_browser_authorize(
                     else:
                         _log(f"      [B8] GraphQL 失败: {resp_gql.text[:300]}")
                 else:
-                    # 监听网络请求（捕获 pm-redirects return URL）
+                    # Listen to network requests (capture pm-redirects return URL)
                     captured_return_url = []
                     def _on_request(request):
                         if "pm-redirects" in request.url and "/return/" in request.url:
@@ -6316,7 +6303,7 @@ def _paypal_browser_authorize(
                             btn.click()
                             _log(f"      [B7] 已点击: {sel}")
                             break
-                    # 等待完整重定向链
+                    # Wait for complete redirect chain
                     _log("      [B8] 等待 PayPal → Stripe 重定向链 ...")
                     for wait_b8 in range(90):
                         cur = page.url
@@ -6335,7 +6322,7 @@ def _paypal_browser_authorize(
 
         except Exception as e:
             _log(f"      [Browser] 异常: {e}")
-            # 截图保存
+            # Save screenshot
             try:
                 _safe_screenshot(page, "/tmp/paypal_browser_error.png")
                 _log("      [Browser] 错误截图: /tmp/paypal_browser_error.png")
@@ -6343,7 +6330,7 @@ def _paypal_browser_authorize(
                 pass
             raise
 
-        # 保存 PayPal cookies 供后续纯 HTTP 模式复用
+        # Save PayPal cookies for subsequent pure HTTP mode reuse
         if success:
             try:
                 all_cookies = ctx.cookies()
@@ -6361,26 +6348,26 @@ def _paypal_browser_authorize(
             except Exception as e_save:
                 _log(f"      [Browser] cookies 保存失败: {e_save}")
 
-    # 持久化 profile 保留，下次运行复用（trusted device 生效）
+    # Persist profile retention, reuse on next run (trusted device takes effect)
     if success:
         _log("      [Browser] PayPal 浏览器授权成功!")
     return success
 
 
 def _solve_hcaptcha_via_vlm(page, hcaptcha_frame, vlm_base_url, vlm_api_key, vlm_model, max_rounds=5):
-    """在 Playwright 中使用 VLM 求解 hCaptcha 视觉挑战"""
+    """Use VLM in Playwright to solve hCaptcha visual challenges"""
     import base64
     for round_idx in range(max_rounds):
         _log(f"      [VLM-hCaptcha] 第 {round_idx + 1}/{max_rounds} 轮 ...")
 
-        # 截图 hCaptcha 区域
+        # Screenshot hCaptcha area
         try:
             screenshot_bytes = hcaptcha_frame.locator("body").screenshot(timeout=10000)
         except Exception:
             screenshot_bytes = page.screenshot()
         b64_img = base64.b64encode(screenshot_bytes).decode()
 
-        # 提取 prompt（挑战文字说明）
+        # Extract prompt (challenge text description)
         prompt_text = ""
         try:
             prompt_el = hcaptcha_frame.query_selector(".prompt-text") or \
@@ -6391,7 +6378,7 @@ def _solve_hcaptcha_via_vlm(page, hcaptcha_frame, vlm_base_url, vlm_api_key, vlm
             pass
         _log(f"      [VLM-hCaptcha] prompt: {prompt_text[:60]}...")
 
-        # 调用 VLM
+        # Call VLM
         vlm_prompt = (
             f"This is a hCaptcha visual challenge screenshot. "
             f"The challenge says: '{prompt_text}'. "
@@ -6423,12 +6410,12 @@ def _solve_hcaptcha_via_vlm(page, hcaptcha_frame, vlm_base_url, vlm_api_key, vlm
             vlm_text = vlm_json["choices"][0]["message"]["content"]
             _log(f"      [VLM-hCaptcha] VLM 回复: {vlm_text[:100]}")
 
-            # 解析 tiles
+            # Parse tiles
             m = re.search(r'\{[^}]*"tiles"\s*:\s*\[([0-9, ]+)\]', vlm_text)
             if m:
                 tiles = [int(x.strip()) for x in m.group(1).split(",") if x.strip().isdigit()]
             else:
-                # 兜底: 提取所有数字
+                # Fallback: Extract all numbers
                 tiles = [int(x) for x in re.findall(r'\b([1-9])\b', vlm_text)]
             _log(f"      [VLM-hCaptcha] 选择 tiles: {tiles}")
 
@@ -6440,7 +6427,7 @@ def _solve_hcaptcha_via_vlm(page, hcaptcha_frame, vlm_base_url, vlm_api_key, vlm
             _log(f"      [VLM-hCaptcha] VLM 调用失败: {e}")
             continue
 
-        # 点击对应的 tiles
+        # Click the corresponding tiles
         task_images = hcaptcha_frame.query_selector_all(".task-image") or \
                       hcaptcha_frame.query_selector_all("[class*='image']") or \
                       hcaptcha_frame.query_selector_all(".border-focus")
@@ -6452,7 +6439,7 @@ def _solve_hcaptcha_via_vlm(page, hcaptcha_frame, vlm_base_url, vlm_api_key, vlm
                 task_images[idx].click()
                 time.sleep(random.uniform(0.3, 0.8))
 
-        # 点击 verify/submit
+        # Click verify/submit
         time.sleep(0.5)
         verify_btn = hcaptcha_frame.query_selector('button.verify-button') or \
                      hcaptcha_frame.query_selector('div.button-submit') or \
@@ -6463,11 +6450,11 @@ def _solve_hcaptcha_via_vlm(page, hcaptcha_frame, vlm_base_url, vlm_api_key, vlm
 
         time.sleep(3)
 
-        # 检查是否通过
+        # Check if passed
         still_has_captcha = False
         for frame in page.frames:
             if "hcaptcha" in frame.url:
-                # 检查是否还有 challenge
+                # Check if there are any remaining challenges
                 challenge = frame.query_selector(".challenge-container") or \
                             frame.query_selector("[class*='challenge']")
                 if challenge and challenge.is_visible():
@@ -6540,8 +6527,8 @@ def _paypal_signup_node_rpa(
         "firstName": first_name,
         "lastName": last_name,
         "smsApiUrl": (
-            # Sensitive: 不硬编码 SMS gateway key. 用户从 config.paypal.json::paypal.sms_api_url
-            # 或 PPS_SMS_API_URL / PAYPAL_SMS_API_URL env 注入. 缺失时下游 Node RPA OTP 阶段会报错.
+            # Sensitive: Do not hardcode SMS gateway key. User should retrieve it from config.paypal.json::paypal.sms_api_url
+            # or PPS_SMS_API_URL / PAYPAL_SMS_API_URL env injection. Missing will cause errors in downstream Node RPA OTP phase.
             paypal_cfg.get("sms_api_url")
             or os.environ.get("PPS_SMS_API_URL")
             or os.environ.get("PAYPAL_SMS_API_URL")
@@ -6612,7 +6599,7 @@ def _paypal_signup_node_rpa(
                     line = line.rstrip("\n")
                     stderr_lines.append(line)
                     if line.strip():
-                        # 实时透出 PayPal 页面状态，避免看起来“卡死”。
+                        # Real-time exposure of PayPal page status to avoid appearing "frozen".
                         _log("      " + line[:500])
             except Exception:
                 pass
@@ -6650,8 +6637,8 @@ def _paypal_signup_node_rpa(
         result = json.loads(raw) if raw else {}
     except Exception:
         result = {}
-        # xvfb-run/环境差异下 stderr 可能被混到 stdout；优先读取
-        # helper 落盘的结构化结果，再退回从 stdout 尾部截取 JSON。
+        # Under xvfb-run/environment differences, stderr may be mixed into stdout; prioritize reading
+        # helper to serialize the structured result to disk, then return the JSON extracted from the end of stdout.
         try:
             with open("/tmp/paypal_node_rpa_result.json", "r", encoding="utf-8") as rf:
                 result = json.load(rf)
@@ -6706,21 +6693,21 @@ def _paypal_signup_no_card(
     proxy_url: str = "",
     captcha_api_key: str = "",
 ) -> bool:
-    """纯协议 no-card PayPal 注册分支。
+    """Pure protocol no-card PayPal registration branch.
 
-    入参 redirect_url 可能是 Stripe handoff 给出的 PayPal approve URL：
-    ``https://www.paypal.com/agreements/approve?ba_token=BA-...``；
-    也可能是新版 Checkout 的 ``https://pm-redirects.stripe.com/authorize/...``
-    中转 URL。后者需要先跟一次 302/页面跳转，拿到真正的
-    ``paypal.com/agreements/approve?ba_token=...``。
+    The redirect_url parameter may be a PayPal approve URL provided by Stripe handoff:
+    ``https://www.paypal.com/agreements/approve?ba_token=BA-...``;
+    or may be a redirect URL from the new Checkout version
+    ``https://pm-redirects.stripe.com/authorize/...``.
+    The latter requires following a 302/page redirect first to obtain the real
+    ``paypal.com/agreements/approve?ba_token=...``.
 
-    本函数解出 ba_token 后，调 CTF-reg.paypal_plus_signup 跑完整签名 +
-    SMS OTP + signUpNewMember + authorize，最后 GET 一次 returnURL 完成
-    Stripe 的回调握手。
-    """
+    After extracting the ba_token, this function calls CTF-reg.paypal_plus_signup to complete
+    the full signing + SMS OTP + signUpNewMember + authorize, and finally performs a GET
+    request to returnURL to complete the callback handshake with Stripe."""
     import sys
     _here = os.path.dirname(os.path.abspath(__file__))
-    # Wave F: card.py → card/_monolith.py 多套一层, "../CTF-reg" 变 "../../CTF-reg"
+    # Wave F: card.py → card/_monolith.py add one layer of nesting, "../CTF-reg" becomes "../../CTF-reg"
     _reg_dir = os.path.abspath(os.path.join(_here, "..", "..", "CTF-reg"))
     if _reg_dir not in sys.path:
         sys.path.insert(0, _reg_dir)
@@ -6774,7 +6761,7 @@ def _paypal_signup_no_card(
                 cur = nxt
                 continue
 
-            # 某些网关会返回 200 + JS/meta 跳转；从短 body 里兜底提取。
+            # Some gateways return 200 + JS/meta redirect; fall back to extract from short body.
             try:
                 body = (getattr(r, "text", "") or "")[:12000]
             except Exception:
@@ -6832,9 +6819,9 @@ def _paypal_signup_no_card(
         except Exception:
             orig_host = ""
         if "pm-redirects.stripe.com" in orig_host:
-            # 让 Chromium 从 Stripe authorize 中转页进入 PayPal，而不是 Python
-            # 先用 curl 解到 paypal.com/agreements/approve。这样更接近油猴/RPA
-            # 的真实跳转链，PayPal 自己的前端风控也能看到来源上下文。
+            # Let Chromium enter PayPal from Stripe authorize redirect page, rather than Python
+            # First use curl to request paypal.com/agreements/approve. This is closer to Tampermonkey/RPA approach.
+            # the actual redirect link, PayPal's own frontend risk control can also see the source context.
             rpa_redirect_url = original_redirect_url
             _log("      [node-rpa] 使用原始 Stripe authorize URL 进入浏览器，让 PayPal 自己完成跳转/风控")
         return _paypal_signup_node_rpa(
@@ -7015,12 +7002,11 @@ def _handle_paypal_redirect(
     locale_profile: dict = None,
     ctx: dict = None,
 ) -> bool:
-    """纯 HTTP 完成 PayPal 授权。
-    支持三种路径：
-      0. signup_no_card  — 配置 ``paypal.signup_no_card=True``，纯协议注册新账号
-      1. Cookied Login (ud-token) — 需要 paypal.cookies
-      2. Full Login (邮箱→密码→hCaptcha→2FA) — 需要 email/password/imap
-    """
+    """Pure HTTP PayPal authorization.
+    Supports three paths:
+      0. signup_no_card  — Configure ``paypal.signup_no_card=True``, pure protocol registration for new accounts
+      1. Cookied Login (ud-token) — Requires paypal.cookies
+      2. Full Login (email→password→hCaptcha→2FA) — Requires email/password/imap"""
     ctx = ctx or {}
     proxy_url = str(ctx.get("proxy_url") or "").strip()
     captcha_api_key = ctx.get("captcha_api_key", "")
@@ -7029,7 +7015,7 @@ def _handle_paypal_redirect(
     paypal_password = paypal_cfg.get("password", "")
     ud_return_url = ""
 
-    # 尝试加载浏览器保存的 PayPal cookies
+    # Attempt to load PayPal cookies saved by the browser
     if not paypal_cookies_str:
         try:
             import json as _json
@@ -7042,7 +7028,7 @@ def _handle_paypal_redirect(
         except Exception:
             pass
 
-    # ── 创建 HTTP session (curl_cffi Chrome 指纹) ──
+    # ── Create HTTP session (curl_cffi Chrome fingerprint) ──
     try:
         from curl_cffi.requests import Session as CffiSession
         http = CffiSession(impersonate="chrome136")
@@ -7074,9 +7060,9 @@ def _handle_paypal_redirect(
                 k, v = pair.split("=", 1)
                 http.cookies.set(k.strip(), v.strip(), domain=".paypal.com", path="/")
 
-    # [0] signup_no_card 分支：跳过登录/浏览器，纯协议注册一个新 PayPal 账号并
-    # 直接拿 BA 授权。配置 paypal_cfg["signup_no_card"]=True 或 mode="signup_no_card"
-    # 启用。所需 ba_token 从 redirect_url 解析。
+    # [0] signup_no_card branch: Skip login/browser, pure protocol to register a new PayPal account and
+    # Get BA authorization directly. Configure paypal_cfg["signup_no_card"]=True or mode="signup_no_card"
+    # Enable. Required ba_token is parsed from redirect_url.
     if (
         paypal_cfg.get("signup_no_card")
         or str(paypal_cfg.get("mode") or "").lower() == "signup_no_card"
@@ -7089,10 +7075,10 @@ def _handle_paypal_redirect(
             captcha_api_key=captcha_api_key,
         )
 
-    # [1] 跟随 Stripe redirect → PayPal /agreements/approve
-    # 默认跳过 hermes 纯 HTTP 路径——PayPal 对非浏览器 session 返回 genericError(DEFAULT)，
-    # 实测 2026-04 近期所有 daemon 日志 hermes 100% 失败（55+ 次全 fallback），每次浪费 5-10s。
-    # 如需保留旧路径作为逆向参考，设 SKIP_HERMES_FAST_PATH=0。
+    # [1] Follow Stripe redirect → PayPal /agreements/approve
+    # Skip Hermes pure HTTP path by default——PayPal returns genericError(DEFAULT) for non-browser sessions,
+    # Measured 2026-04: All recent daemon logs show hermes 100% failure (55+ times all fallback), wasting 5-10s each time.
+    # To retain the old path as a backward reference, set SKIP_HERMES_FAST_PATH=0.
     if str(os.environ.get("SKIP_HERMES_FAST_PATH", "1")).lower() in ("1", "true", "yes", "on"):
         if paypal_email and paypal_password:
             _log("      [1] SKIP_HERMES_FAST_PATH=1，直接走浏览器模式")
@@ -7100,7 +7086,7 @@ def _handle_paypal_redirect(
                 redirect_url, paypal_cfg,
                 captcha_api_key=captcha_api_key, proxy_url=proxy_url,
             )
-    # 如果有有效 cookies，尝试纯 HTTP 路径；否则直接走浏览器（跳过必失败的 HTTP）
+    # If there are valid cookies, try the pure HTTP path; otherwise go directly to the browser (skip the HTTP path that will definitely fail)
     if not paypal_cookies_str and paypal_email and paypal_password:
         _log("      [1] 无 PayPal cookies，直接走浏览器模式（跳过 HTTP）")
         return _paypal_browser_authorize(
@@ -7121,7 +7107,7 @@ def _handle_paypal_redirect(
         urllib.parse.urlparse(resp1.url).query
     ).get("ba_token", [""])[0]
 
-    # 提取页面参数
+    # Extract page parameters
     csrf = ""
     for pat in [r'name="_csrf"\s+value="([^"]+)"',
                 r'"csrfNonce"\s*:\s*"([^"]+)"',
@@ -7155,12 +7141,12 @@ def _handle_paypal_redirect(
             break
     _log(f"      [1] csrf={csrf[:20]}... ba_token={ba_token} reCAPTCHA_key={'yes' if recaptcha_key else 'no'}")
 
-    # ── 判断登录状态 ──
+    # ── Determine login status ──
     at_hermes = "/webapps/hermes" in resp1.url
     logged_in = at_hermes
 
     if not at_hermes and paypal_cookies_str:
-        # 尝试 ud-token 快速登录
+        # Attempt ud-token quick login
         _log("      [2-UD] 尝试 cookied login ...")
         ud_data = {
             "_csrf": csrf, "_sessionID": sid, "intent": "checkout",
@@ -7212,15 +7198,15 @@ def _handle_paypal_redirect(
             )
 
     # ── [H] GET hermes ──
-    # 优先使用 ud-token 返回的 URL（包含正确的 EC token）
-    # 构造 hermes URL（必须包含 ba_token + EC token）
+    # Prefer to use the URL returned by ud-token (contains the correct EC token)
+    # Construct hermes URL (must include ba_token + EC token)
     hermes_url = (
         f"https://www.paypal.com/webapps/hermes"
         f"?flow=1-P&ulReturn=true&ba_token={ba_token}"
     )
     if flow_id:
         hermes_url += f"&token={flow_id}"
-    # ud-token returnUrl 可能包含额外参数（如 ssrt/rcache）
+    # ud-token returnUrl may contain additional parameters (such as ssrt/rcache)
     if ud_return_url:
         _log(f"      [H] ud-token returnUrl: {ud_return_url[:100]}")
         if "ba_token=" in ud_return_url and "token=" in ud_return_url:
@@ -7236,7 +7222,7 @@ def _handle_paypal_redirect(
         hermes_final_url = resp_h.url
         _log(f"      [H] hermes status={resp_h.status_code} url={resp_h.url[:80]}")
 
-    # 提取 fundingOptionId + EC token
+    # Extract fundingOptionId + EC token
     funding_m = re.search(r'"fundingOptionId"\s*:\s*"([^"]+)"', hermes_html)
     funding_id = funding_m.group(1) if funding_m else ""
     ec_token = urllib.parse.parse_qs(
@@ -7251,7 +7237,7 @@ def _handle_paypal_redirect(
         _title = re.search(r'<title>(.*?)</title>', hermes_html)
         title_text = _title.group(1) if _title else "N/A"
         _log(f"      [H] hermes title: {title_text}")
-        # hermes 失败（genericError / 需要重新登录）→ 回退到浏览器
+        # hermes failure (genericError / need to re-login) → fall back to browser
         if paypal_email and paypal_password:
             _log("      [H] hermes 失败，回退到浏览器模式 ...")
             return _paypal_browser_authorize(
@@ -7310,7 +7296,7 @@ def _handle_paypal_redirect(
         raise RuntimeError(f"graphql 响应异常: {resp_gql.text[:500]}")
     _log(f"      [G] return URL: {ret_url[:100]}")
 
-    # ── [R] GET return URL → Stripe 完成 ──
+    # ── [R] GET return URL → Stripe completion ──
     _log("      [R] 回调 Stripe ...")
     resp_ret = http.get(ret_url, allow_redirects=True, timeout=30)
     _log(f"      [R] 最终: {resp_ret.url[:100]}  status={resp_ret.status_code}")
@@ -7320,12 +7306,12 @@ def _handle_paypal_redirect(
 
 
 def _fetch_paypal_otp(paypal_cfg: dict, timeout: int = 90) -> str:
-    """从 CF KV 取 PayPal 发送的 2FA OTP。
+    """Retrieve PayPal's 2FA OTP sent to CF KV.
 
-    前提：PayPal 账户绑定的邮箱（`paypal_cfg["email"]`）已迁移到 catch-all
-    域名，PayPal 发的 OTP 邮件就会落进 otp-relay Worker 写到 KV。
-    若仍是 IMAP 邮箱（QQ 等），KV 里取不到，会超时返回空串。
-    """
+    Prerequisite: The email address bound to the PayPal account (`paypal_cfg["email"]`)
+    has been migrated to a catch-all domain. PayPal's OTP emails will then be written
+    to KV by the otp-relay Worker. If it's still an IMAP mailbox (QQ, etc.),
+    the OTP cannot be retrieved from KV and will time out returning an empty string."""
     target = (paypal_cfg.get("email") or "").strip()
     if not target:
         _log("      [PayPal OTP] 缺 paypal.email 配置")
@@ -7376,7 +7362,7 @@ def confirm_payment(
     )
     confirm_mode = ctx.get("confirm_mode", "inline_payment_method_data")
 
-    # 优先从 total_summary.due 获取金额（最准确）
+    # Prioritize retrieving the amount from total_summary.due (most accurate)
     expected_amount = "0"
     total_summary = init_resp.get("total_summary", {})
     if total_summary.get("due") is not None:
@@ -7517,7 +7503,7 @@ def confirm_payment(
 
     confirm_data = resp.json()
 
-    # 从顶层、payment_intent 或 setup_intent 提取 next_action
+    # Extract next_action from top-level, payment_intent or setup_intent
     next_action = confirm_data.get("next_action")
     if not next_action:
         pi_obj = confirm_data.get("payment_intent")
@@ -7537,7 +7523,7 @@ def confirm_payment(
 
 
 def _extract_terminal_payment_failure(intent_obj: dict, source_kind: str = "setup_intent") -> dict | None:
-    """把 Stripe 已经明确给出的终态失败对象标准化，避免继续误判成“要重试/继续轮询”."""
+    """Normalize the final failure object explicitly given by Stripe to avoid continued misjudgment as "need to retry/continue polling"."""
     if not isinstance(intent_obj, dict):
         return None
 
@@ -7601,19 +7587,19 @@ def _handle_3ds(
     locale_profile: dict = None,
     ctx: dict = None,
 ):
-    """处理 3DS2 认证流程 (模拟浏览器: captcha → verify_challenge → Apata指纹 → 3ds2/authenticate)"""
+    """Handle 3DS2 authentication flow (simulate browser: captcha → verify_challenge → Apata fingerprint → 3ds2/authenticate)"""
     locale_profile = locale_profile or LOCALE_PROFILES["US"]
     ctx = ctx or {}
     browser_challenge_cfg = ctx.get("browser_challenge") or {}
     stage_proxy_cfg = ctx.get("stage_proxies") or {}
     raw = json.dumps(confirm_data)
 
-    # 查找 setatt_ (直接在 confirm 响应中)
+    # Search for setatt_ (directly in confirm response)
     source_match = re.search(r"(setatt_[A-Za-z0-9]+)", raw)
     source = source_match.group(1) if source_match else None
     _log(f"      3DS: setatt_ = {source}")
 
-    # 查找 seti_ 和 client_secret
+    # Search for seti_ and client_secret
     seti_match = re.search(r"(seti_[A-Za-z0-9]+)", raw)
     seti_id = seti_match.group(1) if seti_match else None
     _log(f"      3DS: seti_id = {seti_id}")
@@ -7632,7 +7618,7 @@ def _handle_3ds(
     intent_id = None
     intent_client_secret = None
 
-    # 优先从 payment_intent 提取 challenge 信息
+    # Prioritize extracting challenge info from payment_intent
     pi_obj = confirm_data.get("payment_intent")
     if pi_obj and isinstance(pi_obj, dict):
         intent_id = pi_obj.get("id")
@@ -7646,7 +7632,7 @@ def _handle_3ds(
             challenge_verify_url = stripe_js.get("verification_url", "")
             _log(f"      检测到 payment_intent confirmation challenge (site_key: {challenge_site_key[:20]}...)")
 
-    # 如果 payment_intent 没有，再从 setup_intent 提取
+    # If payment_intent has none, then extract from setup_intent
     if not challenge_site_key:
         seti_obj = _find_setup_intent(confirm_data)
         if seti_obj and isinstance(seti_obj, dict):
@@ -7659,7 +7645,7 @@ def _handle_3ds(
                 challenge_verify_url = stripe_js.get("verification_url", "")
                 _log(f"      检测到 setup_intent confirmation challenge (site_key: {challenge_site_key[:20]}...)")
 
-    # 用于 verify_challenge 的 intent 标识（兼容 pi_ 和 seti_）
+    # Intent identifier for verify_challenge (compatible with pi_ and seti_)
     if not intent_id:
         intent_id = seti_id
     if not intent_client_secret:
@@ -7676,7 +7662,7 @@ def _handle_3ds(
         effective_browser_challenge_cfg["proxy_url"] = _build_proxy_url_from_cfg(verify_browser_proxy)
 
     if challenge_site_key and intent_id and intent_client_secret and (captcha_cfg or browser_challenge_cfg.get("enabled")):
-        # 构建 verify_challenge URL
+        # Build verify_challenge URL
         if challenge_verify_url and challenge_verify_url.startswith("/"):
             actual_verify_url = f"{STRIPE_API}{challenge_verify_url}"
         elif intent_id.startswith("pi_"):
@@ -7702,7 +7688,7 @@ def _handle_3ds(
         if browser_challenge_cfg.get("enabled"):
             effective_browser_challenge_cfg = dict(effective_browser_challenge_cfg or {})
             if not effective_browser_challenge_cfg.get("external_solver"):
-                # Wave F/G: card.py → card/_monolith.py 且 hcaptcha_auto_solver → captcha/solver.py
+                # Wave F/G: card.py → card/_monolith.py and hcaptcha_auto_solver → captcha/solver.py
                 bundled_solver = os.path.join(
                     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                     "captcha", "solver.py",
@@ -7790,7 +7776,7 @@ def _handle_3ds(
         verify_status = verify_result.get("status", "unknown")
         _log(f"      verify_challenge 状态: {verify_status}")
 
-        # 检测 captcha challenge 失败（payment_intent 用 last_payment_error，setup_intent 用 last_setup_error）
+        # Detect captcha challenge failure (payment_intent uses last_payment_error, setup_intent uses last_setup_error)
         payment_error = verify_result.get("last_payment_error", {})
         setup_error = verify_result.get("last_setup_error", {})
         error_to_check = payment_error if payment_error else setup_error
@@ -7823,7 +7809,7 @@ def _handle_3ds(
                 "verify_challenge 后 setup_intent 进入 requires_payment_method，需要重新 confirm 获取新的 challenge"
             )
 
-        # verify 成功, 从响应中提取 setatt_
+        # verify success, extract setatt_ from response
         verify_raw = json.dumps(verify_result)
         new_source = re.search(r"(setatt_[A-Za-z0-9]+)", verify_raw)
         if new_source:
@@ -7831,7 +7817,7 @@ def _handle_3ds(
             _log(f"      从 verify 响应中获取 setatt_: {source[:30]}...")
 
     elif seti_id and client_secret and not source:
-        # 没有 challenge 但也没有 setatt_, 尝试原始 verify_challenge
+        # No challenge but no setatt_ either, try raw verify_challenge
         verify_url = f"{STRIPE_API}/v1/setup_intents/{seti_id}/verify_challenge"
         _log(f"      verify_challenge (seti: {seti_id[:30]}...) ...")
         verify_data = {
@@ -7885,7 +7871,7 @@ def _handle_3ds(
         if resp.status_code == 200:
             si_result = resp.json()
             _log(f"      verify_challenge 状态: {si_result.get('status', 'unknown')}")
-            # 检测 captcha challenge 失败
+            # Detect captcha challenge failure
             setup_error = si_result.get("last_setup_error", {})
             if setup_error:
                 err_code = setup_error.get("code", "")
@@ -7958,7 +7944,7 @@ def _handle_3ds(
                     _log(f"      [DUMP] challenge data → /tmp/3ds2_challenge.json")
                     _log(f"      [DUMP] acs_url: {_dump['acs_url']}")
                     _log(f"      [DUMP] creq len: {len(_dump['creq'] or '')}")
-                    # === ACS POST: 触发发卡行 push 到持卡人手机 banking app ===
+                    # === ACS POST: trigger issuer push to cardholder's mobile banking app ===
                     if _dump['acs_url'] and _dump['creq']:
                         try:
                             import requests as _requests
@@ -8074,7 +8060,7 @@ def _record_result(
     error_msg: str = "",
     extra: dict = None,
 ):
-    """把支付结果写入 SQLite 运行时数据库。"""
+    """Write payment results to SQLite runtime database."""
     record = {
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         "status": status,
@@ -8087,7 +8073,7 @@ def _record_result(
     if error_msg:
         record["error"] = error_msg[:200]
     if extra:
-        # 只保留 refresh_token 和 team_account_id，不落盘 access_token/session_token
+        # Only keep refresh_token and team_account_id, do not persist access_token/session_token
         allowed = {"refresh_token", "team_account_id"}
         for k, v in extra.items():
             if k in allowed and v:
@@ -8116,7 +8102,7 @@ def load_config(path: str) -> dict:
             with open(candidate, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
             cfg["_loaded_from"] = candidate
-            # 同步打码平台 base URL 到 module-level，让 helper 函数能拿到
+            # Sync captcha platform base URL to module-level so helper functions can access it
             global _REMOTE_CAPTCHA_BASE_URL
             _REMOTE_CAPTCHA_BASE_URL = (
                 (cfg.get("captcha", {}) or {}).get("api_url") or ""
@@ -8642,7 +8628,7 @@ def run(
     use_gopay: bool = False,
     gopay_otp_file: str = "",
 ):
-    _init_log()  # 初始化日志文件
+    _init_log()  # Initialize log file
 
     cfg = load_config(config_path)
     runtime_cfg = cfg.get("runtime", {})
@@ -8662,7 +8648,7 @@ def run(
         cfg.setdefault("local_mock", {})
         cfg["local_mock"]["enabled"] = True
 
-    # PayPal / GoPay 模式校验
+    # PayPal / GoPay mode validation
     if use_paypal and use_gopay:
         raise ValueError("--paypal 与 --gopay 互斥")
     paypal_cfg = cfg.get("paypal") or {}
@@ -8776,7 +8762,7 @@ def run(
     http.headers.update(_browser_like_session_headers(locale_profile["browser_locale"]))
     stage_proxy_cfg = cfg.get("stage_proxies") or {}
 
-    # 代理配置
+    # Proxy configuration
     proxy_cfg = cfg.get("proxy")
     if proxy_cfg:
         proxy_url = _build_proxy_url_from_cfg(proxy_cfg)
@@ -8793,8 +8779,8 @@ def run(
         reg_guid, reg_muid, reg_sid = register_fingerprint(http)
 
     effective_checkout_input = checkout_input
-    # `fresh_info` 只在 fresh checkout 自动生成/刷新时才会被赋值；
-    # 直接使用已有 promo 长链接且优惠命中时，也需要走到后续 init_ctx 组装。
+    # `fresh_info` is only assigned when auto-generated/refreshed on fresh checkout;
+    # When directly using existing promo long link with discount hit, also need to go through subsequent init_ctx assembly.
     fresh_info = None
     fresh_cfg = cfg.get("fresh_checkout") or {}
     if _should_generate_fresh_checkout(checkout_input, force_fresh):
@@ -8883,14 +8869,14 @@ def run(
         or init_ctx.get("config_id", "")
     )
     if use_paypal:
-        # PayPal 必须走 shared_payment_method 模式（先创建 pm，再 confirm 引用）
+        # PayPal must use shared_payment_method mode (create pm first, then confirm with reference)
         init_ctx["confirm_mode"] = "shared_payment_method"
     elif use_gopay:
         init_ctx["confirm_mode"] = "shared_payment_method"
         init_ctx["payment_method_type"] = "gopay"
     else:
         init_ctx["confirm_mode"] = runtime_cfg.get("confirm_mode", "inline_payment_method_data")
-    # 把 processor_entity 透传给 manual_approval 阶段；默认 openai_llc（IDR/Plus 用）
+    # Pass processor_entity to manual_approval stage; default openai_llc (used for IDR/Plus)
     if fresh_info and fresh_info.get("processor_entity"):
         init_ctx["processor_entity"] = fresh_info["processor_entity"]
     init_ctx["frontend_execution"] = (
@@ -8901,7 +8887,7 @@ def run(
     init_ctx["min_time_on_page_ms"] = int(behavior_cfg.get("min_time_on_page_ms", 0) or 0)
     init_ctx["include_terms_of_service_consent"] = behavior_cfg.get("include_terms_of_service_consent")
     init_ctx["merchant_account_id"] = init_resp.get("account_settings", {}).get("account_id", "")
-    # 全局代理 URL 传入 ctx，供 PayPal Playwright 浏览器使用
+    # Global proxy URL passed to ctx for PayPal Playwright browser use
     if proxy_cfg:
         init_ctx["proxy_url"] = _build_proxy_url_from_cfg(proxy_cfg)
     init_ctx["captcha_api_key"] = captcha_cfg.get("api_key") or captcha_cfg.get("client_key", "")
@@ -8914,7 +8900,7 @@ def run(
         and (not browser_challenge_cfg.get("auto_launch_browser", True) or not has_display)
     )
     if should_autofill_external_solver:
-        # Wave F/G: card.py → card/_monolith.py 且 hcaptcha_auto_solver → captcha/solver.py
+        # Wave F/G: card.py → card/_monolith.py and hcaptcha_auto_solver → captcha/solver.py
         bundled_solver = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "captcha", "solver.py")
         python_candidates = [
             str(os.environ.get("CTFML_PYTHON") or "").strip(),
@@ -9046,7 +9032,7 @@ def run(
         init_ctx["time_on_page"] = measured_time_on_page
         pm_id = ""
         if use_paypal:
-            # PayPal 模式: 创建 type=paypal 的 payment_method，走 shared 模式
+            # PayPal mode: create payment_method with type=paypal, use shared mode
             init_ctx["payment_method_type"] = "paypal"
             with _http_session_stage_proxy(http, stage_proxy_cfg, "payment_method"):
                 pm_id = create_paypal_payment_method(
@@ -9080,7 +9066,7 @@ def run(
                 locale_profile=locale_profile,
             )
 
-        # PayPal 模式: 检测 redirect_to_url 并启动浏览器授权
+        # PayPal mode: detect redirect_to_url and start browser authorization
         if use_paypal or use_gopay:
             next_action = None
             for source_key in ("next_action", "payment_intent", "setup_intent"):
@@ -9091,7 +9077,7 @@ def run(
                         next_action = na
                         break
             if not next_action:
-                # 也检查 _find_setup_intent
+                # Also check _find_setup_intent
                 seti = _find_setup_intent(confirm_data)
                 if seti and isinstance(seti, dict):
                     na = seti.get("next_action")
@@ -9122,10 +9108,10 @@ def run(
                 else:
                     raise RuntimeError("PayPal confirm 返回了 redirect_to_url 但缺少 url 字段")
             else:
-                # manual_approval beta 新流程：
-                #   1. confirm 返回 requires_approval 和 submission_attempt
-                #   2. 调用 ChatGPT 的 /backend-api/payments/checkout/approve 批准
-                #   3. 再 GET /payment_pages/<session>?client_betas=... 取 redirect_to_url
+                # manual_approval beta new flow:
+                #   1. confirm returns requires_approval and submission_attempt
+                #   2. call ChatGPT /backend-api/payments/checkout/approve to approve
+                #   3. then GET /payment_pages/<session>?client_betas=... to get redirect_to_url
                 submission = confirm_data.get("submission_attempt") or {}
                 if submission.get("state") == "requires_approval":
                     _log("      [manual_approval] 调 ChatGPT approve 端点 ...")
@@ -9140,7 +9126,7 @@ def run(
                         ).strip()
                         cookie_header = (auth_cfg.get("cookie_header") or "").strip()
                         processor_entity = init_ctx.get("processor_entity") or "openai_ie"
-                        # 推断: processor_entity 可能在 init_resp 或 fresh_info
+                        # Infer: processor_entity may be in init_resp or fresh_info
                         if not processor_entity:
                             processor_entity = init_resp.get("merchant_of_record_country", "openai_ie")
                         approve_headers = {
@@ -9160,7 +9146,7 @@ def run(
                             "checkout_session_id": session_id,
                             "processor_entity": processor_entity,
                         }
-                        # 创建独立 HTTP session 走 ChatGPT 代理
+                        # Create independent HTTP session for ChatGPT proxy
                         chatgpt_http_for_approve, _transport = _create_chatgpt_http_session(cfg)
                         ar = chatgpt_http_for_approve.post(
                             "https://chatgpt.com/backend-api/payments/checkout/approve",
@@ -9366,14 +9352,14 @@ def run(
     with _http_session_stage_proxy(http, stage_proxy_cfg, "poll"):
         result = poll_result(http, pk, session_id, stripe_ver)
 
-    # 记录结果
+    # Record result
     chatgpt_email = fresh_cfg.get("_chatgpt_email", card.get("email", ""))
     payment_channel = "gopay" if use_gopay else ("paypal" if use_paypal else "card")
     result_state = result.get("state", "unknown")
 
-    # 从数据库查最近一条匹配 email 的账号凭证。
+    # Query the latest account credential matching email from database.
     extra_info = {}
-    # 支付成功时记录 Team workspace account_id
+    # Record Team workspace account_id on successful payment
     try:
         ru = result.get("return_url", "") if isinstance(result, dict) else ""
         if ru:
@@ -9385,15 +9371,15 @@ def run(
     except Exception:
         pass
 
-    # 支付成功才拿 refresh_token（失败不拿）
-    # auto-loop 不需要 RT，可设 SKIP_PAY_RT_EXCHANGE=1 跳过整段。
+    # Only get refresh_token on successful payment (not on failure)
+    # auto-loop doesn't need RT; can set SKIP_PAY_RT_EXCHANGE=1 to skip the entire segment.
     if (
         result_state == "succeeded"
         and chatgpt_email
         and str(os.environ.get("SKIP_PAY_RT_EXCHANGE", "")).strip().lower() not in ("1", "true", "yes", "on")
     ):
         try:
-            # 从 SQLite 主存储取本账号的 password。
+            # Fetch the password for this account from SQLite primary storage.
             import os as _os
             _password = ""
             try:
@@ -9401,7 +9387,7 @@ def run(
             except Exception:
                 _password = ""
 
-            # 加载 CTF-reg/config.paypal-proxy.json 里的 mail 配置（供 IMAP 取 OTP）
+            # Load mail config from CTF-reg/config.paypal-proxy.json (for IMAP to fetch OTP)
             _mail_cfg = {}
             reg_cfg_path = _os.path.join(
                 _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
@@ -9415,9 +9401,9 @@ def run(
                 except Exception as e:
                     _log(f"      [RT] 读取 mail 配置失败: {e}")
 
-            # passwordless_signup 账号 DB 里 password=""——但浏览器流程在
-            # card.py:5240 已有 passwordless 分支（找不到密码框就跳到 OTP 等
-            # 邮件再 callback）。所以 password 不再是硬条件，mail_cfg 够就启动。
+            # passwordless_signup account has password="" in DB — but the browser flow is in
+            # card.py:5240 already has passwordless branch (if password field not found, skip to OTP etc
+            # email callback). So password is no longer a hard requirement; just need mail_cfg to start.
             if _mail_cfg:
                 if _password:
                     _log("      [RT] 支付成功，重新登录拿 refresh_token ...")
@@ -9527,14 +9513,14 @@ def main():
         import traceback as _tb
         err_msg = f"\n[ERROR] {type(e).__name__}: {e}\n{_tb.format_exc()}"
         print(err_msg, file=sys.stderr)
-        # 记录失败
+        # Record failure
         _record_result(
             status="error",
             payment_channel="paypal" if args.paypal else "card",
             config_path=args.config,
             error_msg=str(e),
         )
-        # 也写入日志
+        # Also write to log
         try:
             import traceback
             with open(LOG_FILE, "a", encoding="utf-8") as f:

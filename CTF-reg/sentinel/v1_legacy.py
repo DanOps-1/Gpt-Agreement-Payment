@@ -1,8 +1,6 @@
-"""
-OpenAI Sentinel Token 生成
-基于 https://github.com/leetanshaj/openai-sentinel
-流程: PoW 计算 → 请求 /sentinel/req → 解析 Turnstile → 组装 Token
-"""
+"""OpenAI Sentinel Token Generation
+Based on https://github.com/leetanshaj/openai-sentinel
+Process: PoW Calculation → Request /sentinel/req → Parse Turnstile → Assemble Token"""
 import hashlib
 import json
 import logging
@@ -14,7 +12,7 @@ import pybase64
 
 logger = logging.getLogger(__name__)
 
-# ── 浏览器环境模拟常量 ──
+# ── Browser Environment Simulation Constants ──
 CORES = [8, 16, 24, 32]
 
 CACHED_SCRIPTS = [
@@ -59,7 +57,7 @@ DEFAULT_UA = (
 )
 
 
-# ── PoW 计算 ──
+# ── PoW Calculation ──
 
 def _get_parse_time() -> str:
     now = datetime.now(timezone(timedelta(hours=-5)))
@@ -113,7 +111,7 @@ def _generate_answer(seed: str, diff: str, config: list):
 
 
 def generate_pow_token(user_agent: str = DEFAULT_UA) -> str:
-    """生成 Proof of Work token (gAAAAAC...)"""
+    """Generate Proof of Work token (gAAAAAC...)"""
     config = _build_config(user_agent)
     seed = format(random.random())
     diff = "0fffff"
@@ -126,7 +124,7 @@ def generate_pow_token(user_agent: str = DEFAULT_UA) -> str:
     return token
 
 
-# ── Sentinel Token 完整流程 ──
+# ── Complete Sentinel Token Process ──
 
 def get_sentinel_token(
     session,
@@ -134,17 +132,15 @@ def get_sentinel_token(
     flow: str = "authorize_continue",
     user_agent: str = DEFAULT_UA,
 ) -> str:
-    """
-    完整 Sentinel Token 生成:
-    1. PoW 计算
-    2. 请求 /sentinel/req 获取 Turnstile challenge
-    3. 组装完整 token
-    """
+    """Complete Sentinel Token generation:
+    1. PoW Calculation
+    2. Request /sentinel/req to get Turnstile challenge
+    3. Assemble complete token"""
     # Step 1: PoW
     pow_token = generate_pow_token(user_agent)
     logger.info(f"PoW token 生成完成 (长度: {len(pow_token)})")
 
-    # Step 2: 请求 sentinel/req
+    # Step 2: Request sentinel/req
     payload = json.dumps({
         "p": pow_token,
         "id": device_id,
@@ -176,7 +172,7 @@ def get_sentinel_token(
 
     logger.info(f"Sentinel 响应: token={bool(server_token)}, turnstile_dx={bool(turnstile_dx)}")
 
-    # Step 3: 组装完整 Sentinel Token
+    # Step 3: Assemble Complete Sentinel Token
     sentinel = json.dumps({
         "p": pow_token,
         "t": turnstile_dx,

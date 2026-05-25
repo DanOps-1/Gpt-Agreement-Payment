@@ -1,7 +1,7 @@
-"""Promo 长链接抓取: 用账号 access_token + cookie 调 ChatGPT checkout API,
-拿到命中 promo 的 hosted long URL (https://checkout.stripe.com/c/pay/cs_live_...).
+"""Promo long URL scraping: use account access_token + cookie to call ChatGPT checkout API,
+get the hosted long URL (https://checkout.stripe.com/c/pay/cs_live_...) that hits promo.
 
-不真支付, 只拿 URL 存 DB. 链路:
+Not actually paying, just get URL and store in DB. Flow:
 
   register() / login   →  {email, access_token, cookie_header, device_id}
         ↓
@@ -9,8 +9,7 @@
                           body={entry_point, plan_name, billing_details, promo_campaign}
                           → {checkout_url, checkout_session_id, processor_entity, amount_due, ...}
         ↓
-  db.add_promo_link()  →  存 promo_links 表
-"""
+  db.add_promo_link()  →  store promo_links table"""
 from __future__ import annotations
 
 import json
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def _new_session(impersonate: str = "chrome136"):
-    """curl_cffi session 带 Chrome TLS 指纹 (绕 Cloudflare); 没装则 fallback requests."""
+    """curl_cffi session with Chrome TLS fingerprint (bypass Cloudflare); fallback to requests if not installed."""
     try:
         from curl_cffi.requests import Session as CurlSession  # type: ignore
         return CurlSession(impersonate=impersonate)
@@ -39,11 +38,10 @@ def _build_checkout_body(
     promo_campaign_id: str = "",
     checkout_ui_mode: str = "hosted",
 ) -> dict:
-    """跟 card/_monolith._build_fresh_checkout_body 一致的最小 payload.
+    """Minimal payload consistent with card/_monolith._build_fresh_checkout_body.
 
-    plus 默认 promo plus-1-month-free, team 默认 team-1-month-free.
-    checkout_ui_mode=hosted 让 server 返 Stripe long URL (我们要的); custom 返 in-app 短 URL.
-    """
+    plus defaults to promo plus-1-month-free, team defaults to team-1-month-free.
+    checkout_ui_mode=hosted makes server return Stripe long URL (what we want); custom returns in-app short URL."""
     is_plus = "plus" in plan.lower()
     plan_name = "chatgptplusplan" if is_plus else "chatgptteamplan"
     entry_point = "all_plans_pricing_modal" if is_plus else "team_workspace_purchase_modal"
@@ -81,12 +79,11 @@ def fetch_promo_link(
     chatgpt_account_id: str = "",
     timeout: int = 30,
 ) -> dict:
-    """调 ChatGPT checkout API 拿 hosted long URL.
+    """Call ChatGPT checkout API to get hosted long URL.
 
-    返 dict: {ok, checkout_url, cs_id, processor_entity, plan_name,
+    Return dict: {ok, checkout_url, cs_id, processor_entity, plan_name,
               promo_campaign_id, amount_due_cents, billing_country,
-              billing_currency, raw, error?}
-    """
+              billing_currency, raw, error?}"""
     if not access_token:
         return {"ok": False, "error": "missing access_token"}
 
@@ -148,7 +145,7 @@ def fetch_promo_link(
         or ""
     ).strip()
 
-    # 兜底从 URL 抠 cs_id / processor_entity
+    # Fallback to extract cs_id / processor_entity from URL
     if not cs_id and checkout_url:
         m = re.search(r"(cs_(?:live|test)_[A-Za-z0-9]+)", checkout_url)
         if m:

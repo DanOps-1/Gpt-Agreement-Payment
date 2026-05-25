@@ -1,12 +1,11 @@
 """WhatsApp Web sidecar lifecycle + OTP state reader.
 
-The WebUI exposes one user-facing "WhatsApp 登录" entry. Behind it, this module
+The WebUI exposes one user-facing "WhatsApp Login" entry. Behind it, this module
 manages a single Node sidecar (`webui/whatsapp_relay/index.js`) that logs in to
 WhatsApp Web, watches incoming messages, extracts GoPay OTPs, and writes all
 application state/OTP data into SQLite (`runtime_meta`). The only remaining
 filesystem state is the WhatsApp client auth/session cache required by the
-upstream WhatsApp libraries and the plain process log.
-"""
+upstream WhatsApp libraries and the plain process log."""
 from __future__ import annotations
 
 import base64

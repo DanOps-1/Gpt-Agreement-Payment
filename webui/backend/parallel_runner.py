@@ -1,23 +1,22 @@
-"""并发跑 no_card_plus 多 worker 控制器.
+"""Concurrent execution of no_card_plus with multiple worker controller.
 
-设计:
-  - 用户通过 routes/run_parallel.py 提交 (phone, sms_url) 列表 + 公共参数,
-    每对生成一个独立 worker subprocess.
-  - 每个 worker 跑 scripts/no_card_paypal_plus.py --worker-id w<i>,
-    分别用自己的 phone/sms key, 通过 NCPP_WORKER_ID 隔离 /tmp 文件路径.
-  - DB 层 promo_links.status='in_use' atomic claim 保证 worker 不抢同一行.
-  - 共享同一 IP/gost 中继 (当前阶段); 后续可扩展每 worker 独立 IP rotation.
+Design:
+  - Users submit (phone, sms_url) lists + common parameters via routes/run_parallel.py,
+    each pair generates an independent worker subprocess.
+  - Each worker runs scripts/no_card_paypal_plus.py --worker-id w<i>,
+    using their own phone/sms key respectively, isolating /tmp file paths via NCPP_WORKER_ID.
+  - DB layer promo_links.status='in_use' atomic claim ensures workers don't contend for the same row.
+  - Share the same IP/gost relay (current phase); can extend to independent IP rotation per worker later.
 
-状态机:
+State machine:
   workers: dict[worker_id] = {
     proc, started_at, ended_at, exit_code,
     phone, sms_url, tag, log, current_event,
   }
 
-线程模型:
-  - 每个 worker 一个 stdout drainer 线程, append 到 worker.log (ring buffer 4000 行).
-  - 一个 reaper 线程检查死掉的 child, 设置 exit_code + ended_at.
-"""
+Threading model:
+  - Each worker has one stdout drainer thread, appending to worker.log (ring buffer 4000 lines).
+  - One reaper thread checks dead children, setting exit_code + ended_at."""
 from __future__ import annotations
 
 import os
@@ -36,31 +35,31 @@ from . import settings as s
 _lock = threading.Lock()
 # worker_id -> state dict
 _workers: dict[str, dict] = {}
-# 单次 batch 标记, 方便前端区分 (e.g. 用户点 start 时产生)
+# Single batch marker for convenient frontend distinction (e.g. generated when user clicks start).
 _batch_started_at: Optional[float] = None
 _batch_stopped_at: Optional[float] = None
 
-# Phone OTP 临界区互斥. PayPal 给同号短时间内多次发码会串, 必须串行化.
-# 设计: pre-OTP 阶段 (form fill 之前的所有 nav) 完全并行;
-#       worker 跑到 form submit (即将触发 SMS) 前 acquire(phone);
-#       OTP fill 完毕后 release(phone);
-#       post-OTP (Hermes / Stripe return / ChatGPT landing) 又并行.
-# 同时设 max-hold TTL 防 worker 死掉 leak 锁.
+# Phone OTP critical section mutex. PayPal sends multiple codes to the same number in short time causing garbling, must be serialized.
+# Design: pre-OTP phase (all nav before form fill) is fully concurrent;
+#       worker acquires(phone) before form submit (about to trigger SMS);
+#       after OTP fill completes release(phone);
+#       post-OTP (Hermes / Stripe return / ChatGPT landing) is concurrent again.
+# Also set max-hold TTL to prevent worker crashes from leaking locks.
 _phone_locks: dict[str, dict] = {}  # phone -> {worker_id, acquired_at}
 _phone_locks_mu = threading.Lock()
 _PHONE_LOCK_MAX_HOLD_S = 180.0
 
 
 def _expire_stale_phone_lock(phone: str) -> None:
-    """超过 TTL 强制释放, 防 worker 崩溃 leak. caller 必须已持 _phone_locks_mu."""
+    """Force release beyond TTL to prevent worker crash leaks. Caller must already hold _phone_locks_mu."""
     holder = _phone_locks.get(phone)
     if holder and (time.time() - float(holder.get("acquired_at", 0)) > _PHONE_LOCK_MAX_HOLD_S):
         del _phone_locks[phone]
 
 
 def acquire_phone_lock(phone: str, worker_id: str) -> dict:
-    """Non-blocking try-acquire. 拿到返 {'ok': True}, 占用中返 {'ok': False, 'holder': ...}.
-    同一 worker 重复 acquire 是 idempotent (返 ok)."""
+    """Non-blocking try-acquire. Returns {'ok': True} if acquired, {'ok': False, 'holder': ...} if occupied.
+    Repeated acquire by same worker is idempotent (returns ok)."""
     phone = (phone or "").strip()
     worker_id = (worker_id or "").strip()
     if not phone or not worker_id:
@@ -107,10 +106,10 @@ def list_phone_locks() -> list[dict]:
             for p, h in _phone_locks.items()
         ]
 
-# 每个 worker log 环形 buffer 大小
+# Ring buffer size for each worker log.
 _LOG_LIMIT = 4000
 
-# 一些 stdout 关键字段 → 实时同步到 current_event, 让前端 / status 一眼看到进展
+# Some stdout key fields → real-time sync to current_event, letting frontend/status see progress at a glance.
 _EVENT_PATTERNS = [
     re.compile(r"^\[target\]"),
     re.compile(r"promo_link_id:\s*(\d+)"),
@@ -142,12 +141,12 @@ def _alloc_worker_id(idx: int) -> str:
     base = f"w{idx + 1}"
     if base not in _workers:
         return base
-    # 极端情况名字冲突, 加 pid 后缀
+    # Edge case name collision, append pid suffix.
     return f"w{idx + 1}_{os.getpid()}"
 
 
 def list_workers() -> list[dict]:
-    """返回所有 worker 的快照 (不含完整 log, 只回 tail + 元信息)."""
+    """Return snapshots of all workers (excluding complete logs, only tail + metadata)."""
     out: list[dict] = []
     with _lock:
         for wid, w in _workers.items():
@@ -176,7 +175,7 @@ def get_worker_log(worker_id: str, since_seq: int = 0) -> dict:
         if not w:
             return {"worker_id": worker_id, "lines": [], "next_seq": since_seq}
         log = w.get("log") or []
-        # log 元素是 (seq, line) tuple
+        # Log element is (seq, line) tuple.
         out_lines: list[dict] = []
         next_seq = since_seq
         for seq, line in log:
@@ -213,11 +212,11 @@ def batch_summary() -> dict:
 
 
 def _redact_sms_url(url: str) -> str:
-    """脱敏 SMS API URL: 只显示 host + path, key/token 用 *** 替换."""
+    """Sanitize SMS API URL: only show host + path, key/token replaced with ***."""
     if not url:
         return ""
     s_url = url
-    # 替换 key=xxx 或 token=xxx
+    # Replace key=xxx or token=xxx.
     s_url = re.sub(r"(key|token|api_key|apikey)=[^&]+", r"\1=***", s_url, flags=re.I)
     return s_url[:120]
 
@@ -230,7 +229,7 @@ def _spawn_worker(
     common_args: list[str],
     common_env: dict[str, str],
 ) -> dict:
-    """Spawn 一个 worker subprocess; 返回 worker state dict."""
+    """Spawn a worker subprocess; return worker state dict."""
     script = s.ROOT / "scripts" / "no_card_paypal_plus.py"
     cmd: list[str] = []
     xvfb = shutil.which("xvfb-run")
@@ -246,12 +245,12 @@ def _spawn_worker(
     env.update(common_env)
     env["NCPP_WORKER_ID"] = worker_id
     if sms_url:
-        # 与现有 single-run 一致, 走 env (避免落 ps cmdline)
+        # Consistent with existing single-run, use env (avoid falling into ps cmdline).
         env["PPS_SMS_API_URL"] = sms_url
         env["PAYPAL_SMS_API_URL"] = sms_url
-    # phone-lock 协调地址: Node RPA 在 form submit 前 acquire, OTP fill 后 release.
-    # 同 webui 同 container 内, 用本地 loopback. 若空, Node 端 fallback 到无锁 (单 worker 行为).
-    # 路由 prefix 是 /api/run/parallel (见 routes/run_parallel.py), 不是 /api/parallel.
+    # Phone-lock coordination address: Node RPA acquires before form submit, releases after OTP fill.
+    # Same as webui in same container, use local loopback. If empty, Node side fallback to lock-free (single worker behavior).
+    # Route prefix is /api/run/parallel (see routes/run_parallel.py), not /api/parallel.
     env.setdefault("NCPP_PHONE_LOCK_URL", "http://127.0.0.1:8765/api/run/parallel/phone-lock")
 
     log: list[tuple[int, str]] = []
@@ -301,7 +300,7 @@ def _spawn_worker(
                             break
         except Exception:
             pass
-        # 进程退出, 记 exit_code
+        # Process exits, record exit_code.
         try:
             rc = proc.wait()
         except Exception:
@@ -323,22 +322,21 @@ def start_workers(
     workers_payload: list[dict],
     common: dict | None = None,
 ) -> dict:
-    """启动 N workers. workers_payload 每条 = {phone, sms_url, tag?}.
-    common = 公共 CLI 参数 dict, 可包含:
+    """Start N workers. workers_payload each entry = {phone, sms_url, tag?}.
+    common = common CLI parameter dict, can include:
       config (default = s.PAY_CONFIG_PATH)
       paypal_country, paypal_lang
       signup_retries, otp_timeout, node_rpa_timeout, max_due
       allow_already_paid, allow_full_price
       inventory_mail_source ('any' / 'outlook' / 'catch_all')
-      promo_link_id (空 = 各 worker 自动 claim)
-    """
+      promo_link_id (empty = each worker auto claim)"""
     global _batch_started_at, _batch_stopped_at
 
     if not workers_payload:
         raise ValueError("workers list empty")
     common = common or {}
 
-    # 拒绝重启: 已有 running worker 在的话, 让用户先 stop
+    # Reject restart: if running workers exist, let user stop first.
     with _lock:
         for w in _workers.values():
             proc = w.get("proc")
@@ -349,11 +347,11 @@ def start_workers(
         _workers.clear()
         _batch_started_at = time.time()
         _batch_stopped_at = None
-    # 新 batch 前清残留 phone 锁 (上一批崩溃 leak 的)
+    # Clear residual phone locks before new batch (leaked from previous batch crash).
     with _phone_locks_mu:
         _phone_locks.clear()
 
-    # 构造公共 CLI args (worker-specific 的 phone/sms_url 已经在 _spawn 里处理)
+    # Construct common CLI args (worker-specific phone/sms_url already handled in _spawn).
     config_path = common.get("config") or str(s.PAY_CONFIG_PATH)
     common_args: list[str] = [
         "--config", str(config_path),
@@ -376,7 +374,7 @@ def start_workers(
         common_args.extend(["--inventory-mail-source", src])
 
     common_env: dict[str, str] = {}
-    # 把 sms_url 默认值放 env 兜底 (若 worker 没单独配)
+    # Put sms_url default value in env as fallback (if worker has no individual config).
     default_sms_url = str(common.get("default_sms_url") or "").strip()
     if default_sms_url:
         common_env["PPS_SMS_API_URL"] = default_sms_url
@@ -392,7 +390,7 @@ def start_workers(
             raise ValueError(f"worker[{idx}] sms_url 缺失 (也没默认值)")
         wid_raw = w_cfg.get("worker_id") or ""
         worker_id = _sanitize_worker_id(wid_raw) if wid_raw else _alloc_worker_id(idx)
-        # 错开启动避免同一秒打到 gost / chatgpt API 等共享资源
+        # Stagger startup to avoid hitting shared resources like gost / chatgpt API in the same second.
         if idx > 0:
             time.sleep(float(common.get("stagger_s", 1.0)))
         try:
@@ -418,7 +416,7 @@ def start_workers(
 
 
 def stop_all(grace_s: float = 8.0) -> dict:
-    """SIGTERM all running workers; 等 grace_s 秒后 SIGKILL 残留."""
+    """SIGTERM all running workers; SIGKILL stragglers after grace_s seconds."""
     global _batch_stopped_at
 
     killed: list[str] = []
@@ -446,7 +444,7 @@ def stop_all(grace_s: float = 8.0) -> dict:
             if not still:
                 break
             time.sleep(0.5)
-        # SIGKILL 残留
+        # SIGKILL stragglers.
         for wid, w in items:
             proc = w.get("proc")
             if proc is not None and proc.poll() is None:
@@ -457,7 +455,7 @@ def stop_all(grace_s: float = 8.0) -> dict:
 
     with _lock:
         _batch_stopped_at = time.time()
-    # stop 时一并清 phone 锁防 leak
+    # Clear phone locks together on stop to prevent leaks.
     with _phone_locks_mu:
         _phone_locks.clear()
 
@@ -465,7 +463,7 @@ def stop_all(grace_s: float = 8.0) -> dict:
 
 
 def clear_finished() -> dict:
-    """清掉已退出的 worker entries, 给前端 'reset' 按钮用."""
+    """Clean up already-exited worker entries for frontend 'reset' button."""
     removed: list[str] = []
     with _lock:
         for wid in list(_workers.keys()):

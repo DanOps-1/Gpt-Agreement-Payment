@@ -3,26 +3,26 @@
     <header class="auth-banner">
       <pre class="banner-art">
 ┌─────────────────────────────────────────────────────────────┐
-│  GPT-AGREEMENT-PAYMENT // 身份认证                                       │
-│  输入凭据访问配置向导                                       │
+│  GPT-AGREEMENT-PAYMENT // Identity Authentication                                       │
+│  Enter credentials to access configuration wizard                                       │
 └─────────────────────────────────────────────────────────────┘</pre>
     </header>
 
     <main class="auth-main">
-      <h1 class="auth-headline">$&nbsp;登录<span class="term-cursor"></span></h1>
+      <h1 class="auth-headline">$&nbsp;Login<span class="term-cursor"></span></h1>
 
       <form class="auth-form" @submit.prevent="submit">
         <label class="field-row">
-          <span class="field-tag">用户</span>
+          <span class="field-tag">User</span>
           <input v-model="form.username" type="text" autofocus class="term-input" />
         </label>
         <label class="field-row">
-          <span class="field-tag">密码</span>
+          <span class="field-tag">Password</span>
           <input v-model="form.password" type="password" class="term-input" />
         </label>
 
         <div class="auth-actions">
-          <button class="term-btn" :disabled="loading" type="submit">{{ loading ? '登录中…' : '登录' }}</button>
+          <button class="term-btn" :disabled="loading" type="submit">{{ loading ? 'Logging in…' : 'Login' }}</button>
         </div>
       </form>
     </main>
@@ -40,13 +40,14 @@ const message = useMessage();
 const loading = ref(false);
 const form = ref({ username: "admin", password: "" });
 
-// 二次保险：router beforeEach 出错走 catch 分支会把用户落到 /login，但此时
-// 实例可能根本没初始化过——本组件挂载后再确认一次，没账号就跳 /setup。
+// Secondary safeguard: if router beforeEach throws an error, the catch branch
+// redirects user to /login, but the instance may not be initialized yet.
+// Check again after component mounts; if no account exists, redirect to /setup.
 onMounted(async () => {
   try {
     const r = await api.get<{ initialized: boolean }>("/setup/status");
     if (!r.data.initialized) router.replace("/setup");
-  } catch { /* setup status 拿不到就维持当前页让用户看到登录界面 */ }
+  } catch { /* if setup status is unavailable, stay on current page to show login */ }
 });
 
 async function submit() {
@@ -55,13 +56,14 @@ async function submit() {
     await api.post("/login", form.value);
     router.push("/wizard");
   } catch (e: any) {
-    // 登录失败时再查一次 setup status——如果是因为还没建账号失败，跳 /setup 比
-    // 反复弹"登录失败"友好
+    // On login failure, check setup status again — if login failed because
+    // no account has been created, redirect to /setup instead of repeatedly
+    // showing "Login failed" message
     try {
       const r = await api.get<{ initialized: boolean }>("/setup/status");
       if (!r.data.initialized) { router.replace("/setup"); return; }
     } catch { /* ignore */ }
-    message.error(e.response?.data?.detail || "登录失败");
+    message.error(e.response?.data?.detail || "Login failed");
   } finally { loading.value = false; }
 }
 </script>

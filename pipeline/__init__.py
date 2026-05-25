@@ -1,11 +1,8 @@
-"""pipeline 包：原 pipeline.py 拆出来的注册 → 支付 → team workflow orchestrator。
+"""pipeline package: registration → payment → team workflow orchestrator extracted from original pipeline.py.
 
-Wave C-1: 当前实现仍单文件 (`pipeline._monolith`), 包级 re-export 跟原 `pipeline.py`
-顶层一致, 让 `from pipeline import X` / 老 `python pipeline.py` 仍能跑。
+Wave C-1: Current implementation still single file (`pipeline._monolith`), package-level re-export consistent with original `pipeline.py` top-level, allowing `from pipeline import X` / legacy `python pipeline.py` to still work.
 
-后续 Wave 会把 _monolith 内部的 modes / spawn / infra / oauth / util 分别拆出独立模块,
-__init__.py 这里 re-export 出口保持兼容。
-"""
+Subsequent Waves will extract modes / spawn / infra / oauth / util from inside _monolith into independent modules, __init__.py re-export interface here maintains compatibility."""
 
 from pipeline._monolith import (  # noqa: F401  (re-export)
     main,
@@ -32,7 +29,7 @@ from pipeline._monolith import (  # noqa: F401  (re-export)
     DAEMON_STATE_KEY,
     SECRETS_KEY,
     RUNTIME_DB_FILE,
-    # Wave C re-export 漏: webui/backend/routes/proxy.py 直接 `from pipeline import WebshareClient` 等
+    # Wave C re-export miss: webui/backend/routes/proxy.py directly `from pipeline import WebshareClient` etc
     WebshareClient,
     WebshareQuotaExhausted,
     ProxyPool,
@@ -40,16 +37,16 @@ from pipeline._monolith import (  # noqa: F401  (re-export)
     _swap_gost_relay,
     _probe_gost_upstream,
     _ensure_gost_alive,
-    # team / domain pool (其它 webui 路由偶发会 import)
+    # team / domain pool (other webui routes occasionally import)
     CloudflareDomainProvisioner,
     MultiZoneDomainProvisioner,
     DomainPool,
     TeamSystemClient,
-    # cpa push (webui/backend/routes/inventory.py 调 pipeline._cpa_import_after_team)
+    # cpa push (webui/backend/routes/inventory.py calls pipeline._cpa_import_after_team)
     _cpa_import_after_team,
 )
 
-# 散户面板 (cpa_autofill) 推送 — 跟 _cpa_import_after_team 是两个独立目标:
-# 前者推 cli-proxy-api admin 池, 后者推散户卖号面板
+# retail panel (cpa_autofill) push — independent targets separate from _cpa_import_after_team:
+# former pushes cli-proxy-api admin pool, latter pushes retail account selling panel
 from pipeline.cpa_autofill import upload_accounts as _cpa_autofill_upload  # noqa: F401
 
