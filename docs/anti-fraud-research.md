@@ -1,47 +1,47 @@
-# Anti-Fraud Empirical Research
+# 反欺诈实证研究
 
-[← Back to README](../README.md)
+[← 回到 README](../README.md)
 
-> All data in this document comes from actual production runs. **IPs are masked using RFC 5737 documentation ranges (`203.0.113.0/24`, `198.51.100.0/24`, `192.0.2.0/24`), domains are masked with `*.example`**, account counts and timestamps are unchanged — that is the core of the research itself.
-
----
-
-## Abstract
-
-ChatGPT Team's anti-fraud mechanism operates on two independent layers with very different behavioral characteristics:
-
-1. **Probe layer** (real-time): Account-level / domain-level signals, evaluated in real-time at request time, labeled by **exact IP string** and **domain string**
-2. **Ban layer** (delayed batch): Batch association signals, executed by backend cron jobs (typical windows `00:00 UTC` and `12:00 UTC`), reviewed by packaging `(time_window, payment_account, exit_ip, fingerprint)` tuples
-
-**Single PayPal + single IP + dense registration has ~2% survival rate over 24 hours.** This is not a technical issue, but a hard limit of batch association itself. To significantly improve survival rate, you must reduce batch association: multiple PayPals, multiple ISP/city IPs, time distribution, and fingerprint diversity.
+> 本文所有数据均来自真实生产运行。**IP 用 RFC 5737 文档段（`203.0.113.0/24`、`198.51.100.0/24`、`192.0.2.0/24`）占位，域名用 `*.example` 占位**，账号数和时间未做修改 —— 那是研究本身的核心。
 
 ---
 
-## Experiment 1: 45-Account Batch, 24-Hour Survival Rate
+## 摘要
 
-### Experiment Setup
+ChatGPT Team 的反欺诈机制有两个独立的层面，行为差异很大：
 
-- Single day window (~14 hour span)
-- **Single PayPal account** (PayPal-A)
-- **Single exit IP** (`203.0.113.10`, labeled IP-A)
-- **Seven adjacent subdomains** (5 `*.zone-a.example` + `zone-b.example` + `zone-c.example`)
-- Total creation: **45 accounts**
+1. **Probe 层**（即时）：账号级 / 域级信号，请求时即时评估，按**精确 IP 字符串**和**域字符串**打标
+2. **Ban 层**（延迟批次）：批次关联信号，由后端定时任务跑（典型时间窗 `00:00 UTC` 和 `12:00 UTC`），按 `(时间窗口, 支付账号, 出口 IP, 指纹)` 元组打包审查
 
-### Statistics at Probe Time
+**单 PayPal + 单 IP + 密集注册 24 小时存活率约 2%。** 这不是技术问题，是批次关联本身的 hard limit。要把存活率显著拉起来，必须降低批次关联：多 PayPal、多 ISP/城市 IP、时间散开、指纹多样化。
 
-| Result | Count |
+---
+
+## 实验 1：45 账号批次，24 小时存活率
+
+### 实验设置
+
+- 单日窗口（约 14 小时跨度）
+- **同一个 PayPal 账号**（PayPal-A）
+- **同一个出口 IP**（`203.0.113.10`，记为 IP-A）
+- **七个相邻子域**（5 个 `*.zone-a.example` + `zone-b.example` + `zone-c.example`）
+- 创建总数 **45 个**
+
+### Probe 时统计
+
+| 结果 | 次数 |
 |---|---|
 | `probe=ok` | 32 |
-| `probe=no_permission` | 1 (domain `zone-c.example`, known persistent label) |
-| Other errors | 12 |
+| `probe=no_permission` | 1（`zone-c.example`，已知持久打标的域） |
+| 其他错误 | 12 |
 
-From the probe perspective, it appeared "32 accounts active, 1 domain has issues."
+按 probe 时的视角看，似乎"32 个号生效，1 个域有问题"。
 
-### 24-Hour Survival Rate
+### 24 小时存活率
 
-Direct query on `gpt_accounts` table:
+直接查 `gpt_accounts` 表：
 
-| Domain | Created | Banned | Survived | Avg `user_count` |
+| 域 | 创建数 | BAN | 存活 | 平均 `user_count` |
 |---|---:|---:|---:|---:|
 | `subA1.zone-a.example` | 15 | 15 | 0 | 2.3 |
 | `subA2.zone-a.example` | 8 | 8 | 0 | 4.0 |
@@ -50,192 +50,197 @@ Direct query on `gpt_accounts` table:
 | `subA5.zone-a.example` | 5 | 5 | 0 | 3.6 |
 | `zone-b.example` | 5 | 5 | 0 | 3.6 |
 | `zone-c.example` | 1 | 1 | 0 | 1.0 |
-| **Total** | **45** | **44** | **1** | — |
+| **合计** | **45** | **44** | **1** | — |
 
-**24-hour survival: 1/45 ≈ 2.2%.**
+**24 小时后存活 1/45 ≈ 2.2%。**
 
-### Seat Occupancy Distribution (Banned Accounts)
+### 座位填充率分布（被封号的）
 
-Downstream users filling seats also got banned:
+下游真有用户填进去的号也照样被封：
 
-| user_count | Banned accounts |
+| user_count | 被封号数 |
 |---|---:|
 | 5 / 5 | 17 |
 | 4 / 5 | 13 |
 | 3 / 5 | 4 |
 | 2 / 5 | 1 |
 | 1 / 5 | 8 |
-| Full + 1 invite pending | 1 |
+| 满座 + 1 邀请中 | 1 |
 
-**Seat occupancy is irrelevant to survival.** Bans don't check downstream usage; they check creation-time association.
+**座位填充率跟存活无关。** 封禁不看下游用没用，看的是创建时刻的关联性。
 
-### Bulk BAN Timestamps
+### 批量 BAN 时间戳
 
-Aggregation of `updated_at` field (by ban status change time):
+`updated_at` 字段聚合（按 banned 状态变化时间）：
 
-| Time Window | Concentrated Bans |
+| 时间窗口 | 集中封禁数 |
 |---|---:|
-| 2026-04-19 12:xx UTC | 29 accounts |
-| 2026-04-19 07:xx UTC | 4 accounts |
-| Other scattered | 11 accounts |
+| 2026-04-19 12:xx UTC | 29 个 |
+| 2026-04-19 07:xx UTC | 4 个 |
+| 其他零散 | 11 个 |
 
-**Review runs on fixed cron** (presumed `00:00 UTC` and `12:00 UTC` vicinity). The `07:xx` wave may be another batch review window.
+**审查跑在固定 cron 上**（推测 `00:00 UTC` 和 `12:00 UTC` 附近）。`07:xx` 那波可能是另一个分批审查窗口。
 
-### Survivor Analysis
+### 幸存对照
 
-Only one account survived (`subA3.zone-a.example`, created 4/18 19:03, 5 seats full). **This is very likely review evasion, not genuinely stable.** One account created 5 days earlier (`subA4.zone-a.example`, created 4/14 23:19, 5+1 seats) remains active, suggesting early batches become stable after passing a certain observation period.
+只有一个号活了下来（`subA3.zone-a.example` 4/18 19:03 创建，5 座满）。**这极可能是审查漏网，不是真的稳。** 一个早 5 天创建的号（`subA4.zone-a.example` 4/14 23:19，5+1 座位）至今仍活，说明早批次过了某个观察期反而稳定。
 
 ---
 
-## Experiment 2: IP Dimension Control (Dual Proxy)
+## 实验 2：IP 维度对照（双代理）
 
-### Setup
+### 设置
 
-- Same batch of `*.zone-a.example` subdomain candidates (10 total)
-- Two proxy exit controls:
-  - Proxy X: `203.0.113.10` (NY, ISP-A, AS-XX) — **same IP-A as Experiment 1**
-  - Proxy Y: `203.0.113.20` (VA, ISP-B, AS-YY) — clean IP
-- Same PayPal-A, same Camoufox fingerprint
+- 同一批 `*.zone-a.example` 子域候选（10 个）
+- 两个代理出口对照：
+  - 代理 X：`203.0.113.10`（NY，ISP-A，AS-XX）—— **同实验 1 的 IP-A**
+  - 代理 Y：`203.0.113.20`（VA，ISP-B，AS-YY）—— 干净 IP
+- 同一个 PayPal-A，同一个 Camoufox 指纹
 
-### Results
+### 结果
 
-| Proxy | Exit IP | Probe `ok` Count | Completed | `ok` Rate |
+| 代理 | 出口 IP | Probe `ok` 次数 | 完成数 | `ok` 率 |
 |---|---|---:|---:|---:|
-| X (NY) | `203.0.113.10` | 1 | 7 | **14%** |
-| Y (VA) | `203.0.113.20` | 3 | 3 | **100%** |
+| X（NY） | `203.0.113.10` | 1 | 7 | **14%** |
+| Y（VA） | `203.0.113.20` | 3 | 3 | **100%** |
 
-**Same subdomain `subA3.zone-a.example`: returns `no_perm` from X, returns `ok` from Y.**
+**同一个子域 `subA3.zone-a.example`：从 X 出去 `no_perm`，从 Y 出去 `ok`。**
 
-### Conclusion
+### 结论
 
-**Domain is not the primary factor; IP is.** The probe layer labels by IP.
+**域不是主因，IP 是主因。** Probe 层的打标针对 IP。
 
 ---
 
-## Experiment 3: Same ASN, Different IP
+## 实验 3：同 ASN 不同 IP
 
-### Setup
+### 设置
 
-Switch to proxy Z: `203.0.113.30`, **same ISP (ISP-A), same city (NY), same ASN (AS-XX) as IP-A, but different IP string**.
+切换到代理 Z：`203.0.113.30`，**和 IP-A 同 ISP（ISP-A）、同城市（NY）、同 ASN（AS-XX）**，但 IP 字符串不同。
 
-Re-test the same batch of subdomains immediately.
+立即复测同一批子域。
 
-### Results
+### 结果
 
-| Proxy | Exit IP | Probe `ok` | Completed | `ok` Rate | When `no_perm` Triggered |
+| 代理 | 出口 IP | Probe `ok` | 完成数 | `ok` 率 | 触发 `no_perm` 时机 |
 |---|---|---:|---:|---:|---|
-| X (old NY, labeled) | `203.0.113.10` | 1 | 7 | 14% | Refused on 2nd attempt |
-| **Z (new NY, clean)** | `203.0.113.30` | **4** | **5** | **80%** | **Refused only on 5th attempt** |
+| X（旧 NY，已打标） | `203.0.113.10` | 1 | 7 | 14% | 第 2 次就拒 |
+| **Z（新 NY，干净）** | `203.0.113.30` | **4** | **5** | **80%** | **第 5 次才拒** |
 
-### Conclusion
+### 结论
 
-**Switching to a different IP within the same ISP/city/ASN immediately restores "clean state."**
+**换同 ISP / 同城市 / 同 ASN 内的另一个 IP，立刻恢复"干净状态"。**
 
-→ ChatGPT's labeling granularity is **exact IP string**, not ASN / city / ISP.
+→ ChatGPT 打标粒度是**精确 IP 字符串**，不是 ASN / 城市 / ISP。
 
-### IP Lifespan
+### IP 寿命
 
-Each IP can run approximately **4–5 registrations** before flipping to `no_perm` state (probe starts rejecting on 5th attempt). Recovery methods:
+每个 IP 大约能跑 **4–5 次**注册就会翻到 `no_perm` 状态（第 5 次 probe 开始拒）。恢复办法：
 
-- **Change IP**: Immediate recovery (same ASN is fine, as long as IP string differs)
-- **Wait a few hours**: Natural recovery (reference observation of `subA1.zone-a.example` temporary 2h recovery)
+- **换 IP**：立即恢复（同 ASN 也行，只要 IP 字符串不同）
+- **等几小时**：自然恢复（参考 `subA1.zone-a.example` 短暂 2h 恢复的观察）
 
 ---
 
-## Debunked Early Assumptions
+## 推翻的早期假设
 
-| Early Assumption | Data | Debunked |
+| 早期假设 | 数据 | 推翻 |
 |---|---|---|
-| Anti-fraud granularity is "registration email domain" | Five clean subdomains cleared on same day | ❌ It's batch association, not by-domain |
-| `*.zone-a.example` five subdomains all stable | All five subdomain batches cleared same day | ❌ These five domains' accounts cleared together, all looked "ok" before banning |
-| Same IP + same PayPal + concentrated registration won't trigger anti-fraud (12 consecutive ok) | 24h survival ≈ 2% | ❌ probe=ok is just real-time state |
-| Single day 30+ won't trigger new burn | 45 accounts concentrated ban | ❌ Yes it does, just delayed 12 hours |
-| `probe=no_perm` is domain-level labeling | Same domain returns opposite results under different IPs | ❌ The dominant signal is IP |
+| 反欺诈粒度是"注册邮箱域" | 五个干净子域同日被清 | ❌ 是批次关联，不按域 |
+| `*.zone-a.example` 五个子域全稳 | 五个批次同日被清 | ❌ 这五个域的号同批被清，没被封之前看着都"ok" |
+| 同 IP + 同 PayPal + 集中注册不会触发反欺诈（连续 12 次 ok） | 24h 存活 ≈ 2% | ❌ probe=ok 只是即时态 |
+| 单日 30+ 不会触发新 burn | 45 个号集中被封 | ❌ 会，只是延迟 12 小时 |
+| `probe=no_perm` 是域级打标 | 同域在不同 IP 下结果相反 | ❌ 主导信号是 IP |
 
 ---
 
-## Revised Anti-Fraud Model
+## 修正后的反欺诈模型
 
-### Two Independent Mechanisms```
+### 两层独立机制
+
+```
 ┌─────────────────────────────────────────────────────┐
-│                Probe Layer (Immediate)              │
+│                Probe 层（即时）                     │
 │                                                     │
 │  signal = (egress_ip_string, email_domain_string?)  │
 │  evaluation = at request time                       │
-│  IP lifetime = ~4-5 registrations                   │
-│  domain-level tagging = few domains permanently     │
-│                        unavailable                  │
+│  IP 寿命 = ~4-5 次注册                              │
+│  域级打标 = 少数域永久不可用                        │
 └─────────────────────────────────────────────────────┘
                        ↓
-                registration may succeed
+                  注册可能 ok
                        ↓
 ┌─────────────────────────────────────────────────────┐
-│                Ban Layer (Delayed Batch)            │
+│                Ban 层（延迟批次）                   │
 │                                                     │
 │  signal = (time_window, payment_account,            │
 │            egress_ip, fingerprint, ...)             │
 │  evaluation = scheduled cron @ ~00:00 / 12:00 UTC  │
-│  entire batch correlation → entire batch banned     │
+│  整批关联 → 整批被封                                │
 └─────────────────────────────────────────────────────┘
                        ↓
-                95% death rate next day at dawn
-```# Key Insights
+                次日凌晨 95% 死亡
+```
 
-1. **Probe=ok does not mean stability.** It only means the cohort hasn't been reviewed yet
-2. **Domain-level tagging is rare** (e.g., `zone-c.example`), with narrower applicability than expected
-3. **IP string is the dominant signal at the probe layer**
-4. **Batch association is the dominant signal at the ban layer**, which requires reducing dimension sharing within cohorts to improve
+### 关键认知
 
----
-
-## Engineering Impact
-
-### What existing tools can manage
-
-- ✅ DomainPool + permanent_burned handle probe-layer "persistent-tagged domains"
-- ✅ Webshare API + gost relay handle IP lifespan issues
-- ✅ Multi-zone domain pool handle CF quota + zone-level risk
-
-### What existing tools cannot manage
-
-- ❌ **Next-day mass extinction caused by batch association**: daemon mode with target=20 inventory may drop to 0–1 after a single batch BAN, essentially restarting each night
-- ❌ Domain rotation / on-demand subdomain provisioning are ineffective against "next-day mass extinction"
-
-### Methods to improve 24-hour survival rate
-
-To significantly reduce batch association (ordered by effectiveness):
-
-1. **Multiple PayPal account pool**: 1–3 orders per account, then rotate and stagger timing. This is the strongest signal
-2. **Multiple proxy exit IPs across ISPs / cities**: Different ISPs' actual slots, not just multiple slots from the same proxy vendor
-3. **Time dispersion**: 2–3 per day, spread hours apart, not 30+ in one hour
-4. **Camoufox fingerprint diversification**: `humanize` + different OS/screen profiles
-5. **Lower single PayPal reuse rate**: Reusing the same PayPal for multiple Team subscriptions in short timeframes is itself a strong fraud signal
-
-The current pipeline only does "60–180s jitter staggering" and "multi-domain rotation", **all other dimensions use identical parameters**. This is the root cause of the 2% survival rate.
+1. **Probe=ok 不代表稳定。** 只代表 cohort 还没被审到
+2. **域级打标是少数情况**（如 `zone-c.example`），适用范围比想象中小
+3. **IP 字符串是 probe 层的主导信号**
+4. **批次关联是 ban 层的主导信号**，需要降低 cohort 内的维度共享才能改善
 
 ---
 
-## Directions to be verified
+## 工程层面的影响
 
-The following have insufficient experimental data; left for future researchers:
+### 现有工具能管的
 
-1. **Real ROI of Camoufox fingerprint diversification**: Do different OS/screen profiles truly increase cohort distance?
-2. **PayPal trust decay curve**: Survival rate trajectory after a PayPal runs N orders
-3. **Optimal time dispersion interval**: How much interval between different cohorts is sufficient to be "independent"
-4. **Fingerprint reuse vs IP reuse weight**: Hold other dimensions constant, contrastive testing
-5. **Existence of a "warm-up" path**: Does performing some "normal user" behavior before banning occur reduce closure probability
+- ✅ DomainPool + permanent_burned 处理 probe 层的"持久打标域"
+- ✅ Webshare API + gost 中继处理 IP 寿命问题
+- ✅ 多 zone 域池处理 CF 配额 + zone 级风险
+
+### 现有工具管不了的
+
+- ❌ **批次关联导致的次日大灭绝**：daemon 模式 target=20 的库存在一次批量 BAN 后可能只剩 0–1 个，相当于每晚重新起步
+- ❌ 域轮换 / 按需开通子域对"次日大灭绝"无效
+
+### 提高 24 小时存活率的方法
+
+要显著降低批次关联（按效果排序）：
+
+1. **多 PayPal 账号池**：每个账号 1–3 单后轮换，拉开时间。这是最强信号
+2. **多代理出口 IP，跨 ISP / 跨城市**：不是同一代理商的多个 slot，而是真的不同 ISP
+3. **时间分散**：单日 2–3 个，错开几小时，而不是一小时密集 30+
+4. **Camoufox 指纹多样化**：`humanize` + 不同 OS/屏幕 profile
+5. **降低单 PayPal 复用率**：同一 PayPal 短时间内多次 Team 订阅本身就是强欺诈信号
+
+目前 pipeline 只做到"错开 60–180s 抖动"和"多域轮换"，**其他维度全是同参数**。这是 2% 存活率的根因。
 
 ---
 
-## Reproduction Guide
+## 待验证的方向
 
-To reproduce these experiments:
+下面这几条没有充分实验数据，留给后来人做：
 
-1. Prepare at least 2 proxy exits with different ASNs
-2. Configure daemon mode to run for a week or longer
-3. Query daily the `is_banned` status changes in the `gpt_accounts` table via sqlite3
-4. Key query:```sql
--- Batch characteristics of accounts banned within 24 hours
+1. **Camoufox 指纹多样化的真实 ROI**：不同 OS/屏幕 profile 是否真能拉开 cohort 距离？
+2. **PayPal 信任度衰减**：一个 PayPal 跑过 N 单后存活率变化曲线
+3. **时间分散的最佳间隔**：不同 cohort 之间间隔多久才足够"独立"
+4. **指纹复用 vs IP 复用 哪个权重更高**：固定其他维度，对照测试
+5. **是否存在 "warm-up" 路径**：一个号在 ban 之前先做一些"正常用户"的行为是否能降低被封概率
+
+---
+
+## 复现指引
+
+要复现这些实验：
+
+1. 准备至少 2 个不同 ASN 的代理出口
+2. 配 daemon 模式跑一周以上
+3. 每天用 sqlite3 直查 `gpt_accounts` 表的 `is_banned` 状态变化
+4. 关键查询：
+
+```sql
+-- 24h 内被封号的批次特征
 SELECT
     DATE(created_at) AS create_day,
     HOUR(updated_at) AS ban_hour,
@@ -247,19 +252,27 @@ WHERE is_banned = 1
   AND updated_at > created_at + INTERVAL '12 hours'
 GROUP BY 1, 2, 3, 4
 ORDER BY 1 DESC, 2 DESC;
-```5. Control groups are organized by dimensional differences (same PayPal vs different PayPal, same IP vs different IP, etc.)
-6. Data anonymization methods refer to this article (RFC 5737 IP, `*.example` domain names)
+```
 
-If you generate new data, feel free to submit a PR to add it to this article following [`CONTRIBUTING.md`](../CONTRIBUTING.md#data-anonymization-checklist-for-research-contributions).
+5. 对照组按维度差异分组（同 PayPal vs 不同 PayPal、同 IP vs 不同 IP 等等）
+6. 数据脱敏方式参考本文（RFC 5737 IP、`*.example` 域名）
+
+如果你跑出来新数据，欢迎按 [`CONTRIBUTING.md`](../CONTRIBUTING.md#研究内容贡献的脱敏清单) 提 PR 加到本文。
 
 ---
 
-## Citing this article
+## 引用本文
 
-If your research / paper / blog cites data from this article, please cite:```
-Gpt-Agreement-Payment — Anti-Fraud Empirical Research. (2026).
+如果你的研究 / 论文 / 博客引用本文中的数据，请引用：
+
+```
+Gpt-Agreement-Payment — 反欺诈实证研究. (2026).
 https://github.com/DanOps-1/Gpt-Agreement-Payment/blob/main/docs/anti-fraud-research.md
-```Or BibTeX:```bibtex
+```
+
+或者 BibTeX：
+
+```bibtex
 @misc{Gpt-Agreement-Payment-antifraud,
   title  = {Empirical Anti-Fraud Research on ChatGPT Team Subscription},
   author = {Gpt-Agreement-Payment contributors},
