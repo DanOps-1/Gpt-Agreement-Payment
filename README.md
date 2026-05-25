@@ -1,3 +1,5 @@
+> **简体中文** | [English](README.en.md)
+
 <p align="center">
   <img src="docs/images/logo-light.png#gh-light-mode-only" width="120" alt="Gpt-Agreement-Payment logo">
   <img src="docs/images/logo-dark.png#gh-dark-mode-only"   width="120" alt="Gpt-Agreement-Payment logo">
@@ -5,289 +7,315 @@
 
 # Gpt-Agreement-Payment
 
-End-to-end replay tool for ChatGPT Plus / Team subscription agreements: reverse-engineered from packet capture the entire chain `Stripe Checkout → PayPal / GoPay / QRIS → ChatGPT manual-approval → Codex OAuth + PKCE` and implemented as a runnable client. Includes a from-scratch hCaptcha visual solver, PayPal fraud detection early-exit branch, and a set of empirical anti-fraud mechanism data collected from real execution.
+ChatGPT Plus / Team 订阅协议的端到端重放工具：从抓包逆出 `Stripe Checkout → PayPal / GoPay / QRIS → ChatGPT manual-approval → Codex OAuth + PKCE` 整条链路，并实现成可运行客户端。附带从零实现的 hCaptcha 视觉求解器、PayPal 风控早退分支、和一组真实运行采集的反欺诈机制实证数据。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![CI](https://img.shields.io/github/actions/workflow/status/DanOps-1/Gpt-Agreement-Payment/ci.yml?label=CI)](https://github.com/DanOps-1/Gpt-Agreement-Payment/actions)
-[![Use](https://img.shields.io/badge/use-CTF%20%2F%20bug%20bounty-red)](#legal-boundary)
+[![Use](https://img.shields.io/badge/use-CTF%20%2F%20bug%20bounty-red)](#法律边界)
 
 ---
 
-## Public Benefit API Relay Station
+## 公益 API 中转站
 
-| Logo | Name | Description | Website |
+| Logo | 名称 | 介绍 | 官网 |
 | --- | --- | --- | --- |
-| <a href="https://api.lukyface.com/" target="_blank"><img src="docs/images/sponsors/lukyface.png" alt="lukyface API" width="140" /></a> | lukyface API (Author-run · Public Benefit Station) | Unified AI model aggregation / distribution gateway (based on new-api), OpenAI / Claude / Gemini protocol interconversion, self-use surplus sharing. **Pure public benefit, non-profit**.<br><br>**Open only to [LINUX DO](https://linux.do/) users** · **Payment in LDC (Linux Do in-site currency) only** · Public benefit station exchange group: **`1107410931`** | [https://api.lukyface.com/](https://api.lukyface.com/) |
+| <a href="https://api.lukyface.com/" target="_blank"><img src="docs/images/sponsors/lukyface.png" alt="lukyface API" width="140" /></a> | lukyface API（作者自营 · 公益站） | 统一的 AI 模型聚合 / 分发网关（基于 new-api），OpenAI / Claude / Gemini 三协议互转，自用余量分享。**纯公益、非盈利**。<br><br>**仅对 [LINUX DO](https://linux.do/) 用户开放** · **只接受 LDC（Linux Do 站内货币）支付** · 公益站交流群：**`1107410931`** | [https://api.lukyface.com/](https://api.lukyface.com/) |
 
 ---
 
 > [!CAUTION]
-> **Using this project constitutes acceptance of all terms in [`NOTICE`](NOTICE).** The project is provided AS IS, with no warranties, and the maintainers assume no responsibility. Authorized use only on systems you own / legitimate CTF / authorized bug bounty in-scope assets / security research. **Strictly prohibited** for fraud, payment evasion, bulk account creation for resale, violation of third-party ToS, unauthorized targets. All legal responsibility rests with the user. If you do not accept these terms, **do not use**.
+> **使用本项目即视为同意 [`NOTICE`](NOTICE) 的全部条款。** 项目按 AS IS 提供、无任何担保、维护者不负任何责任。仅限你拥有的系统 / 合法 CTF / 授权 bug bounty 项目 in-scope 资产 / 安全研究。**严禁**用于欺诈、规避支付、批量造号转售、违反第三方 ToS、未授权目标。一切法律责任由使用者自负。不接受条款就**不要使用**。
 
 ---
 
-## What This Is
+## 这是什么
 
-Supports four subscription activation paths:
+支持四条订阅开通路径：
 
-| Path | Entry Point | Use Case |
+| 路径 | 入口 | 用途 |
 |---|---|---|
-| **Team / Plus (PayPal billing agreement)** | `pipeline.py --paypal` | Stripe Checkout → PayPal billing agreement → ChatGPT manual approval |
-| **Plus (promo long link + PayPal agreement auth)** | `scripts/no_card_paypal_plus.py` | OpenAI official promo campaign long link + PayPal guest checkout completing billing agreement protocol |
-| **Plus / Team (GoPay Indonesia)** | `pipeline.py --gopay` | Midtrans linking + GoPay wallet binding, IDR region exclusive |
-| **Plus / Team (QRIS scan)** | `pipeline.py --qris` | Midtrans QRIS, remote preview + reference polling settlement |
+| **Team / Plus（PayPal billing agreement）** | `pipeline.py --paypal` | Stripe Checkout → PayPal billing agreement → ChatGPT manual approval |
+| **Plus（promo 长链接 + PayPal 协议授权）** | `scripts/no_card_paypal_plus.py` | OpenAI 官方 promo campaign 长链接 + PayPal guest checkout 走完 billing agreement 协议 |
+| **Plus / Team（GoPay 印尼）** | `pipeline.py --gopay` | Midtrans linking + GoPay 钱包绑定，IDR 区域专用 |
+| **Plus / Team（QRIS 扫码）** | `pipeline.py --qris` | Midtrans QRIS，远端预览 + reference 轮询结算 |
 
-Given a clean proxy + payment credential, run the command to completion and get the OAuth `refresh_token`.
+给一个干净代理 + 一个支付凭证，命令跑完拿到 OAuth `refresh_token`。
 
-Four points worth examining:
+四个值得看的点：
 
-- **N-worker concurrency + phone-lock OTP critical section mutual exclusion** (`webui/backend/parallel_runner.py`). Same phone across multiple workers serializes OTP phase using advisory lock, pre/post-OTP fully parallelized; DB atomic claim + placeholder INSERT prevents multiple workers contending for same promo_link / same inventory email. Frontend configures phone pool (M rows) + concurrency N (can exceed M), worker maps to phone pool via `i % M` round-robin.
-- **hCaptcha visual solver** (`CTF-pay/hcaptcha_auto_solver.py`, ~4000 lines, independently usable). VLM primary path + CLIP/OpenCV heuristic fallback + Playwright human action synthesis, covers 12 known hCaptcha question types.
-- **Anti-fraud mechanism empirical data**. IP string-level exact fingerprinting, batch correlation delayed banning, probe layer vs ban layer separation. Measured sample of ~2% 24-hour survival rate across 45 accounts, including corrected models. See [`docs/anti-fraud-research.md`](docs/anti-fraud-research.md).
-- **Twelve-path self-healing daemon loops** (`pipeline.py::daemon()`). Webshare API auto IP rotation (webshare jitter fallback to `/tmp/gost_last.json` cache), CF DNS quota cleanup, tmpfs orphan recovery, gost relay watchdog, DataDome slider auto-drag. Design goal is unattended operation for weeks.
+- **N-worker 并发 + phone-lock OTP 临界区互斥**（`webui/backend/parallel_runner.py`）。同 phone 多 worker 用 advisory lock 串行 OTP 阶段，pre/post-OTP 全并行；DB atomic claim + 占位 INSERT 防多 worker 抢同 promo_link / 同 inventory 邮箱。前端配 phone 池（M 行） + 并发数 N（可大于 M），worker 按 `i % M` 轮询映射到 phone 池。
+- **hCaptcha 视觉求解器**（`CTF-pay/hcaptcha_auto_solver.py`，约 4000 行，独立可用）。VLM 主路径 + CLIP/OpenCV 启发式回退 + Playwright 人类动作合成，覆盖 12 种已知 hCaptcha 题型。
+- **反欺诈机制实证数据**。IP 字符串级精确指纹、批次关联延迟封禁、probe 层 vs ban 层分离。45 个号 24 小时存活率约 2% 的实测样本，含修正模型。详见 [`docs/anti-fraud-research.md`](docs/anti-fraud-research.md)。
+- **十二路自愈环 daemon**（`pipeline.py::daemon()`）。Webshare API 自动换 IP（webshare 抖时回退到 `/tmp/gost_last.json` cache）、CF DNS 配额清理、tmpfs 孤儿回收、gost 中继看门狗、DataDome 滑块自动拖拽。设计目标是无人值守跑数周。
 
 ---
 
-## Architecture```mermaid
+## 架构
+
+```mermaid
 flowchart LR
     A[pipeline.py / webui] --> B[CTF-reg/<br/>browser_register.py<br/>Camoufox + Turnstile]
-    B --> C[CTF-pay/card.py<br/>Stripe Checkout replay]
-    C --> D{Payment path}
+    B --> C[CTF-pay/card.py<br/>Stripe Checkout 重放]
+    C --> D{支付路径}
     D -->|paypal| E1[Camoufox / Node RPA<br/>PayPal billing agreement]
     D -->|gopay| E2[Midtrans linking<br/>+ WhatsApp OTP]
-    D -->|qris| E3[QRIS QR<br/>+ remote preview]
+    D -->|qris| E3[QRIS QR<br/>+ 远端预览]
     E1 --> F[Stripe poll<br/>state=succeeded]
     E2 --> F
     E3 --> F
-    F --> G[Camoufox second login<br/>Codex OAuth + PKCE]
+    F --> G[Camoufox 二次登录<br/>Codex OAuth + PKCE]
     G --> H[refresh_token<br/>output/webui.db &#40;SQLite&#41;]
-```For detailed subsystem decomposition, file organization, and protocol chain details, see [`docs/architecture.md`](docs/architecture.md).
+```
+
+详细子系统拆解、文件分工、协议链路细节看 [`docs/architecture.md`](docs/architecture.md)。
 
 ---
 
-## Current Status and Entry Barriers
+## 现状与门槛
 
-To be frank, this is not an out-of-the-box tool. Running through the entire pipeline requires at least:
+实事求是讲，这不是个开箱即用的工具。要把整条链路跑通，至少需要：
 
-- A real, login-capable PayPal account (or go through PayPal guest checkout authorization flow)
-- A proxy with exit in EU / US / ID (region locked based on selected payment path)
-- A Cloudflare zone (optional, for enabling catch-all subdomain email registration; also supports Outlook code pool)
-- A Linux machine capable of running Camoufox + Playwright (approximately 5 GB disk + 2 GB memory)
-- (Required for PayPal guest checkout) An SMS code gateway API key for PayPal signup
-- (Required for GoPay) A WhatsApp online number + WhatsApp code verification service
-- (Optional) An OpenAI-compatible VLM API key for hCaptcha solving; residential / pseudo-residential exits typically don't trigger hCaptcha, and CLIP degradation is available without VLM
-- (Optional) A captcha solving platform API key compatible with createTask/getTaskResult protocol as a fallback for browser passive captcha
+- 一个真实可登录的 PayPal 账号（也可走 PayPal guest checkout 协议授权流程）
+- 一个出口在 EU / US / ID 的代理（按选择的支付路径锁地区）
+- 一个 Cloudflare zone（可选，用于开 catch-all 子域注册邮箱；也支持 Outlook 接码池）
+- 一台能跑 Camoufox + Playwright 的 Linux（约 5 GB 磁盘 + 2 GB 内存）
+- （PayPal guest checkout 必需）一个 SMS 接码网关 API key，PayPal signup 用
+- （GoPay 必需）一个 WhatsApp 在线号 + WhatsApp 接码服务
+- （可选）一个 OpenAI 兼容的 VLM API key，hCaptcha 求解用；家宽 / 伪家宽出口通常不会触发 hCaptcha，无 VLM 时也会降级到 CLIP
+- （可选）一个兼容 createTask/getTaskResult 协议的打码平台 API key，作为浏览器 passive captcha 的兜底
 
-Full end-to-end setup typically takes 1–3 hours for initial configuration tuning. Once daemon mode runs stably, a single pipeline takes ~5 minutes; concurrent mode with 2 workers on the same phone generates 2 accounts in ~3 minutes.
+第一次完整跑通通常要花 1–3 小时调通配置。daemon 模式跑稳后，单次 pipeline 约 5 分钟；并发模式同 phone 跑 2 worker 约 3 分钟拿 2 个号。
 
-Code is research-oriented, organized by protocol stage, and doesn't prioritize maximum readability.
+代码偏研究性质，按协议阶段顺排，不追求可读性最大化。
 
 ---
 
-## Getting Started
+## 上手
 
-### Beginner Path: WebUI Configuration Wizard (Recommended)
+### 新手路径：webui 配置向导（推荐）
 
-Compress 1–3 hours of manual configuration into ~15 minutes. 14-step wizard + real-time preflight self-checks + built-in runtime controller (SSE log stream + concurrency panel) generate `CTF-pay/config.auto.json` + `CTF-reg/config.paypal-proxy.json` configurations.
+把 1–3 小时的手动调配压到 ~15 分钟。14 步 wizard + 实时 preflight 自检 + 内置运行控制器（SSE 日志流 + 并发面板），生成 `CTF-pay/config.auto.json` + `CTF-reg/config.paypal-proxy.json` 两份配置。
 
-![WebUI screenshot](docs/images/webui.png)
+![webui 截图](docs/images/webui.png)
 
-#### Docker Deployment (Fastest Path, One-Click Start)
+#### Docker 部署（最快路径，一键起）
 
-The repo comes with `Dockerfile` (multi-stage build: Node frontend + Ubuntu 24.04 runtime) + `docker-compose.yml`, packing all system dependencies / Playwright Chromium+Firefox / Camoufox / gost SOCKS5 relay / Node QuickJS (for OpenAI Sentinel) into the image. The git working tree on the host serves as the single source of truth, bind-mounted into the container; restart with `docker compose restart` for instant effect after modifying Python code, no rebuild needed.```bash
+仓库自带 `Dockerfile`（多阶段 build：node 前端 + ubuntu 24.04 runtime）+ `docker-compose.yml`，把所有系统依赖 / Playwright Chromium+Firefox / Camoufox / gost SOCKS5 中继 / Node QuickJS（OpenAI Sentinel 用）全打进镜像。host 上的 git working tree 作为单一真实源，整仓 bind mount 进容器，改完 Python 代码 `docker compose restart` 即时生效，不用重 build。
+
+```bash
 git clone https://github.com/DanOps-1/Gpt-Agreement-Payment
 cd Gpt-Agreement-Payment
 docker compose up -d --build
-# Default listening on 127.0.0.1:8765 (host port), open http://127.0.0.1:8765/ in browser
-# First visit redirects to /setup to create admin
-```# Common Maintenance Commands:```bash
-# Real-time logs
+# 默认监听 127.0.0.1:8765（host 端口），浏览器开 http://127.0.0.1:8765/
+# 首次访问跳 /setup 创建管理员
+```
+
+常用维护命令：
+
+```bash
+# 实时日志
 docker compose logs -f webui
 
-# Debug inside container (pip list / run tests / inspect SQLite)
+# 进容器调试（pip list / 跑测试 / inspect SQLite）
 docker compose exec webui bash
 
-# Reload uvicorn after Python code changes (bind mount already syncs source code, just restart process)
+# 改完 Python 代码后让 uvicorn 重载（bind mount 已 sync 源码，只需重启进程）
 docker compose restart webui
 
-# Rebuild dist in container after frontend code changes
+# 改完前端代码后在容器内 rebuild dist
 docker compose exec webui sh -c "cd /app/webui/frontend && npm run build"
 
-# Completely stop + clean containers
+# 完全停 + 清容器
 docker compose down
 
-# Image upgrade (pull new base / upgrade Python packages)
+# 镜像升级 (拉新 base / 升 Python 包)
 docker compose build --no-cache && docker compose up -d
-```# Data Persistence
+```
 
-The `output/` directory is a host directory bind mount containing `webui.db` (SQLite) + run results / logs visible and backupable to the host. `webui/frontend/dist` and `node_modules` use anonymous volumes, which are overridden by the baked image version (not overridden by an empty host directory).
+数据落盘：`output/` 是 host 目录 bind mount，里面 `webui.db`（SQLite）+ 运行结果 / 日志 host 可见可备份。`webui/frontend/dist` 和 `node_modules` 走 anonymous volume，被镜像 baked 版本覆盖（不被 host 空目录覆盖）。
 
-## Public Access (nginx Reverse Proxy + HTTPS)
+公网访问（nginx 反代 + HTTPS）见 [`webui/README.md`](webui/README.md)。默认 `docker-compose.yml` 把端口绑 `127.0.0.1:8765`；要直接 `0.0.0.0` 暴露请改 `ports` 段（不建议，没认证层在前面）。
 
-See [`webui/README.md`](webui/README.md). By default, `docker-compose.yml` binds the port to `127.0.0.1:8765`; to expose directly to `0.0.0.0`, modify the `ports` section (not recommended without an authentication layer in front).
+#### 手装（不用 Docker）
 
-#### Manual Installation (without Docker)```bash
-# 1. Backend dependencies
+```bash
+# 1. 后端依赖
 pip install -r webui/requirements.txt
 
-# 2. Frontend build (one-time)
+# 2. 前端构建（一次性）
 cd webui/frontend && pnpm i && pnpm build && cd ../..
 
-# 3. Start
+# 3. 启动
 python -m webui.server
-# Open http://127.0.0.1:8765 in browser, first visit redirects to /setup to create admin
-```Support single run (PayPal billing agreement / GoPay / QRIS / promo long links) + concurrent mode (frontend configured with phone pool + concurrency N), public network access via nginx reverse proxy see [`webui/README.md`](webui/README.md).
+# 浏览器打开 http://127.0.0.1:8765 ，首次访问跳 /setup 建管理员
+```
 
-### Installation```bash
+支持单 run（PayPal billing agreement / GoPay / QRIS / promo 长链接）+ 并发模式（前端配 phone 池 + 并发数 N），公网访问通过 nginx 反代见 [`webui/README.md`](webui/README.md)。
+
+### 装
+
+```bash
 git clone https://github.com/DanOps-1/Gpt-Agreement-Payment
 cd Gpt-Agreement-Payment
 pip install requests curl_cffi playwright camoufox browserforge mitmproxy pybase64
 playwright install firefox
 camoufox fetch
-```hCaptcha solver ML dependencies (torch / transformers / opencv) are recommended to be installed separately in a venv, approximately 4 GB:```bash
+```
+
+hCaptcha 求解器的 ML 依赖（torch / transformers / opencv）建议单独装到 venv，约 4 GB：
+
+```bash
 python -m venv ~/.venvs/ctfml
 ~/.venvs/ctfml/bin/pip install torch transformers opencv-python pillow numpy
-```# Complete dependency list and system packages, see [`docs/installation.md`](docs/installation.md).
+```
 
-### Configuration
+完整依赖清单和系统包看 [`docs/installation.md`](docs/installation.md)。
 
-Copy the template and fill in values:```bash
+### 配
+
+复制模板，填值：
+
+```bash
 cp CTF-pay/config.paypal.example.json     CTF-pay/config.paypal.json
 cp CTF-reg/config.paypal-proxy.example.json   CTF-reg/config.paypal-proxy.json
-```For field meanings and schema, see [`docs/configuration.md`](docs/configuration.md). The Docker deployment entrypoint will automatically bootstrap these two config files on first startup. After editing on the host, run `docker compose restart webui` to take effect.
+```
 
-### Running
+字段含义和 schema 看 [`docs/configuration.md`](docs/configuration.md)。Docker 部署的 entrypoint 第一次启动时会自动 bootstrap 这两份 config，host 编辑后 `docker compose restart webui` 生效。
 
-> Docker users only need to use webui to run. The CLI commands below are for users running natively locally; to run the same commands in Docker, first `docker compose exec webui bash` to enter the container.```bash
-# 1) Single complete workflow (PayPal billing agreement)
+### 跑
+
+> Docker 用户用 webui 跑就够了。下面的 CLI 命令是给本地原生跑的用户；Docker 里要跑同样命令先 `docker compose exec webui bash` 进容器。
+
+```bash
+# 1) 单次完整流程 (PayPal billing agreement)
 xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal
 
-# 2) Plus protocol authorization + promo long link (PayPal guest checkout)
+# 2) Plus 协议授权 + promo 长链接 (走 PayPal guest checkout)
 xvfb-run -a python scripts/no_card_paypal_plus.py \
     --config CTF-pay/config.paypal.json --paypal-node-rpa \
-    --phone <your_phone> --otp-timeout 240
+    --phone <你的号> --otp-timeout 240
 
-# 3) N worker concurrency (same phone is fine, OTP phase auto-queues via advisory lock)
-# Recommended to start via webui: select concurrency mode, frontend configures phone pool + concurrency N
+# 3) N worker 并发 (同 phone 也行, OTP 阶段会 advisory lock 自动排队)
+# 推荐用 webui 启动: 选并发模式, 前端配 phone 池 + concurrency N
 
-# 4) Continuous account pool maintenance
+# 4) 持续维护补号池
 xvfb-run -a python pipeline.py --config CTF-pay/config.paypal.json --paypal --daemon
-```# Four Operating Modes (Single / Batch / Self-Dealer / Daemon) + Concurrency Mode Differences and Parameters
+```
 
-See [`docs/operating-modes.md`](docs/operating-modes.md).
+四种运行模式（单次 / 批量 / self-dealer / daemon）+ 并发模式的差异和参数看 [`docs/operating-modes.md`](docs/operating-modes.md)。
 
 ---
 
-## Documentation
+## 文档
 
-| Documentation | Content |
+| 文档 | 内容 |
 |---|---|
-| [`docs/installation.md`](docs/installation.md) | System dependencies, Python packages, ML venv, gost relay, first PayPal login |
-| [`docs/configuration.md`](docs/configuration.md) | All JSON fields, environment variables, CF API token application |
-| [`docs/architecture.md`](docs/architecture.md) | Subsystems, file organization, protocol chain details |
-| [`docs/operating-modes.md`](docs/operating-modes.md) | Single / Batch / Self-Dealer / Daemon / Concurrency detailed parameters |
-| [`docs/hcaptcha-solver.md`](docs/hcaptcha-solver.md) | Three-layer decision-making, 12 question types, standalone invocation, extending new question types |
-| [`docs/daemon-mode.md`](docs/daemon-mode.md) | 12-path self-healing loop trigger conditions and state machine |
-| [`docs/anti-fraud-research.md`](docs/anti-fraud-research.md) | Complete anti-fraud empirical data and corrected models |
-| [`docs/debugging.md`](docs/debugging.md) | Common exceptions, artifact paths, troubleshooting commands |
+| [`docs/installation.md`](docs/installation.md) | 系统依赖、Python 包、ML venv、gost 中继、第一次登 PayPal |
+| [`docs/configuration.md`](docs/configuration.md) | 所有 JSON 字段、环境变量、CF API token 申请 |
+| [`docs/architecture.md`](docs/architecture.md) | 子系统、文件组织、协议链路细节 |
+| [`docs/operating-modes.md`](docs/operating-modes.md) | 单次 / 批量 / self-dealer / daemon / 并发 详细参数 |
+| [`docs/hcaptcha-solver.md`](docs/hcaptcha-solver.md) | 三层决策、12 题型、独立调用、扩展新题型 |
+| [`docs/daemon-mode.md`](docs/daemon-mode.md) | 12 路自愈环触发条件与状态机 |
+| [`docs/anti-fraud-research.md`](docs/anti-fraud-research.md) | 反欺诈实证完整数据与修正模型 |
+| [`docs/debugging.md`](docs/debugging.md) | 常见异常、产物路径、排错命令 |
 
 ---
 
-## Known Limitations
+## 已知限制
 
-- **PayPal billing agreement only available in EU**. Stripe account restrictions; can only place orders as EU identities like IE.
-- **PayPal guest checkout path subject to multiple risk controls**. `INSTRUMENT_SHARING_LIMIT_EXCEEDED` / `CC_LINKED_TO_FULL_ACCOUNT` / `CREATE_CARD_ACCOUNT_CANDIDATE_VALIDATION_ERROR` / DataDome captcha etc. will all trigger; the script has early exit + automatic retry branches for each known error.
-- **Batch registration next-day survival rate ~2%**. This is caused by batch correlation effects in ChatGPT's anti-fraud mechanism, not the tool itself. See [`docs/anti-fraud-research.md`](docs/anti-fraud-research.md).
-- **Free account path currently not working**. OpenAI changed the free account secondary login flow; redirect to `/add-phone` cannot be bypassed without a real phone number; ChatGPT-Web client's access_token calling Codex API has audience mismatch.
-- **Stripe runtime fingerprint drifts**. `runtime.version` / `js_checksum` / `rv_timestamp` need realignment approximately every few weeks.
-- **hCaptcha question type coverage incomplete**. Current 12 common types; when uncovered, VLM directly outputs coordinates as fallback, success rate not guaranteed.
-- **Concurrency shares single exit IP**. Webshare pool currently can only provide a single IP; N workers traverse the same IP; recommended concurrency ≤ 3 to avoid PayPal/DataDome risk control joint punishment. Multi-IP pool support on roadmap.
-- **Code style somewhat rough**. `_monolith.py` arranged sequentially by protocol stage, comments mix Chinese and English, not suitable as a Python engineering example.
-
----
-
-## Contribution
-
-Most valuable contributions ranked by impact:
-
-1. New hCaptcha question type solvers
-2. Protocol adaptation when Stripe / PayPal / OpenAI introduces breaking changes
-3. New failure mode daemon self-healing branches observed in practice (with logs)
-4. Anti-fraud empirical data supplements (desensitization format per existing examples)
-5. Multi-IP pool / proxy rotation implementation to free concurrency from single IP limitation
-6. Documentation improvement / translation
-
-> ⚠️ **Maintainers cannot manually reproduce PRs**. When submitting PRs, please follow the [PR template](.github/PULL_REQUEST_TEMPLATE.md) providing **detailed description + running evidence** (requirements vary by change type: solver question types need round JSON, protocol adaptation needs packet capture comparison, daemon self-healing needs trigger logs and recovery logs). PRs lacking evidence will be closed without explanation.
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for complete workflow, code style, and desensitization checklist for research contributions.
-See [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) for community guidelines.
-Do not open issues for security problems; see [`SECURITY.md`](SECURITY.md).
+- **PayPal billing agreement 仅 EU 开通**。Stripe 账号限制，只能以 IE 等欧盟身份下单。
+- **PayPal guest checkout 路径受多重风控**。`INSTRUMENT_SHARING_LIMIT_EXCEEDED` / `CC_LINKED_TO_FULL_ACCOUNT` / `CREATE_CARD_ACCOUNT_CANDIDATE_VALIDATION_ERROR` / DataDome captcha 等都会触发；脚本对每种已知错误都有早退 + 自动重试分支。
+- **批量注册次日存活率约 2%**。这是 ChatGPT 反欺诈机制的批次关联效应导致的，不是工具本身的问题。详见 [`docs/anti-fraud-research.md`](docs/anti-fraud-research.md)。
+- **免费账号路径目前不通**。OpenAI 改了 free 账号二次登录流程，重定向到 `/add-phone` 没真实手机号绕不过；ChatGPT-Web client 的 access_token 调 Codex API audience 不匹配。
+- **Stripe runtime 指纹会漂**。`runtime.version` / `js_checksum` / `rv_timestamp` 大约几周一次需要重新对齐。
+- **hCaptcha 题型覆盖不全**。当前 12 种常见题，未覆盖时由 VLM 直出坐标兜底，不保证成功率。
+- **并发共享单出口 IP**。webshare 池现状只能给单一 IP，N worker 走同一 IP；建议并发 ≤ 3 以免被 PayPal/DataDome 风控连坐。多 IP 池支持在 roadmap。
+- **代码风格偏粗放**。`_monolith.py` 按协议阶段顺排，注释混中英文，不适合作为 Python 工程范例。
 
 ---
 
-## Acknowledgments
+## 贡献
 
-Key dependencies in the tool chain:
+最有价值的贡献按影响力排序：
 
-- [Camoufox](https://github.com/daijro/camoufox) — antidetect Firefox build, foundation of the entire browser automation layer
-- [mitmproxy](https://mitmproxy.org/) — protocol packet capture
-- [Playwright](https://playwright.dev/) — browser automation
-- [curl_cffi](https://github.com/lexiforest/curl_cffi) — TLS fingerprint simulation
-- [OpenAI CLIP](https://github.com/openai/CLIP) — visual backbone for heuristic solver
-- [gost](https://github.com/go-gost/gost) — SOCKS5 relay
+1. 新的 hCaptcha 题型 solver
+2. Stripe / PayPal / OpenAI 出 breaking change 时的协议适配
+3. 实战中观察到的新失败模式的 daemon 自愈分支（带日志）
+4. 反欺诈实证数据补充（脱敏方式参考现有写法）
+5. 多 IP 池 / proxy 轮换实现，让并发摆脱单 IP 限制
+6. 文档完善 / 翻译
 
-### Code Contributors
+> ⚠️ **维护者无法手动复现 PR**。所以提 PR 时请按 [PR 模板](.github/PULL_REQUEST_TEMPLATE.md) 提供**详细说明 + 跑通证据**（按改动类型不同要求不同：solver 题型要 round JSON、协议适配要抓包对比、daemon 自愈要触发日志和恢复日志）。证据缺了 PR 直接关，不解释。
 
-Thanks to the following friends for code contributions (by PR time):
+完整工作流、代码风格、研究内容贡献的脱敏清单看 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+社区准则看 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)。
+安全问题别公开提 issue，看 [`SECURITY.md`](SECURITY.md)。
+
+---
+
+## 致谢
+
+工具链上的几个核心依赖：
+
+- [Camoufox](https://github.com/daijro/camoufox) — antidetect Firefox build，整个浏览器自动化层的基础
+- [mitmproxy](https://mitmproxy.org/) — 协议抓包
+- [Playwright](https://playwright.dev/) — 浏览器自动化
+- [curl_cffi](https://github.com/lexiforest/curl_cffi) — TLS 指纹模拟
+- [OpenAI CLIP](https://github.com/openai/CLIP) — 启发式 solver 的视觉骨架
+- [gost](https://github.com/go-gost/gost) — SOCKS5 中继
+
+### 代码贡献者
+
+感谢以下朋友贡献代码（按 PR 时间）：
 
 - [@Lium-7768](https://github.com/Lium-7768) — [#12](https://github.com/DanOps-1/Gpt-Agreement-Payment/pull/12) Align GoPay step visibility to hide 06 and 13
-- [@DragonBaiMo](https://github.com/DragonBaiMo) — [#15](https://github.com/DanOps-1/Gpt-Agreement-Payment/pull/15) Algorithmicized persona generator + email name co-sourcing
+- [@DragonBaiMo](https://github.com/DragonBaiMo) — [#15](https://github.com/DanOps-1/Gpt-Agreement-Payment/pull/15) 算法化 persona 生成器 + 邮箱姓名同源
 - [@laochendeai](https://github.com/laochendeai) — [#21](https://github.com/DanOps-1/Gpt-Agreement-Payment/pull/21) detect blocking challenge pages
 
-## Community
+## 社区
 
-| Channel | Purpose |
+| 渠道 | 用途 |
 |---|---|
-| [**LINUX DO**](https://linux.do/) | Main technical discussions, protocol research feedback, long-term records |
-| QQ Group **`1028722105`** | Real-time Chinese community exchange |
-| GitHub Issues | Bug reports and PRs (main entry point) |
+| [**LINUX DO**](https://linux.do/) | 主要技术讨论、协议研究反馈、长期记录 |
+| QQ 群 **`1028722105`** | 中文圈实时交流 |
+| GitHub Issues | bug 报告与 PR（主入口） |
 
-Special thanks to the LINUX DO community — the earliest feedback sources, testers, and protocol change reporters all come from here.
+特别感谢 LINUX DO 社区 —— 本项目最早的反馈来源、实测者、协议变化通报者都来自这里。
 
 ---
 
-## Sponsorship
+## 赞赏
 
-If this project has been helpful to you, you're welcome to buy the author a coffee ☕
+如果这个项目对你有帮助，欢迎请作者喝杯咖啡 ☕
 
 <p align="center">
-  <img src="goodgood.jpg" width="280" alt="Sponsorship QR code">
+  <img src="goodgood.jpg" width="280" alt="赞赏码">
 </p>
 
-### Donation Thanks
+### 打赏致谢
 
-Thanks to the following friends for their support (no particular order):
+感谢以下朋友的支持（排名不分先后）：
 
-| Sponsor | Amount |
+| 打赏者 | 金额 |
 |---|---|
-| Galaxy-n | ¥101 |
-| 两岁 | ¥100 |
-| 朴朴配送员 | ¥66 |
-| Ka | ¥28.88 |
-| 追Mou | ¥20 |
-| 原昊 | ¥20 |
-| A. | ¥10 |
-| acedia | ¥9.1 |
-| 至上松一 | ¥6.66 |
-| 书忆江南 | ¥5 |
-| 辛昊 | ¥5 |
-| bensema | ¥0.66 |
-| Earth NPC | ¥0.01 |
-| 小水獭 | ¥0.01 |
-| 钟 | ¥0.01 |
+| Galaxy-n | 101 元 |
+| 两岁 | 100 元 |
+| 朴朴配送员 | 66 元 |
+| Ka | 28.88 元 |
+| 追Mou | 20 元 |
+| 原昊 | 20 元 |
+| A. | 10 元 |
+| acedia | 9.1 元 |
+| 至上松一 | 6.66 元 |
+| 书忆江南 | 5 元 |
+| 辛昊 | 5 元 |
+| bensema | 0.66 元 |
+| Earth NPC | 0.01 元 |
+| 小水獭 | 0.01 元 |
+| 钟 | 0.01 元 |
 
-The gesture matters more than the amount; every bit of support is motivation to continue maintaining the project 🙏
+心意比金额更珍贵，每一份支持都是项目继续维护的动力 🙏
 
 ---
 
@@ -303,19 +331,21 @@ The gesture matters more than the amount; every bit of support is motivation to 
 
 ---
 
-## Disclaimer
+## 免责声明
 
 > [!IMPORTANT]
-> **Using this project constitutes your acceptance of having fully read, completely understood, and explicitly agreed to all terms in [`NOTICE`](NOTICE).** If you cannot accept — do not use this project, delete all copies.
+> **使用本项目即视为你已完整阅读、完全理解、并明确接受 [`NOTICE`](NOTICE) 的全部条款。** 不能接受 —— 不要使用本项目，删除所有副本。
 
-License is [MIT](LICENSE), but the License itself is not the complete disclaimer. Full disclaimer terms are in [`NOTICE`](NOTICE); below is the key summary:
+License 是 [MIT](LICENSE)，但 License 本身不是免责的全部。完整免责条款在 [`NOTICE`](NOTICE)，下面是关键摘要：
 
-**This project is provided "AS IS" without warranties of any kind.** Including but not limited to merchantability, fitness for a particular purpose, non-infringement, safety, stability, and continued compatibility with third-party services. You assume all risks of using this project.
+**本项目按"现状（AS IS）"提供，不附任何形式的担保。** 包括但不限于适销性、适用于特定用途、不侵权、安全性、稳定性、与第三方服务的持续兼容性。你独自承担使用本项目的一切风险。
 
-**Use only within authorized scope.** Permitted: systems you own, legal CTF, authorized bug bounty projects on in-scope assets, security research. **Prohibited**: fraud, payment evasion, bulk account creation for resale, violating third-party ToS, unauthorized targets.
+**仅限授权范围内使用。** 允许：你拥有的系统、合法 CTF、授权 bug bounty 项目内 in-scope 资产、安全研究。**禁止**：欺诈、规避支付、批量造号转售、违反第三方平台 ToS、未授权目标。
 
-**You bear all legal responsibility.** Including but not limited to account suspension, payment loss, criminal liability, civil damages, administrative penalties, third-party claims, reputation loss, business loss. Applicable laws may include US CFAA, EU GDPR, UK CMA, China Criminal Law Articles 285/286/287, etc. See section 4 of [`NOTICE`](NOTICE).
+**法律责任完全由使用者承担。** 包括但不限于账号封禁、付款损失、刑事责任、民事赔偿、行政处罚、第三方索赔、声誉损失、商业损失。可能适用的法律包括美国 CFAA、欧盟 GDPR、英国 CMA、中国《刑法》第 285/286/287 条等。具体看 [`NOTICE`](NOTICE) 第 4 节。
 
-**Maintainers have no obligation to reply to issues, review PRs, fix bugs, maintain availability, or adapt to protocol changes.** Reserved the right to archive, delete, rename, or stop maintaining this project at any time without prior notice.
+**维护者无义务回复 issue、审查 PR、修复 bug、维护可用性、做协议适配。** 保留任何时候归档、删除、改名、停止维护本项目的权利，不需要事先通知。
 
-Uncertain whether your use is legal — **do not run**. Ask a lawyer first, or talk to the target platform's security team.
+**本项目不属于、不附属于、不被授权于、不被赞助于** OpenAI、Stripe、PayPal、Cloudflare、hCaptcha 或任何提及的第三方服务。所有商标归各自所有者。
+
+不确定使用是否合法 —— **不要运行**。先问律师，或者先跟目标平台的安全团队聊。

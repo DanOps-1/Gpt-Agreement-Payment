@@ -1,38 +1,42 @@
-# webui — Configuration Wizard + Preflight Health Check
+# webui — 配置向导 + preflight 体检
 
-Compress the 1-3 hours configuration process to run `pipeline.py` successfully down to ~15 minutes.
+把 `pipeline.py` 第一次跑通的 1-3 小时配置过程压到 ~15 分钟。
 
-## Quick Start```bash
-# Backend dependencies
+## 快速开始
+
+```bash
+# 后端依赖
 pip install -r webui/requirements.txt
 
-# Frontend build (one time)
+# 前端构建（一次）
 cd webui/frontend && pnpm i && pnpm build && cd ../..
 
-# Start
+# 启动
 python -m webui.server
-# Open in browser http://127.0.0.1:8765
-```# First-Time Access
+# 浏览器开 http://127.0.0.1:8765
+```
 
-First-time access will redirect to `/setup` to create an admin account.
+首次访问会跳到 `/setup` 创建管理员账号。
 
-## 14-Step Process
+## 14 步流程
 
-See `docs/superpowers/specs/2026-04-28-webui-design.md` for details.
+详见 `docs/superpowers/specs/2026-04-28-webui-design.md`。
 
-| Phase | Steps |
+| Phase | 步骤 |
 |---|---|
-| 1 Basics (5) | Mode selection / System dependencies / Cloudflare / IMAP / Proxy |
-| 2 Payment (2) | PayPal / Card + Billing |
-| 3 CAPTCHA (2, optional) | CAPTCHA solving service / VLM endpoint |
-| 4 Downstream (4) | Team plan / gpt-team / CPA / Daemon / Stripe runtime |
-| 5 Completion (1) | Review + Export |
+| 1 基础（5）| 模式选择 / 系统依赖 / Cloudflare / IMAP / 代理 |
+| 2 支付（2）| PayPal / 卡 + Billing |
+| 3 验证码（2，可选）| 打码平台 / VLM endpoint |
+| 4 下游（4）| Team plan / gpt-team / CPA / Daemon / Stripe runtime |
+| 5 完成（1）| Review + 导出 |
 
-The right column `PreflightPanel` displays passed checks in real-time for each step.
+每步右栏 `PreflightPanel` 实时显示已通过的 check。
 
-## Reverse Proxy (Public Internet Access)
+## 反向代理（公网访问）
 
-The webui binds to `127.0.0.1` by default. To allow access from other machines, use nginx reverse proxy:```nginx
+webui 默认 bind `127.0.0.1`。要让其他机器访问，nginx 反代：
+
+```nginx
 location /webui/ {
     proxy_pass http://127.0.0.1:8765/;
     proxy_http_version 1.1;
@@ -41,20 +45,26 @@ location /webui/ {
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
 }
-```## Development```bash
-# Backend development mode (auto-reload)
+```
+
+## 开发
+
+```bash
+# 后端开发模式（auto-reload）
 uvicorn webui.server:create_app --factory --reload --host 127.0.0.1 --port 8765
 
-# Frontend development mode (Vite proxy auto-transforms /api → 8765)
+# 前端开发模式（Vite proxy 自动转 /api → 8765）
 cd webui/frontend && pnpm dev
-# Open http://127.0.0.1:5173
+# 开 http://127.0.0.1:5173
 
-# Run tests
-python -m pytest webui/tests/ -v       # Backend 47 tests
-cd webui/frontend && pnpm test         # Frontend Vitest
-```## Architecture
+# 跑测试
+python -m pytest webui/tests/ -v       # 后端 47 测试
+cd webui/frontend && pnpm test         # 前端 Vitest
+```
 
-- Backend: FastAPI + SQLite (users + sessions) + JSON (wizard state) + bcrypt + sse-starlette
-- Frontend: Vue 3 + Vite + TypeScript + Naive UI + Pinia + Vue Router
-- Authentication: cookie session (httponly + SameSite=Lax)
-- Launch: single process `python -m webui.server`, FastAPI serves both API + static frontend simultaneously
+## 架构
+
+- 后端：FastAPI + SQLite (users + sessions) + JSON (wizard state) + bcrypt + sse-starlette
+- 前端：Vue 3 + Vite + TypeScript + Naive UI + Pinia + Vue Router
+- 鉴权：cookie session（httponly + SameSite=Lax）
+- 启动：单进程 `python -m webui.server`，FastAPI 同时 serve API + 静态前端

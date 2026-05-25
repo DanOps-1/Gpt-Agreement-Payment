@@ -1,227 +1,279 @@
-# hCaptcha Visual Solver
+# hCaptcha 视觉求解器
 
-[← Back to README](../README.md)
+[← 回到 README](../README.md)
 
-`CTF-pay/hcaptcha_auto_solver.py` is a standalone 4000-line solver launched by `card.py` via subprocess (ML dependencies are in an isolated venv, so cannot be imported). It is universal for any hCaptcha bridge URL, not just the Stripe scenario.
+`CTF-pay/hcaptcha_auto_solver.py` 是个 4000 行的独立 solver，被 `card.py` 通过 subprocess 拉起（ML 依赖在独立 venv 里，所以不能 import）。它对任何 hCaptcha bridge URL 都通用，不只是 Stripe 这一个场景。
 
 ---
 
-## Three-Layer Decision```mermaid
+## 三层决策
+
+```mermaid
 flowchart TB
-    Start([Bridge Page Load]) --> Capture[Screenshot Current Challenge]
-    Capture --> VLM{VLM<br/>Available?}
-    VLM -->|Yes| VLMTry[Try VLM:<br/>Candidate Box → Direct Coordinates]
-    VLM -->|No| Heuristic[Heuristic Dispatcher]
-    VLMTry -->|Success| Execute[Playwright Execute<br/>Human Action Synthesis]
-    VLMTry -->|Fail| Heuristic
-    Heuristic --> Match{Match<br/>Known Type?}
-    Match -->|Yes| Solver[Run Dedicated Solver<br/>CLIP / OpenCV / Shape IoU]
-    Match -->|No| Fail([Throw unknown_prompt])
+    Start([Bridge 页面加载]) --> Capture[截图当前 challenge]
+    Capture --> VLM{VLM<br/>可用?}
+    VLM -->|是| VLMTry[试 VLM:<br/>候选框 → 直出坐标]
+    VLM -->|否| Heuristic[启发式 dispatcher]
+    VLMTry -->|成| Execute[Playwright 执行<br/>人类动作合成]
+    VLMTry -->|败| Heuristic
+    Heuristic --> Match{匹到已知<br/>题型?}
+    Match -->|是| Solver[跑专用 solver<br/>CLIP / OpenCV / shape IoU]
+    Match -->|否| Fail([抛 unknown_prompt])
     Solver --> Execute
-    Execute --> Verify{Visual Feedback<br/>Landing?}
-    Verify -->|No| Retry[Offset ±10/16px<br/>Max 9 Retries]
-    Verify -->|Yes| Submit[Submit + Listen<br/>checkcaptcha Response]
+    Execute --> Verify{视觉反馈<br/>是否落地?}
+    Verify -->|否| Retry[偏移 ±10/16px<br/>最多重试 9 次]
+    Verify -->|是| Submit[提交 + 监听<br/>checkcaptcha 响应]
     Retry --> Verify
     Submit --> Done([Pass / Fail])
-```---
+```
 
-## Layer 1 — VLM Decision (Preferred)
+---
 
-Call any `/v1/chat/completions` endpoint compatible with OpenAI protocol, send challenge image, candidate region overlay, structured JSON instructions. Two modes:
+## 第 1 层 —— VLM 决策（首选）
 
-### Candidate Box Mode
+调任何兼容 OpenAI 协议的 `/v1/chat/completions` 端点，发 challenge 图、候选区域 overlay、结构化 JSON 指令。两种模式：
 
-First use OpenCV to extract candidate click/drag targets, label them `G1`, `G2`, `S1`, `T1` on the overlay, VLM selects the ID.```json
-// The message sent to VLM looks roughly like this
+### 候选框模式
+
+先用 OpenCV 提候选点击 / 拖拽目标，标号 `G1`、`G2`、`S1`、`T1` 写到 overlay 上，VLM 选 ID。
+
+```json
+// 提示给 VLM 的 message 大致这样
 {
   "messages": [
-    {"role": "system", "content": "You are an hCaptcha solver..."},
+    {"role": "system", "content": "你是 hCaptcha 求解器..."},
     {"role": "user", "content": [
       {"type": "text", "text": "Prompt: please click on all the water travel"},
-      {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},   // original image
-      {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},   // overlay with ID marked
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},   // 原图
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},   // 标 ID 后的 overlay
       {"type": "text", "text": "{\"candidates\": [{\"id\": \"G1\", \"bbox\": [...]}, ...]}"}
     ]}
   ]
 }
-```VLM Returns:```json
+```
+
+VLM 返：
+
+```json
 {"action": "click", "selected_ids": ["G1", "G3"]}
 {"action": "drag",  "source_id": "S1", "target_id": "T2"}
-```### Direct Coordinate Output Mode
+```
 
-Fallback when candidate box extraction fails, VLM directly returns normalized coordinates:```json
+### 直出坐标模式
+
+候选框提取失败时降级，VLM 直接返归一化坐标：
+
+```json
 {"action": "click", "coords": [[0.31, 0.42], [0.73, 0.41]]}
 {"action": "drag",  "from": [0.2, 0.5], "to": [0.7, 0.5]}
-```### VLM Configuration
+```
 
-Through environment variables:```bash
+### VLM 配置
+
+通过环境变量：
+
+```bash
 export CTF_VLM_BASE_URL="https://api.openai.com/v1"
 export CTF_VLM_API_KEY="sk-..."
 export CTF_VLM_MODEL="gpt-4o"
-```# Or command line `--vlm-base-url` / `--vlm-api-key` / `--vlm-model` override.
+```
+
+或者命令行 `--vlm-base-url` / `--vlm-api-key` / `--vlm-model` 覆盖。
 
 ---
 
-## Layer 2 —— CLIP / OpenCV Heuristic Dispatcher
+## 第 2 层 —— CLIP / OpenCV 启发式 dispatcher
 
-Fallback path when VLM is unavailable or fails. Dedicated solver for each known challenge type:
+VLM 不可用或失败时的回退路径。每种已知题型有专用 solver：
 
-| Challenge Prompt Keywords | Solver | Method |
+| 题型 prompt 关键词 | Solver | 方法 |
 |---|---|---|
-| `water travel` / `vehicle...water` | `solve_water_travel()` | CLIP binary classification, 3×3 grid or object candidates |
-| `drag` / `complete the pair` | `solve_pair_drag()` | Color clustering localization + skeleton matching |
-| `missing piece` / `complete the image` | `solve_missing_pieces_drag()` | HSV slot detection + shape IoU |
-| `float on water` | `solve_float_on_water()` | CLIP binary classification |
-| `served hot` | `solve_hot_food()` | CLIP binary classification |
-| `hop or jump` / `hopping` | `solve_hop_animals()` | CLIP sliding window + clustering + two-stage scoring |
-| `produce heat to work` | `solve_heat_work()` | CLIP binary classification |
-| `shiny thing` | `solve_shiny_thing()` | CLIP binary classification (single choice) |
-| `kept outside` | `solve_kept_outside()` | CLIP binary classification |
-| `dissolve or melt` | `solve_dissolve_melt()` | CLIP multi-label classification |
-| `hidden under the reference object` | `solve_hidden_under_reference()` | Edge detection + connected components |
-| `complete the road` + `finish line` | `solve_road_completion()` | Edge detection + connected components |
+| `water travel` / `vehicle...water` | `solve_water_travel()` | CLIP 二分类，3×3 grid 或 object 候选 |
+| `drag` / `complete the pair` | `solve_pair_drag()` | 颜色聚类定位 source + skeleton 匹配 |
+| `missing piece` / `complete the image` | `solve_missing_pieces_drag()` | HSV 槽位检测 + shape IoU |
+| `float on water` | `solve_float_on_water()` | CLIP 二分类 |
+| `served hot` | `solve_hot_food()` | CLIP 二分类 |
+| `hop or jump` / `hopping` | `solve_hop_animals()` | CLIP 滑窗 + 聚类 + 两阶段评分 |
+| `produce heat to work` | `solve_heat_work()` | CLIP 二分类 |
+| `shiny thing` | `solve_shiny_thing()` | CLIP 二分类（单选） |
+| `kept outside` | `solve_kept_outside()` | CLIP 二分类 |
+| `dissolve or melt` | `solve_dissolve_melt()` | CLIP 多标签分类 |
+| `hidden under the reference object` | `solve_hidden_under_reference()` | 边缘检测 + 连通组件 |
+| `complete the road` + `finish line` | `solve_road_completion()` | 边缘检测 + 连通组件 |
 
 ---
 
-## Candidate Region Extraction
+## 候选区域提取
 
-Two complementary strategies, automatically selected based on image characteristics:
+两种互补策略，根据图像特征自动选择：
 
-### Grid Mode (`detect_label_grid`)
+### Grid 模式（`detect_label_grid`）
 
-For standard 3×3 hCaptcha grids. Detects 3 evenly-distributed bands through row/column pixel variance or non-white statistics. Decision thresholds:
+针对标准 3×3 hCaptcha 网格。通过行 / 列像素方差或 non-white 统计检测 3 个等分 band。判定门槛：
 
-- Coverage ≥ 72%
-- Balance ≥ 55%
+- 覆盖率 ≥ 72%
+- 均衡度 ≥ 55%
 
-Grid path is taken if both conditions are met.
+满足两条都过就走 grid 路径。
 
-### Object Mode (`_build_object_candidates_generic`)
+### Object 模式（`_build_object_candidates_generic`）
 
-Fallback for non-standard layouts. Uses Canny edge detection + connected components + morphological denoising to extract independent objects.
+非标准布局时回退。用 Canny 边缘 + 连通组件 + 形态学去噪提取独立物体。
 
 ---
 
-## Layer 3 —— Playwright Executor
+## 第 3 层 —— Playwright 执行器
 
-### Anti-Detection
+### 反检测
 
-Inject `init_script` to override:```javascript
+注入 `init_script` 覆盖：
+
+```javascript
 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
 Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-// + dozen other properties
-```### Human Action Synthesis
+// + 其他十几个属性
+```
 
-- **Click**: 4-point Bézier curve approximation + random delay (200–400ms)
-- **Drag**: 3-segment interpolation path with jitter at start/middle/end
-- **Pause**: Normal distribution with mean 800ms ± 300ms between operations
+### 人类动作合成
 
-### Visual Feedback Retry Loop
+- **点击**：4 点 Bézier 曲线逼近 + 随机延迟（200–400ms）
+- **拖拽**：3 段插值路径，起 / 中 / 终各加 jitter
+- **停顿**：操作间均值 800ms ± 300ms 的 normal distribution
 
-After each interaction, capture pre and post frames and calculate two metrics:```python
+### 视觉反馈重试环
+
+每次交互后抓前后帧，算两个指标：
+
+```python
 changed_pixels = np.sum(np.any(frame_after != frame_before, axis=-1))
 mean_diff = np.mean(np.abs(frame_after.astype(int) - frame_before.astype(int)))
-```Determining "landing": `changed_pixels > THRESHOLD_PIXELS` AND `mean_diff > THRESHOLD_DIFF`.
+```
 
-If not landed, **automatically retry with offset**:
+判定 "落地"：`changed_pixels > THRESHOLD_PIXELS` 且 `mean_diff > THRESHOLD_DIFF`。
 
-- Click: `±10px / ±16px` eight directions + origin point = 9 attempts
-- Drag: `5 starts × 5 ends = 25` jitter combinations
+没落地就**自动偏移重试**：
 
-### Multiple raster sources
+- 点击：`±10px / ±16px` 八方向 + 原点 = 9 次
+- 拖拽：`5 starts × 5 ends = 25` 种 jitter 组合
 
-Prioritize canvas `toDataURL()` to get the original bitmap. When canvas is blank (hCaptcha sometimes renders images to SVG), fall back to `body.screenshot()`.
+### 多 raster 源
 
-### Network monitoring
+优先 canvas `toDataURL()` 拿原始位图。canvas 空白（hCaptcha 有时把图绘到 SVG 里）时回退 `body.screenshot()`。
 
-Intercept two endpoints in the `hcaptcha.com` domain:```python
+### 网络监听
+
+拦 `hcaptcha.com` 域的两个端点：
+
+```python
 page.on("response", lambda r: ...)
-# Intercept /getcaptcha → extract prompt / ekey
-# Intercept /checkcaptcha → extract pass status
-```Extracted metadata written to `round_XX.json`.
+# 拦 /getcaptcha → 提取 prompt / ekey
+# 拦 /checkcaptcha → 提取 pass 状态
+```
+
+提取的元数据写到 `round_XX.json`。
 
 ---
 
-## Variation Retry System
+## Variation 重试体系
 
-Solver does not return a single answer, but rather an **ordered candidate sequence**:
+Solver 不返回单一答案，而是**有序候选序列**：
 
-### Click Class
+### Click 类
 
-`candidate_click_sets` sorted by CLIP confidence:
+`candidate_click_sets` 按 CLIP 置信度排序：
 
-1. **Strong set**: all tiles with confidence ≥ 0.5
-2. **Medium set**: all tiles with confidence ≥ 0.3
-3. **Individual selection**: each candidate tile submitted separately once
+1. **Strong set**：所有置信度 ≥ 0.5 的 tile
+2. **Medium set**：所有置信度 ≥ 0.3 的 tile
+3. **逐个单选**：每个候选 tile 单独提交一次
 
-### Drag Class
+### Drag 类
 
-`build_drag_target_variations()` × `build_drag_start_variations()` each generate jitter variants:
+`build_drag_target_variations()` × `build_drag_start_variations()` 各生成 jitter 变体：
 
-- Source jitter: `±5px / ±10px` five points
-- Target jitter: same five points
-- Total combinations: 5 × 5 = 25 attempts
+- Source jitter：`±5px / ±10px` 五点
+- Target jitter：同上五点
+- 总组合：5 × 5 = 25 次
 
-### Image Hash Deduplication```python
+### 图像哈希去重
+
+```python
 key = (prompt_text, hashlib.sha1(image_bytes).hexdigest())
 exhausted_variations[key].add(variation_id)
-```Failed attempts on the same problem automatically skip.
+```
 
-### Exhausted
+同题失败的方案自动跳过。
 
-All variations used up, throw:```python
+### 耗尽
+
+所有 variation 用完抛：
+
+```python
 class drag_variations_exhausted(Exception): pass
 class click_set_variations_exhausted(Exception): pass
-````card.py` triggers the daemon's "rerun current round" branch when caught.
+```
+
+`card.py` 接住后会触发 daemon 的"重跑当前轮"分支。
 
 ---
 
-## Running solver individually```bash
-# Headed mode (watch it work)
+## 单跑 solver
+
+```bash
+# 有头模式（看着它干活）
 ~/.venvs/ctfml/bin/python CTF-pay/hcaptcha_auto_solver.py \
   http://127.0.0.1:PORT/index.html --headed --timeout 300
 
-# Disable VLM, run heuristics only
+# 关 VLM，只跑启发式
 ~/.venvs/ctfml/bin/python CTF-pay/hcaptcha_auto_solver.py \
   http://127.0.0.1:PORT/index.html --no-vlm
 
-# Custom VLM
+# 自定义 VLM
 ~/.venvs/ctfml/bin/python CTF-pay/hcaptcha_auto_solver.py \
   http://127.0.0.1:PORT/index.html \
   --vlm-base-url https://api.openai.com/v1 \
   --vlm-api-key sk-xxx \
   --vlm-model gpt-4o
 
-# Let solver directly submit verify_challenge
+# 让 solver 直接提交 verify_challenge
 ~/.venvs/ctfml/bin/python CTF-pay/hcaptcha_auto_solver.py \
   http://127.0.0.1:PORT/index.html \
   --verify-url      "https://api.stripe.com/v1/setup_intents/.../verify_challenge" \
   --verify-client-secret "seti_xxx_secret_xxx" \
   --verify-key      "pk_live_xxx"
-```## Debug Artifacts
+```
 
-`--out-dir` (default `/tmp/hcaptcha_auto_solver`):
+---
 
-| File | Meaning |
+## 调试产物
+
+`--out-dir`（默认 `/tmp/hcaptcha_auto_solver`）：
+
+| 文件 | 含义 |
 |---|---|
-| `round_XX.png` | Screenshot of each round |
-| `round_XX.json` | Complete decision metadata for each round (prompt, candidate boxes, VLM response, final decision, visual feedback values) |
-| `checkcaptcha_pass_*.json` | Network monitoring snapshot of the passing attempt |
-| `checkcaptcha_fail_*.json` | Snapshot of the failed attempt |
-| `session_meta_*.json` | Overall session metadata |
+| `round_XX.png` | 每轮截图 |
+| `round_XX.json` | 每轮完整决策元数据（prompt、候选框、VLM 响应、最终决策、视觉反馈值） |
+| `checkcaptcha_pass_*.json` | 过的那次的网络监听快照 |
+| `checkcaptcha_fail_*.json` | 失败那次的快照 |
+| `session_meta_*.json` | 整个会话元信息 |
 
-Debugging a failed challenge:```bash
-# Find the most recent failure
+调试一道失败的题：
+
+```bash
+# 找最近一次失败
 ls -lt /tmp/hcaptcha_auto_solver_live/checkcaptcha_fail_*.json | head -1
 
-# View the decision process
+# 看决策过程
 cat /tmp/hcaptcha_auto_solver_live/round_05.json | jq .
-```---
+```
 
-## `card.py` Integration Method
+---
 
-`card.py` calls the solver via `subprocess`, passing the bridge URL and VLM configuration:```json
+## `card.py` 集成方式
+
+`card.py` 通过 `subprocess` 调 solver，传 bridge URL 和 VLM 配置：
+
+```json
 "browser_challenge": {
   "external_solver": {
     "enabled": true,
@@ -239,61 +291,31 @@ cat /tmp/hcaptcha_auto_solver_live/round_05.json | jq .
     }
   }
 }
-````card.py::solve_stripe_hcaptcha_in_browser()` automatically supplements the above segment when it detects that a non-invisible challenge is needed and no external_solver is explicitly configured.
+```
 
-The solver result is passed back to `card.py` through the local bridge HTTP endpoint `/result`.
+`card.py::solve_stripe_hcaptcha_in_browser()` 检测到需要非 invisible challenge 且没显式配 external_solver 时会自动补齐上面这段。
+
+solver 结果通过本地 bridge HTTP endpoint `/result` 回传给 `card.py`。
 
 ---
 
-## Extending New Challenge Types
+## 扩展新题型
 
-Three steps:
+三步：
 
-1. Write a matching function:```python
+1. 写匹配函数：
+
+```python
 def is_carry_things_prompt(prompt: str) -> bool:
     p = prompt.lower()
     return "carry" in p and "things" in p
-```# 2. Write the Solution Function:
-
-```python
-def solve(n, k):
-    """
-    Solves the problem for given parameters n and k.
-    
-    Args:
-        n: The size parameter
-        k: The coefficient parameter
-    
-    Returns:
-        The result of the computation
-    """
-    # Initialize result variable
-    result = 0
-    
-    # Iterate through the range
-    for i in range(n):
-        result += i * k
-    
-    return result
 ```
 
-## Usage Example:
+2. 写求解函数：
 
 ```python
-# Call the solution function
-answer = solve(10, 2)
-print(answer)  # Output the result
-```
-
-## Key Points:
-
-- **Function signature**: Define the function with appropriate parameters
-- **Input validation**: Verify that inputs meet requirements
-- **Algorithm implementation**: Write the core logic to solve the problem
-- **Return value**: Ensure the function returns the correct result
-- **Documentation**: Include docstrings explaining the function's purpose```python
 def solve_carry_things(image: np.ndarray, prompt: str, **kw) -> SolverResult:
-    # ... CLIP / OpenCV / your method
+    # ... CLIP / OpenCV / 你的方法
     return SolverResult(
         action="click",
         candidate_click_sets=[
@@ -302,53 +324,42 @@ def solve_carry_things(image: np.ndarray, prompt: str, **kw) -> SolverResult:
         ],
         ...
     )
-```# 3. Add a branch in the dispatcher of `solve_bridge()`
+```
+
+3. 在 `solve_bridge()` 的 dispatcher 加分支：
 
 ```python
-def solve_bridge():
-    """
-    Solve the bridge puzzle
-    """
-    # dispatcher logic
-    if condition_a:
-        handle_case_a()
-    elif condition_b:
-        handle_case_b()
-    # Add new branch here
-    elif condition_c:
-        handle_case_c()
-``````python
 elif is_carry_things_prompt(prompt):
     result = solve_carry_things(image, prompt, ...)
-```# PR Welcome
+```
 
-Please see [CONTRIBUTING.md](../CONTRIBUTING.md).
-
----
-
-## Known Problem Type Coverage
-
-Currently covers approximately 12 common hCaptcha problem types (see table above). When encountering an unfamiliar prompt:
-
-- VLM enabled: Still attempts to output coordinates / candidate box decision directly from VLM
-- VLM fails: Throws `unknown_prompt` error
-- Debug information saved to `out_dir` for subsequent analysis
-
-Adding each new problem type typically requires:
-
-- 100–500 screenshots of that problem type (accumulated from `round_XX.png` generated by past daemon runs)
-- Reading prompt text to find patterns
-- Writing matching function + solver
-- Integration testing
+PR 欢迎，看 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 
 ---
 
-## Performance Tuning Recommendations
+## 已知题型覆盖范围
 
-| Scenario | Recommendation |
+当前覆盖约 12 种常见 hCaptcha 题型（看上面表格）。遇到没见过的 prompt 时：
+
+- VLM 启用：仍尝试 VLM 直出坐标 / 候选框决策
+- VLM 失败：抛 `unknown_prompt` 错误
+- 调试信息保存到 `out_dir` 供后续分析
+
+每加一种新题型大概需要：
+
+- 100–500 张该题型截图（用过去 daemon 跑出来的 `round_XX.png` 攒）
+- 读 prompt 文本找模式
+- 写匹配函数 + solver
+- 集成测试
+
+---
+
+## 性能调优建议
+
+| 场景 | 建议 |
 |---|---|
-| **VLM slow** | Reduce `vlm.timeout_s`, degrade early to heuristics |
-| **VLM inaccurate** | Switch to stronger model (`gpt-4o` → `claude-opus-4-7`), or modify system prompt |
-| **CLIP slow** | Use GPU venv (`pip install torch --index-url https://download.pytorch.org/whl/cu121`) |
-| **Too many retries** | Reduce `max_click_retries` / `max_drag_retries`, let daemon re-run instead of retrying within solver |
-| **Problem type not covered** | Add new solver (see above) |
+| **VLM 慢** | 调小 `vlm.timeout_s`，提前降级到启发式 |
+| **VLM 不准** | 换更强的模型（`gpt-4o` → `claude-opus-4-7`），或者改 system prompt |
+| **CLIP 慢** | 用 GPU venv（`pip install torch --index-url https://download.pytorch.org/whl/cu121`） |
+| **重试太多** | 调小 `max_click_retries` / `max_drag_retries`，让 daemon 重跑而不是 solver 内 retry |
+| **题型未覆盖** | 加新 solver（看上面） |
