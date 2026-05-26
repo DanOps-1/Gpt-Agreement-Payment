@@ -20,7 +20,7 @@ End-to-end replay tool for ChatGPT Plus / Team subscription agreements: reverse-
 
 | Logo | Name | Description | Website |
 | --- | --- | --- | --- |
-| <a href="https://api.lukyface.com/" target="_blank"><img src="docs/images/sponsors/lukyface.png" alt="lukyface API" width="140" /></a> | lukyface API (Author-run Relay Station) | Unified AI model aggregation / distribution gateway (based on new-api), OpenAI / Claude / Gemini protocol interconversion, self-use surplus sharing. **Author-run, long-term stable**.<br><br>**Open only to [LINUX DO](https://linux.do/) users** · **Payment in LDC (Linux Do in-site currency) only** · Author-run relay station exchange group: **`1104565621`** | [https://api.lukyface.com/](https://api.lukyface.com/) |
+| <a href="https://api.lukyface.com/" target="_blank"><img src="docs/images/sponsors/lukyface.png" alt="lukyface API" width="140" /></a> | lukyface API (Author-run Relay Station) | Unified AI model aggregation / distribution gateway (based on new-api), OpenAI / Claude / Gemini protocol interconversion, self-use surplus sharing. **Author-run, long-term stable**.<br><br>**Open to everyone** · Author-run relay station exchange group: **`1104565621`** | [https://api.lukyface.com/](https://api.lukyface.com/) |
 
 ---
 
