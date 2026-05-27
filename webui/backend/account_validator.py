@@ -94,14 +94,15 @@ _CHECK_V4_URL = (
 
 
 def _subscription_plan_to_normal(sp: str) -> str:
-    """Normalize OpenAI real-time subscription_plan slug.
+    """Normalize OpenAI 实时 subscription_plan slug.
 
-    Real-world samples:
+    实测样本:
       chatgptplusplan -> plus
       chatgptteamplan -> team
       chatgptproplan  -> pro
-      chatgptfreeplan -> free   (active subscription but free tier, appears outside promo)
-      None / "" + has_active_subscription=False -> free"""
+      chatgptfreeplan -> free   (active subscription 但 free tier, 出现在 promo 之外)
+      None / "" + has_active_subscription=False -> free
+    """
     raw = (sp or "").strip().lower()
     if not raw:
         return ""
@@ -118,14 +119,16 @@ def _subscription_plan_to_normal(sp: str) -> str:
 
 def _probe_check_v4_plan(access_token: str, timeout: float,
                           proxy: Optional[str]) -> tuple[str, str, str]:
-    """Real-time plan detection: GET /backend-api/accounts/check/v4-2023-04-27.
+    """实时 plan 探测: GET /backend-api/accounts/check/v4-2023-04-27.
 
-    Returns (status, plan_type, message). plan_type priority:
-      1. accounts.default.entitlement.subscription_plan (real-time server status)
+    返回 (status, plan_type, message). plan_type 优先级:
+      1. accounts.default.entitlement.subscription_plan (实时 server 状态)
       2. has_active_subscription=False → 'free'
-    Fallback fails with plan_type empty string, letting caller decide whether to fall back to JWT claim.
+    fallback 失败时 plan_type 返空串, 让 caller 决定是否回退 JWT claim。
 
-    Use curl_cffi (impersonate chrome) to avoid OpenAI recognizing as script: httpx+socks has socksio missing on host, curl_cffi is stable across environments."""
+    走 curl_cffi (impersonate chrome) 让 OpenAI 不识别为脚本: httpx+socks 在
+    host 缺 socksio, curl_cffi 跨环境稳。
+    """
     try:
         from curl_cffi import requests as cr
     except Exception as e:
@@ -144,8 +147,8 @@ def _probe_check_v4_plan(access_token: str, timeout: float,
 
     r = None
     last_err = ""
-    # Try proxy first (if provided); fallback to direct connection on proxy failure (ProxyError/network exception), don't let proxy outages mark account invalid
-    # Don't mistakenly flag account as invalid (live API is the only reliable way to judge "real-time plan")
+    # 先试代理(若提供); 代理失败(ProxyError/网络异常)时直连兜底, 别让代理瞬断
+    # 把账号误标 invalid (live API 是判断"实时 plan"的唯一可靠途径)
     tried = []
     if proxy:
         p = proxy.replace("socks5://", "socks5h://")
@@ -194,10 +197,11 @@ def _probe_check_v4_plan(access_token: str, timeout: float,
 
 def _probe_check_v4_plan_via_cookie(account: dict, timeout: float,
                                       proxy: Optional[str]) -> tuple[str, str, str]:
-    """access_token revoke fallback: use session_token cookie to call
-    /backend-api/accounts/check directly (chrome fingerprint + curl_cffi). Cookie references server-side
-    session, has looser revoke boundaries than Bearer JWT, plan changes can still be read from entitlement shortly after.
-    Returns (status, plan_type, message)."""
+    """access_token 被 revoke 时的 fallback: 用 session_token cookie 直接调
+    /backend-api/accounts/check (chrome 指纹 + curl_cffi). cookie 引用 server-side
+    session, 比 Bearer JWT 的 revoke 边界更宽松, plan 变更后短期内仍可读 entitlement.
+    返回 (status, plan_type, message).
+    """
     try:
         from curl_cffi import requests as cr
     except Exception as e:
@@ -274,13 +278,14 @@ def _probe_check_v4_plan_via_cookie(account: dict, timeout: float,
 
 def _refresh_at_via_session_cookie(account: dict, timeout: float,
                                      proxy: Optional[str]) -> tuple[str, str]:
-    """OpenAI revokes old access_token on plan change (e.g. plus activation),
-    /backend-api/accounts/check returns 401 token_invalidated. Use session_token cookie
-    to call NextAuth `/api/auth/session` to get newly signed access_token (with new plan claim).
-    Use curl_cffi (chrome fingerprint) to avoid cookie auth being blocked by CF risk control (httpx + raw
-    requests tested 403 bot challenge).
+    """OpenAI 在 plan 变更 (e.g. plus 激活) 时 revoke 旧 access_token,
+    /backend-api/accounts/check 返 401 token_invalidated. 用 session_token cookie
+    调 NextAuth `/api/auth/session` 拿新签的 access_token (带新 plan claim).
+    走 curl_cffi (chrome 指纹), 避免 cookie auth 被 CF 风控拦截 (httpx + raw
+    requests 实测 403 bot challenge).
 
-    Returns (new_access_token, message). On success, atomically write back to registered_accounts.access_token."""
+    返回 (new_access_token, message). 成功时同步写回 registered_accounts.access_token.
+    """
     try:
         from curl_cffi import requests as cr
     except Exception as e:
@@ -341,7 +346,7 @@ def _refresh_at_via_session_cookie(account: dict, timeout: float,
     if not new_at or new_at.count(".") != 2:
         return "", "session refresh: no accessToken in body"
 
-    # Write back to DB
+    # 写回 DB
     try:
         db = get_db()
         with db._conn() as c:
@@ -536,7 +541,7 @@ def _probe_me_with_bearer(access_token: str, timeout: float,
     if r.status_code == 401:
         return "invalid", "me: http 401 (token expired/revoked)"
     if r.status_code == 403:
-        # /backend-api/me with Bearer generally won't be CF blocked, 403 is mostly banned/disabled
+        # /backend-api/me 走 Bearer 一般不会被 CF 误拦，403 多是 banned/disabled
         return "invalid", "me: http 403"
     return "unknown", f"me: http {r.status_code}"
 
@@ -643,9 +648,10 @@ def validate_account_by_id(account_id: int, *, timeout_s: float = 10.0,
                               use_proxy: bool = True) -> dict:
     """Validate one stored account, persist outcome, return summary.
 
-    Beyond routine liveness check, when access_token exists additionally call /backend-api/accounts/check
-    to get **real-time** plan_type (subscription_plan) and write back to DB. Otherwise relying only on JWT claim will
-    miss plus/team purchased after registration — JWT claim is forever stale at signing time."""
+    除常规探活外, 当有 access_token 时额外调一次 /backend-api/accounts/check
+    拿**实时** plan_type (subscription_plan) 写回 DB. 否则只靠 JWT claim 会
+    miss 注册后买的 plus/team — JWT claim 永远 stale at 签发时刻。
+    """
     db = get_db()
     account = db.get_registered_account(int(account_id))
     if not account:
@@ -654,19 +660,19 @@ def validate_account_by_id(account_id: int, *, timeout_s: float = 10.0,
     status, message = validate_account(account, timeout_s=timeout_s,
                                           use_proxy=use_proxy)
 
-    # Real-time plan detection: takes priority over JWT claim and write to last_plan_type
+    # 实时 plan 探测: 优先于 JWT claim 写回 last_plan_type
     plan_type = ""
     at = (account.get("access_token") or "").strip()
     if at:
         proxy = "socks5://127.0.0.1:18898" if use_proxy and _gost_alive() else None
         live_status, live_plan, live_msg = _probe_check_v4_plan(at, timeout_s, proxy)
-        # access_token revoked by OpenAI on plan change (e.g. plus activation, setup_intent
-        # succeed). On 401 use session_token cookie through NextAuth /api/auth/session
-        # to get newly signed access_token (with new plan claim), re-probe.
-        # access_token revoked by OpenAI on plan change (e.g. plus activation, setup_intent
-        # succeed). On 401 fallback by priority:
-        #   1. cookie directly through check/v4 (session-side revoke looser than Bearer JWT)
-        #   2. NextAuth /api/auth/session to get newly signed access_token and re-probe
+        # access_token 在 plan 变更时被 OpenAI revoke (e.g. plus 激活, setup_intent
+        # succeed). 401 时用 session_token cookie 走 NextAuth /api/auth/session
+        # 拿新签的 access_token (带新 plan claim), 重新 probe.
+        # access_token 在 plan 变更时被 OpenAI revoke (e.g. plus 激活, setup_intent
+        # succeed). 401 时按优先级 fallback:
+        #   1. cookie 直接走 check/v4 (session-side revoke 比 Bearer JWT 宽松)
+        #   2. NextAuth /api/auth/session 拿新签 access_token 再 probe
         if live_status == "invalid" and "401" in (live_msg or "") and account.get("session_token"):
             ck_status, ck_plan, ck_msg = _probe_check_v4_plan_via_cookie(account, timeout_s, proxy)
             print(f"[validator {account_id}] cookie fallback: {ck_msg}")
@@ -681,29 +687,29 @@ def validate_account_by_id(account_id: int, *, timeout_s: float = 10.0,
                     retry_status, retry_plan, retry_msg = _probe_check_v4_plan(at, timeout_s, proxy)
                     live_status, live_plan, live_msg = retry_status, retry_plan, f"refreshed-AT | {retry_msg}"
         if live_status == "valid":
-            # curl_cffi+chrome impersonate 200 OK from /backend-api/accounts/check is
-            # a more reliable "token valid" signal than httpx /me 403 (httpx lacks browser fingerprint often CF blocks incorrectly).
-            # Elevate status to valid, avoid incorrectly deleting usable accounts.
+            # curl_cffi+chrome impersonate 200 OK from /backend-api/accounts/check 是
+            # 比 httpx /me 403 更可靠的"token 有效"信号 (httpx 缺浏览器指纹常被 CF 误拦)。
+            # 提升状态到 valid, 避免误删能用的账号。
             if status != "valid":
                 status = "valid"
                 message = f"{message} | {live_msg}" if message else live_msg
             if live_plan and live_plan != "unknown":
                 plan_type = live_plan
         elif live_status == "invalid":
-            # Live API also explicitly signals 401/403 → elevate confidence in status
+            # 实时 API 也明确说 401/403 → 提升对 status 的信心
             status = "invalid"
             message = f"{message} | {live_msg}" if message else live_msg
         else:
-            # live API unknown (proxy/network hiccup): don't trust httpx /me invalid,
-            # because httpx lacks browser fingerprint often CF blocks 403 (real-world testing multiple valid plus accounts were misidentified this way).
-            # Downgrade invalid → unknown to protect account, wait for proxy recovery to re-judge.
+            # live API unknown (代理/网络瞬断): 不要 trust httpx /me 的 invalid,
+            # 因为 httpx 缺浏览器指纹常被 CF 误拦 403 (实测多个有效 plus 账号被这么误判)。
+            # 降级 invalid → unknown 保护好账号, 等下次代理恢复再判断。
             if status == "invalid" and "403" in (message or ""):
                 status = "unknown"
                 message = f"httpx 说 invalid 但 live API 不可达, 不下结论: {message} | {live_msg}"
         if not plan_type and live_status != "valid":
-            # Only fallback JWT claim when live API explicitly gives no plan (stale, but better than nothing).
-            # Note: when live_status==valid but plan empty, don't fallback, avoid writing JWT stale free
-            # to account already confirmed by live API as active subscription.
+            # 只有 live API 没明确给 plan 时才 fallback JWT claim (stale, 但聊胜于无).
+            # 注意 live_status==valid 但 plan 空时不 fallback, 避免把 JWT stale 的 free
+            # 写到已经被 live API 确认订阅 active 的账号上。
             plan_type = _access_token_plan_type(at)
 
     db.update_account_check(int(account_id), status, message, plan_type=plan_type)

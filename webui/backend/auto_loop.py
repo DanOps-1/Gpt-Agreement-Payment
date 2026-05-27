@@ -59,15 +59,15 @@ _state = {
     "ip_rotations": 0,
     "scrap_marked": [],   # list of {email, kind, ts}
     "mode_args": {},
-    # ── Multi-zone domain rotation (reference daemon implementation) ──
-    "zone_list": [],            # From cardw mail.catch_all_domains
+    # ── 多 zone 域名轮换（参考 daemon 实现） ──
+    "zone_list": [],            # 来自 cardw mail.catch_all_domains
     "zone_idx": 0,
     "current_zone": "",
     "zone_reg_fail_streak": 0,
     "zone_ip_rotations": 0,
     "total_zone_rotations": 0,
-    "zone_rotate_on_reg_fails": 3,    # Register hanging N times cutting zone (default 3)
-    "zone_rotate_after_ip_rotations": 2,  # Switch zone after rotating IP N times in the current zone (default 2)
+    "zone_rotate_on_reg_fails": 3,    # 注册连挂 N 次切 zone（默认 3）
+    "zone_rotate_after_ip_rotations": 2,  # 当前 zone 内 IP 轮换 N 次也切 zone（默认 2）
 }
 
 
@@ -106,12 +106,11 @@ def _classify(tail_lines: list[str]) -> str:
 
 
 def _extract_email(tail_lines: list[str]) -> str:
-    """Get the last (most recent) matched email from tail.
+    """取 tail 里最后（最新）一条匹配的 email。
 
-    When auto-loop preserves log buffer across iters, the buffer head may still
-    contain emails from the previous round or earlier; the one obtained with
-    `re.search` would be the earliest one, which doesn't match the current iter.
-    Use `findall` instead to get the last matched one."""
+    auto-loop 跨 iter 保留 log buffer 时，buffer 头部可能还有上一轮甚至更早的
+    email；用 `re.search` 拿到的会是最早一条，跟当前 iter 不符。改用
+    `findall` 取末尾匹配。"""
     text = "\n".join(tail_lines)
     for rgx in _ACCOUNT_LOG_RES:
         matches = rgx.findall(text)
@@ -202,17 +201,17 @@ def _loop_body(*, target_success: int, max_consec_fail: int, mode_args: dict):
         logger.info(msg_start)
         runner.append_log(msg_start)
 
-        # Clear wa_state.latest to prevent the previous round's residual OTP (left by manual modal) from
-        # This round of gopay polling mistakenly consumed → GoPay validate-otp 400.
+        # 清掉 wa_state.latest 防止上一轮残留 OTP（手动模态框留下的）被
+        # 这一轮的 gopay polling 误吃 → GoPay validate-otp 400。
         try:
             get_db().delete_runtime_key("wa_state")
             runner.append_log("[auto-loop] cleared wa_state.latest (避免 stale OTP)")
         except Exception as e:
             runner.append_log(f"[auto-loop] 清 wa_state 失败: {e}")
 
-        # Automatically unlink the phone that was marked as linked after the previous round succeeded: pre-check for runner.start
-        # Seeing 409 rejection in linked state will cause continuous multi-iter self-deadlock. auto-loop has full control
-        # Own state, before each round starts, first convert the current configured phone to unlinked.
+        # 自动 unlink 上一轮成功后被 mark linked 的 phone：runner.start 的预检
+        # 看到 linked 状态会 409 拒绝，连续多 iter 自我锁死。auto-loop 全权管理
+        # 自己的状态，每轮开始前都先把当前配置 phone 翻为 unlinked。
         try:
             from . import settings as _s
             import json as _json
@@ -224,10 +223,10 @@ def _loop_body(*, target_success: int, max_consec_fail: int, mode_args: dict):
         except Exception as e:
             runner.append_log(f"[auto-loop] auto-unlink 失败: {e}")
 
-        # Inject environment variable to skip [registration phase] garbage logic:
-        # - Registration phase Codex RT exchange / token brute-force exchange (12 mode 401 all failed)
-        # Payment phase [RT] process **RETAINED**: After successful payment, must go through RT to obtain refresh_token,
-        # Otherwise, the CPA can only use the bare access_token for forwarding (the access_token becomes useless once it expires).
+        # 注入跳过【注册阶段】废物逻辑的环境变量：
+        # - 注册阶段 Codex RT 交换 / token brute-force exchange (12 mode 401 全失败)
+        # 支付阶段的 [RT] 流程**保留**：支付成功后必须走 RT 拿 refresh_token，
+        # 否则 CPA 只能用 access_token 裸导（access_token 一过期号就废了）。
         iter_env = {
             "OAUTH_CODEX_RT_EXCHANGE": "0",
             "OAUTH_CODEX_RT_BEFORE_CALLBACK": "0",
@@ -235,8 +234,8 @@ def _loop_body(*, target_success: int, max_consec_fail: int, mode_args: dict):
             "SKIP_OAUTH_TOKEN_EXCHANGE": "1",
         }
 
-        # Multi-zone domain rotation: current zone is written to WEBUI_FORCE_ZONE, pipeline DomainPool
-        # After reading, it will filter the pool to keep only the domain of this one zone.
+        # 多 zone 域名轮换：当前 zone 写到 WEBUI_FORCE_ZONE，pipeline DomainPool
+        # 读到后会过滤池只留这一个 zone 的域。
         with _lock:
             cur_zone = _state.get("current_zone", "")
         if cur_zone:
@@ -293,9 +292,9 @@ def _loop_body(*, target_success: int, max_consec_fail: int, mode_args: dict):
                 _state["zone_ip_rotations"] = 0
                 _state["last_action"] = f"success ({email or '?'})"
         elif kind == "already_paid":
-            # Hit a paid account — not counted as a failure (no increase to fail / consecutive_fail)
-            # The pre-recording of card.py has written this email into card_results, next round
-            # _paid_or_consumed_emails() will filter it out.
+            # 命中已付费账号 — 不算失败（不增 fail / consecutive_fail），
+            # card.py 的预记录已把这个 email 写进 card_results，下一轮
+            # _paid_or_consumed_emails() 会过滤掉它。
             with _lock:
                 _state["last_action"] = f"已付费账号被选中 ({email or '?'})，已标记跳过下次"
             time.sleep(inter_iter_sleep)
@@ -345,7 +344,7 @@ def _loop_body(*, target_success: int, max_consec_fail: int, mode_args: dict):
                 _state["last_action"] = action
             logger.info(f"[auto-loop] iter {iter_no} {kind} → {action}")
 
-        # Multi-zone rotation check: switch to next zone when reg_fail_streak or zone_ip_rotations reaches threshold
+        # 多 zone 轮换检查：reg_fail_streak 或 zone_ip_rotations 达阈值就切下一个 zone
         with _lock:
             zlist = list(_state.get("zone_list") or [])
             if len(zlist) > 1:
@@ -386,7 +385,7 @@ def _loop_body(*, target_success: int, max_consec_fail: int, mode_args: dict):
 
 
 def _load_zone_list_from_cardw() -> list:
-    """Read mail.catch_all_domains from CTF-reg/config.paypal-proxy.json."""
+    """从 CTF-reg/config.paypal-proxy.json 读 mail.catch_all_domains。"""
     import json
     from pathlib import Path
     from . import settings as s

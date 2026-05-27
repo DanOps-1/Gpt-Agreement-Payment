@@ -1,6 +1,7 @@
-"""ChatGPT / OpenAI RS256 JWT, this module decodes the payload + extracts email / plan / expiration check.
+"""ChatGPT / OpenAI 用 RS256 JWT，本模块解 payload + 拆 email / plan / 过期判定。
 
-No signature verification (scenarios using OpenAI public key are held by specific business parties), only base64 decodes the middle segment."""
+不做签名校验（用 OpenAI 公钥的场景由具体业务方持有），只 base64 解中段。
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""`python -m qris` entry point (cwd=CTF-pay)."""
+"""`python -m qris` 入口 (cwd=CTF-pay)。"""
 
 from qris._monolith import main
 

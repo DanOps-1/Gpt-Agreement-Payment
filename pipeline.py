@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Compatibility shim: old calls `python pipeline.py …` are passed through to the `pipeline/` package.
+"""兼容 shim：旧调用 `python pipeline.py …` 透传到 `pipeline/` 包。
 
-The new way is `python -m pipeline …`. The actual entry point and all code are in `pipeline/_monolith.py`,
-later Wave will further incrementally split modes/spawn/infra/oauth/util submodules."""
+新写法是 `python -m pipeline …`。实际入口与全部代码在 `pipeline/_monolith.py`,
+后续 Wave 会再增量拆 modes/spawn/infra/oauth/util 子模块。
+"""
 
 from pipeline.__main__ import main
 

@@ -1,20 +1,21 @@
 """Cloudflare KV-backed OTP provider (replaces IMAP polling).
 
 Email lifecycle:
-  Sender → CF MX (catch-all) → Email Worker(otp-relay) → KV write
-  pipeline → wait_for_otp() → KV read → Get 6-digit code
+  发件人 → CF MX (catch-all) → Email Worker(otp-relay) → KV write
+  pipeline → wait_for_otp() → KV read → 拿到 6 位码
 
-Worker (scripts/otp_email_worker.js) parses OTP and stores it in KV:
+Worker（scripts/otp_email_worker.js）会把 OTP 解析后存到 KV：
   key   = recipient email (lowercased)
   value = JSON {otp, ts (ms), from, subject}
   TTL   = 600s
 
-Configuration (by priority):
+Configuration（按优先级）：
   1. env vars: CF_API_TOKEN / CF_ACCOUNT_ID / CF_OTP_KV_NAMESPACE_ID
   2. SQLite runtime_meta[secrets]: cloudflare.{api_token, account_id, otp_kv_namespace_id}
 
-Enable by setting env var OTP_BACKEND=cf_kv to route
-mail_provider.wait_for_otp / card.py:_fetch_openai_login_otp through this path."""
+启用方式：设环境变量 OTP_BACKEND=cf_kv 即可让
+mail_provider.wait_for_otp / card.py:_fetch_openai_login_otp 走这条路。
+"""
 from __future__ import annotations
 
 import json
@@ -62,7 +63,7 @@ class CloudflareKVOtpProvider:
         self.poll_interval_s = max(0.2, poll_interval_s)
         self.delete_after_read = delete_after_read
         self._opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({})  # Same approach as pipeline.py, bypass http_proxy
+            urllib.request.ProxyHandler({})  # 跟 pipeline.py 同款，避开 http_proxy
         )
 
     @classmethod
@@ -84,9 +85,9 @@ class CloudflareKVOtpProvider:
                 cf = {}
                 if isinstance(secrets, dict):
                     cf = secrets.get("cloudflare") or {}
-                # kv_api_token is a KV/Workers-specific token (in practice the one used for DNS
-                # token and KV token are often different, with different permissions), prioritize reading it,
-                # fallback to api_token for compatibility.
+                # kv_api_token 是 KV/Workers 专用 token（实践中 DNS 用的
+                # token 跟 KV 用的常是不同 token，权限不同），优先读它，
+                # 落回 api_token 做兼容。
                 token = token or (
                     cf.get("kv_api_token")
                     or cf.get("api_token")
@@ -97,8 +98,8 @@ class CloudflareKVOtpProvider:
             except Exception as e:
                 logger.warning(f"读 SQLite secrets 失败: {e}")
 
-        # When secrets_path is explicitly passed, still allow reading from file for offline/single-file debugging;
-        # regular webui/pipeline paths no longer depend on legacy secrets file.
+        # 显式传入 secrets_path 时仍允许读取文件，便于离线/单文件调试；
+        # 常规 webui/pipeline 路径不再依赖 legacy secrets file。
         if secrets_path and not (token and account_id and kv_id) and secrets_path.exists():
             try:
                 secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
@@ -174,7 +175,7 @@ class CloudflareKVOtpProvider:
                 try:
                     return json.loads(raw)
                 except Exception:
-                    # compatible with worker possibly writing OTP string directly
+                    # 兼容 worker 可能直接写 OTP 字符串的情况
                     raw = raw.strip()
                     if raw.isdigit() and len(raw) == 6:
                         return {"otp": raw, "ts": 0}
@@ -212,11 +213,11 @@ class CloudflareKVOtpProvider:
         key = email_addr.strip().lower()
         if issued_after is None:
             issued_after = time.time()
-        # relaxed grace to 600s — equivalent to Worker's KV write TTL:
-        # in signup scenarios, each time uses a fresh random email (catch-all domain), anything in KV that matches
-        # must be from the email triggered by this signup; OpenAI often sends OTP instantly on email submission,
-        # while wait_for_otp is called only when on the OTP page, the gap between them can be 30-60s,
-        # using narrow grace would discard the real OTP as stale (confirmed in testing).
+        # 放宽 grace 到 600s —— 等同 Worker 写 KV 的 TTL：
+        # 注册场景下每次都是全新随机邮箱（catch-all 域），KV 里能命中的
+        # 一定是当次注册触发的邮件；OpenAI 常常在 email 提交瞬间就发 OTP，
+        # 而 wait_for_otp 在 OTP 页面才被调用，两者间可能差 30-60s，
+        # 用窄 grace 会把真正的 OTP 当成旧值丢弃（实测命中点）。
         accept_threshold_s = issued_after - 600.0
 
         deadline = time.time() + timeout
@@ -239,7 +240,7 @@ class CloudflareKVOtpProvider:
             if payload and payload.get("otp"):
                 ts_ms = payload.get("ts") or 0
                 ts_s = ts_ms / 1000.0 if ts_ms > 1e10 else float(ts_ms)
-                # ts too old (fallback, leftover from previous run) → ignore, continue polling
+                # ts 太老（fallback、上一次 run 残留）→ 忽略，继续轮
                 if ts_s and ts_s < accept_threshold_s:
                     if time.time() - last_log_at > 10:
                         logger.info(

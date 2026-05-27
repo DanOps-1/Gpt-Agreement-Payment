@@ -4,25 +4,25 @@
       <div class="brand">
         <span class="brand-prompt">$</span>
         <span class="brand-name">gpt-pay</span>
-        <span class="brand-sub">// Outlook Account Pool</span>
+        <span class="brand-sub">// Outlook 账号池</span>
         <span class="brand-clock">{{ clock }}</span>
       </div>
       <div class="run-nav">
-        <RouterLink to="/wizard" class="nav-link">Configuration Wizard</RouterLink>
-        <RouterLink to="/run" class="nav-link">Run</RouterLink>
-        <RouterLink to="/promo-links" class="nav-link">Promo Long Links</RouterLink>
+        <RouterLink to="/wizard" class="nav-link">配置向导</RouterLink>
+        <RouterLink to="/run" class="nav-link">运行</RouterLink>
+        <RouterLink to="/promo-links" class="nav-link">Promo 长链接</RouterLink>
         <RouterLink to="/whatsapp" class="nav-link">WhatsApp</RouterLink>
-        <button class="header-btn" @click="logout">Logout</button>
+        <button class="header-btn" @click="logout">退出</button>
       </div>
     </header>
 
     <main class="ol-main">
       <section class="ol-panel">
-        <div class="term-divider" data-tail="──────────">Batch Import</div>
-        <h2 class="ol-title">Outlook SMS Reception Pool<span class="term-cursor"></span></h2>
+        <div class="term-divider" data-tail="──────────">批量导入</div>
+        <h2 class="ol-title">Outlook 接码池<span class="term-cursor"></span></h2>
         <p class="ol-sub">
-          One entry per line in 4-segment format (SMS service standard): <code>email----password----client_id----refresh_token</code>.
-          Empty lines / lines starting with <code>#</code> are automatically skipped. When QRIS+pay-only is selected on the Run page, an available account is automatically claimed from here to register ChatGPT and proceed with 1 IDR trial.
+          每行一条 4 段格式（接码服务标准）：<code>email----password----client_id----refresh_token</code>。
+          空行 / <code>#</code> 开头自动跳过。Run 页选 QRIS+pay-only 时自动从这里 claim 下一个 available 账号注册 ChatGPT 并走 1 IDR 试用。
         </p>
 
         <div class="ol-stats">
@@ -41,37 +41,37 @@
           rows="10"
           placeholder="email1@outlook.jp----pwd1----9e5f...----M.C5...
 email2@outlook.com----pwd2----9e5f...----M.C5...
-# Comment lines can be added"
+# 可加注释行"
         />
 
         <div class="ol-actions">
           <button class="header-btn" :disabled="busy || !text.trim()" @click="doImport">
-            Import to DB
+            导入入库
           </button>
-          <button class="header-btn ghost" @click="loadList">Refresh List</button>
+          <button class="header-btn ghost" @click="loadList">刷新列表</button>
           <button class="header-btn ghost" :disabled="busy || revalidating" @click="doRevalidateAll">
-            {{ revalidating ? "Validating..." : "Revalidate All Pool (RT+IMAP)" }}
+            {{ revalidating ? "验证中..." : "重新验证全池 (RT+IMAP)" }}
           </button>
           <button class="header-btn ghost" :disabled="!!refreshing || deadCount === 0" @click="doBatchRefresh">
             <template v-if="refreshing">
-              Batch Refreshing {{ refreshProgress.done }}/{{ refreshProgress.total }} ({{ refreshing }})
+              批量刷新中 {{ refreshProgress.done }}/{{ refreshProgress.total }} ({{ refreshing }})
             </template>
             <template v-else>
-              Batch Refresh Invalid RT ({{ deadCount }} dead)
+              批量刷新失效 RT ({{ deadCount }} 个 dead)
             </template>
           </button>
           <span v-if="lastImport" class="ol-imp-msg">
-            Parsed {{ lastImport.parsed }} / New {{ lastImport.inserted }} / Updated {{ lastImport.updated }} / Skipped {{ lastImport.skipped }}
+            解析 {{ lastImport.parsed }} / 新入 {{ lastImport.inserted }} / 更新 {{ lastImport.updated }} / 跳过 {{ lastImport.skipped }}
             <template v-if="lastImport.validated">
               · <span :class="lastImport.invalid_imap ? 'ol-imp-bad' : 'ol-imp-good'">
-                IMAP Validation {{ lastImport.valid_imap }} passed / {{ lastImport.invalid_imap }} rejected
+                IMAP 验证 {{ lastImport.valid_imap }} 通 / {{ lastImport.invalid_imap }} 拒
               </span>
             </template>
           </span>
           <div v-if="lastImport && lastImport.fail_reasons && Object.keys(lastImport.fail_reasons).length" class="ol-imp-reasons">
-            <div class="ol-imp-reasons-title">Failure Reasons Summary:</div>
+            <div class="ol-imp-reasons-title">失败原因汇总:</div>
             <div v-for="(n, reason) in lastImport.fail_reasons" :key="reason" class="ol-imp-reasons-row">
-              <span class="ol-imp-reasons-n">{{ n }} items</span>
+              <span class="ol-imp-reasons-n">{{ n }} 个</span>
               <span>{{ reason }}</span>
             </div>
           </div>
@@ -82,11 +82,11 @@ email2@outlook.com----pwd2----9e5f...----M.C5...
           </div>
         </div>
 
-        <div class="term-divider" data-tail="──────────">List</div>
+        <div class="term-divider" data-tail="──────────">列表</div>
         <div class="ol-filter">
-          <label>Status Filter:</label>
+          <label>状态过滤：</label>
           <select v-model="statusFilter" @change="loadList">
-            <option value="">All</option>
+            <option value="">全部</option>
             <option value="available">available</option>
             <option value="in_use">in_use</option>
             <option value="used">used</option>
@@ -94,17 +94,17 @@ email2@outlook.com----pwd2----9e5f...----M.C5...
           </select>
         </div>
         <div v-if="items.length === 0" class="ol-empty">
-          {{ statusFilter ? `No ${statusFilter} status accounts` : "Pool is empty, import first" }}
+          {{ statusFilter ? `无 ${statusFilter} 状态账号` : "池为空，先导入" }}
         </div>
         <table v-else class="ol-table">
           <thead>
             <tr>
               <th>email</th>
-              <th>status</th>
-              <th>import time</th>
-              <th>usage time</th>
-              <th>chatgpt email</th>
-              <th>error</th>
+              <th>状态</th>
+              <th>导入时间</th>
+              <th>使用时间</th>
+              <th>chatgpt 邮箱</th>
+              <th>错误</th>
               <th></th>
             </tr>
           </thead>
@@ -117,10 +117,10 @@ email2@outlook.com----pwd2----9e5f...----M.C5...
               <td>{{ row.chatgpt_email || "—" }}</td>
               <td>{{ row.fail_reason || "—" }}</td>
               <td>
-                <button class="link-btn" :disabled="refreshing === row.email" @click="doRefreshOne(row.email)" :title="`OAuth Code Flow to get new refresh_token (~30s)`">
-                  {{ refreshing === row.email ? "Refreshing..." : "Refresh RT" }}
+                <button class="link-btn" :disabled="refreshing === row.email" @click="doRefreshOne(row.email)" :title="`OAuth Code Flow 重新拿新 refresh_token (~30s)`">
+                  {{ refreshing === row.email ? "刷新中..." : "刷新RT" }}
                 </button>
-                <button class="link-btn danger" @click="doDelete(row.email)" :disabled="!!refreshing">Delete</button>
+                <button class="link-btn danger" @click="doDelete(row.email)" :disabled="!!refreshing">删</button>
               </td>
             </tr>
           </tbody>
@@ -144,9 +144,9 @@ const lastImport = ref<any>(null);
 const busy = ref(false);
 const statusFilter = ref("");
 
-// OAuth refresh-rt status
+// OAuth refresh-rt 状态
 const revalidating = ref(false);
-const refreshing = ref<string>("");  // Currently running email; empty = idle
+const refreshing = ref<string>("");  // 当前正在跑的 email; 空 = idle
 const refreshProgress = ref({ done: 0, total: 0 });
 const refreshLog = ref<Array<{ time: string; text: string; kind: "ok" | "err" | "info" }>>([]);
 const deadCount = computed(() => stats.value.dead || 0);
@@ -161,7 +161,7 @@ function pushLog(text: string, kind: "ok" | "err" | "info" = "info") {
 async function doRevalidateAll() {
   if (revalidating.value) return;
   revalidating.value = true;
-  pushLog(`Starting pool revalidation (concurrency 8, non-used emails)...`, "info");
+  pushLog(`重新验证全池启动 (并发 8, 非 used 邮箱)...`, "info");
   try {
     const r = await api.post<{
       scanned: number; valid_imap: number; invalid_imap: number;
@@ -169,24 +169,24 @@ async function doRevalidateAll() {
       fail_reasons: Record<string, number>; elapsed: number;
     }>("/outlook/revalidate-all", { include_used: false, concurrency: 8 }, { timeout: 600000 });
     const d = r.data;
-    pushLog(`✓ Completed ${d.scanned} accounts / ${d.valid_imap} passed / ${d.invalid_imap} rejected (${d.elapsed}s, concurrency 8)`,
+    pushLog(`✓ 完成 ${d.scanned} 号 / ${d.valid_imap} 通 / ${d.invalid_imap} 拒 (${d.elapsed}s, 并发 8)`,
             d.invalid_imap > 0 ? "info" : "ok");
     for (const t of d.transitions.slice(0, 20)) {
       const kind = t.to === "available" ? "ok" : (t.to === "dead" ? "err" : "info");
       pushLog(`  ${t.email}: ${t.from} → ${t.to}`, kind);
     }
     if (d.transitions.length > 20) {
-      pushLog(`  ...and ${d.transitions.length - 20} more status changes not listed`, "info");
+      pushLog(`  ...还有 ${d.transitions.length - 20} 个状态变化未列`, "info");
     }
     if (Object.keys(d.fail_reasons).length) {
-      pushLog(`Failure reason distribution:`, "info");
+      pushLog(`失败原因分布:`, "info");
       for (const [reason, n] of Object.entries(d.fail_reasons)) {
         pushLog(`  [${n}] ${reason}`, "err");
       }
     }
     await loadList();
   } catch (e: any) {
-    pushLog(`✗ Validation failed: ${e?.response?.data?.detail || e.message}`, "err");
+    pushLog(`✗ 验证失败: ${e?.response?.data?.detail || e.message}`, "err");
   } finally {
     revalidating.value = false;
   }
@@ -194,11 +194,11 @@ async function doRevalidateAll() {
 
 async function doRefreshOne(email: string): Promise<boolean> {
   if (refreshing.value) {
-    alert("A refresh task is already running, please wait for it to complete");
+    alert("已有刷新任务在跑, 等它完成再来");
     return false;
   }
   refreshing.value = email;
-  pushLog(`${email}: Starting OAuth Code Flow (~30s)...`, "info");
+  pushLog(`${email}: 开始 OAuth Code Flow (~30s)...`, "info");
   try {
     const r = await api.post<{ ok: boolean; email: string; error?: string; new_rt_prefix?: string; imap_alive?: boolean; status?: string }>(
       "/outlook/refresh-rt",
@@ -207,11 +207,11 @@ async function doRefreshOne(email: string): Promise<boolean> {
     );
     const d = r.data;
     if (d.ok) {
-      pushLog(`${email}: ✓ Success → status=available, IMAP passed, RT=${d.new_rt_prefix}`, "ok");
+      pushLog(`${email}: ✓ 成功 → status=available, IMAP 已通, RT=${d.new_rt_prefix}`, "ok");
       await loadList();
       return true;
     } else if (d.new_rt_prefix && d.imap_alive === false) {
-      pushLog(`${email}: △ Got RT but IMAP still rejected → marked dead (${d.error})`, "err");
+      pushLog(`${email}: △ 拿到 RT 但 IMAP 仍拒 → 标 dead (${d.error})`, "err");
       await loadList();
       return false;
     } else {
@@ -220,7 +220,7 @@ async function doRefreshOne(email: string): Promise<boolean> {
     }
   } catch (e: any) {
     const detail = e?.response?.data?.detail || e.message || String(e);
-    pushLog(`${email}: ✗ HTTP/Network ${detail}`, "err");
+    pushLog(`${email}: ✗ HTTP/网络 ${detail}`, "err");
     return false;
   } finally {
     refreshing.value = "";
@@ -228,25 +228,25 @@ async function doRefreshOne(email: string): Promise<boolean> {
 }
 
 async function doBatchRefresh() {
-  // Get all current dead emails; run individually (avoid container Firefox resource contention)
+  // 取当前所有 dead 邮箱; 逐个跑(避免容器多个 firefox 抢资源)
   const r = await api.get("/outlook/list", { params: { limit: 500, status: "dead" } });
   const deadEmails: string[] = (r.data?.items || []).map((x: any) => x.email);
   if (!deadEmails.length) {
-    pushLog("No dead emails to refresh", "info");
+    pushLog("无 dead 邮箱可刷新", "info");
     return;
   }
-  if (!confirm(`Will run OAuth Code Flow individually to refresh refresh_token for ${deadEmails.length} dead emails, estimated ~${Math.ceil(deadEmails.length * 30 / 60)} minutes. Accounts that successfully pass IMAP will be restored to available. Continue?`)) {
+  if (!confirm(`将逐个走 OAuth Code Flow 刷新 ${deadEmails.length} 个 dead 邮箱的 refresh_token, 估计 ~${Math.ceil(deadEmails.length * 30 / 60)} 分钟. 期间能成功 IMAP 的会被恢复 available. 继续?`)) {
     return;
   }
   refreshProgress.value = { done: 0, total: deadEmails.length };
-  pushLog(`Batch refresh started: ${deadEmails.length} dead emails`, "info");
+  pushLog(`批量刷新启动: ${deadEmails.length} 个 dead 邮箱`, "info");
   let ok = 0;
   for (const email of deadEmails) {
     await doRefreshOne(email);
     refreshProgress.value.done += 1;
     if (refreshLog.value[refreshLog.value.length - 1]?.kind === "ok") ok += 1;
   }
-  pushLog(`Batch refresh completed: ${ok}/${deadEmails.length} successful (others IMAP still rejected, see details above)`, "info");
+  pushLog(`批量刷新完成: ${ok}/${deadEmails.length} 成功 (其余 IMAP 仍拒, 见上方明细)`, "info");
   refreshProgress.value = { done: 0, total: 0 };
 }
 
@@ -271,25 +271,25 @@ async function doImport() {
   if (!text.value.trim()) return;
   busy.value = true;
   try {
-    // Automatically runs RT + IMAP validation during import (~5s/account), N accounts ~N*5s blocking, timeout set generously
+    // 入库时自动跑 RT + IMAP 验证 (~5s/号), N 个号 ~N*5s 阻塞, timeout 给宽松点
     const r = await api.post("/outlook/import", { text: text.value }, { timeout: 600000 });
     lastImport.value = r.data;
     text.value = "";
     await loadList();
   } catch (e: any) {
-    alert("Import failed: " + (e?.response?.data?.detail || e.message));
+    alert("导入失败：" + (e?.response?.data?.detail || e.message));
   } finally {
     busy.value = false;
   }
 }
 
 async function doDelete(email: string) {
-  if (!confirm(`Confirm deleting ${email}?`)) return;
+  if (!confirm(`确定删除 ${email}？`)) return;
   try {
     await api.delete(`/outlook/${encodeURIComponent(email)}`);
     await loadList();
   } catch (e: any) {
-    alert("Delete failed: " + (e?.response?.data?.detail || e.message));
+    alert("删除失败：" + (e?.response?.data?.detail || e.message));
   }
 }
 

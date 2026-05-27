@@ -84,7 +84,7 @@ def test_proxy_rotate_calls_pipeline_helper(client, tmp_path, monkeypatch):
 
 
 def test_rotate_webshare_ip_cooldown_returns_cached(monkeypatch):
-    """During cooldown, repeatedly calling _rotate_webshare_ip directly returns the last result without querying the Webshare API."""
+    """冷却内重复调 _rotate_webshare_ip 直接返回上次结果，不查 Webshare API。"""
     import time
     import pipeline as pl
 
@@ -94,7 +94,7 @@ def test_rotate_webshare_ip_cooldown_returns_cached(monkeypatch):
     monkeypatch.setattr(pl, "_LAST_ROTATE_TS", time.time())
     monkeypatch.setattr(pl, "_LAST_ROTATE_PX", cached)
 
-    # Let WebshareClient call fail — ensure we don't penetrate to the API
+    # 让 WebshareClient 调用炸 — 确保我们没穿透到 API
     class Boom:
         def __init__(self, *a, **kw): raise AssertionError("不该实例化 client")
     monkeypatch.setattr(pl, "WebshareClient", Boom)
@@ -106,7 +106,7 @@ def test_rotate_webshare_ip_cooldown_returns_cached(monkeypatch):
 
 
 def test_rotate_webshare_ip_force_bypasses_cooldown(monkeypatch):
-    """# force=True skips cooldown and still triggers the full refresh process."""
+    """force=True 跳过冷却，仍触发完整 refresh 流程。"""
     import time
     import pipeline as pl
 

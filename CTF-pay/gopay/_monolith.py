@@ -48,8 +48,8 @@ from typing import Any, Callable, Optional
 
 import requests
 
-# Cloudflare blocks plain requests with TLS fingerprint (403 + HTML challenge), consistent with card.py using curl_cffi
-# Simulate real Chrome fingerprint.
+# Cloudflare 拦 plain requests 的 TLS 指纹（403 + HTML challenge），跟 card.py 一致用 curl_cffi
+# 模拟真 Chrome 指纹。
 try:
     from curl_cffi.requests import Session as _CurlCffiSession  # type: ignore
 except ImportError:
@@ -81,10 +81,10 @@ GOPAY_PIN_CLIENT_ID_CHARGE = "47180a8e-f56e-11ed-a05b-0242ac120003-GWC"
 
 DEFAULT_TIMEOUT = 30
 LINK_RETRY_LIMIT = 2  # 406 "account already linked" retry
-LINK_RETRY_SLEEP_S = 12.0  # Midtrans requires ~10s cooldown before 406 → 201 (verified in practice)
-# 429 "There's a technical error" risk control trigger condition: SDK path with Authorization
-# Must occur on certain IPs / high-frequency scenarios. Removing Authorization header and resending to same endpoint returns 201
-# + activation_link_url (verified + reverse engineering reference implementation confirmed).
+LINK_RETRY_SLEEP_S = 12.0  # Midtrans 需要冷却 ~10s 才会让 406 → 201（实测）
+# 429 "There's a technical error" 风控触发条件：带 Authorization 的 SDK 路径
+# 在某些 IP / 高频场景必现。剥掉 Authorization 头同 endpoint 重发即返回 201
+# + activation_link_url（实测 + 反向工程参考实现确认）。
 LINK_BYPASS_BODY_HINTS = (
     "technical error",
     "too many",
@@ -106,11 +106,10 @@ class OTPCancelled(GoPayError):
 
 
 class GoPayChargeDenied(GoPayError):
-    """midtrans/charge returns status_code=404 "transaction denied" — GoPay account-level
-    fraud (not device-level). linking already complete, Stripe webhook may trigger
-    plan upgrade asynchronously later. Upper layer can optionally choose fail (requires
-    plus to take effect immediately) vs treat-as-success (allow Stripe webhook async
-    processing, suitable for batch multi-account)."""
+    """midtrans/charge 返 status_code=404 "transaction denied" — GoPay 账号级
+    fraud (非 device-level). linking 已完成, Stripe webhook 可能稍后异步 trigger
+    plan 升级. 上层可选择 fail (要 plus 立即生效) vs treat-as-success (允许
+    Stripe webhook 异步处理, 适合一号多开 batch)."""
 
 
 class GoPayPINRejected(GoPayError):
@@ -154,9 +153,9 @@ class GoPayCharger:
         # are computed by Stripe.js client-side; replay the captured values from
         # config.runtime or HAR. Without them confirm 400.
         self.runtime = runtime_cfg or {}
-        # Optional: GoPay protocol signature configuration (X-E1/X-E2 + RSA pin token).
-        # Default empty dict, keep existing tokenization path unchanged; only when user explicitly
-        # enables gopay.protocol in config will new client be used.
+        # 可选：GoPay 协议签名配置（X-E1/X-E2 + RSA pin token）。
+        # 默认空字典，保持现有 tokenization 路径不变；只有用户在 config 里显式
+        # 打开 gopay.protocol 时才会走新客户端。
         self.protocol_cfg = dict(
             gopay_cfg.get("protocol")
             or gopay_cfg.get("gopay_protocol")
@@ -186,12 +185,12 @@ class GoPayCharger:
     # ───── Step 1-4: ChatGPT/Stripe checkout ─────
 
     def _chatgpt_warmup(self) -> None:
-        """Simulate user browsing behavior on chatgpt.com, give OpenAI fraud detection
-        a "normal user" score. If directly hitting /payments/checkout without warm-up,
-        OpenAI sees fresh session and directly upgrades plan → high fraud score →
-        approve result=blocked.
+        """模拟用户在 chatgpt.com 浏览的行为，给 OpenAI 反欺诈打"normal user"分。
+        如果直接 hit /payments/checkout 不 warm-up，OpenAI 看是 fresh session 直接
+        升级 plan → 反欺诈分高 → approve result=blocked。
 
-        Port warm steps from card.py generate_fresh_checkout (6 critical GETs)."""
+        Port 自 card.py generate_fresh_checkout 的 warm steps（关键 6 个 GET）。
+        """
         warm = [
             ("home", "GET", "https://chatgpt.com/", "text/html"),
             ("auth_session", "GET", "https://chatgpt.com/api/auth/session", "application/json"),
@@ -216,7 +215,7 @@ class GoPayCharger:
                 self.log(f"[gopay:warm] {name} 异常 (吃掉继续): {e}")
 
     def _chatgpt_create_checkout(self) -> str:
-        # Warm-up first, let OpenAI fraud detection treat this session as real user
+        # 先 warm-up，让 OpenAI 反欺诈把这个 session 当真用户
         self._chatgpt_warmup()
         body = {
             "entry_point": "all_plans_pricing_modal",
@@ -232,8 +231,8 @@ class GoPayCharger:
             "https://chatgpt.com/backend-api/payments/checkout",
             json=body, timeout=DEFAULT_TIMEOUT,
         )
-        # 401: last refresh didn't work or session_token also expired — hit /api/auth/session again
-        # Get new access_token and retry
+        # 401: 上次 refresh 没生效或 session_token 也过期 — 再 hit /api/auth/session
+        # 拿一次新 access_token 重试
         if r.status_code == 401:
             self.log("[gopay] /payments/checkout 401，尝试用 /api/auth/session 刷新 access_token 重试")
             try:
@@ -270,8 +269,8 @@ class GoPayCharger:
         return cs_id
 
     def _stripe_create_pm(self, cs_id: str, stripe_pk: str, billing: dict) -> str:
-        # PM billing accepts US address even for IDR plan (HAR verified); provide valid default when empty
-        # Complete required fields (missing any one causes OpenAI fraud score to rise → subsequent chatgpt approve blocked)
+        # PM billing 即使 IDR 计划也接受 US 地址（HAR 验证）；空配置时给个有效默认
+        # 关键字段全套（缺了任何一个 OpenAI 反欺诈分高 → 后续 chatgpt approve blocked）
         runtime_version = self.runtime.get("version") or "fed52f3bc6"
         stripe_js_id = str(uuid.uuid4())
         elements_session_id = f"elements_session_{uuid.uuid4().hex[:11]}"
@@ -354,7 +353,7 @@ class GoPayCharger:
 
     def _stripe_confirm(self, cs_id: str, pm_id: str, stripe_pk: str):
         init_checksum = self._stripe_init(cs_id, stripe_pk)
-        # Stripe needs return_url to push checkout to requires_action (with setup_intent)
+        # Stripe 需要 return_url 才会把 checkout 推进到 requires_action（带 setup_intent）
         chatgpt_return = (
             f"https://chatgpt.com/checkout/verify?stripe_session_id={cs_id}"
             f"&processor_entity=openai_llc&plan_type=plus"
@@ -364,10 +363,10 @@ class GoPayCharger:
             f"https://checkout.stripe.com/c/pay/{cs_id}"
             f"?returned_from_redirect=true&ui_mode=custom&return_url={quote(chatgpt_return, safe='')}"
         )
-        # Critical: subscription mode must pass true amount_due (cannot hardcode "0"),
-        # otherwise stripe won't create PI / setup_intent → next_action always None.
-        # First GET payment_pages to get invoice.amount_due; missing client_betas / TOS consent
-        # are also common reasons for silent stripe rejection (reference CTF-pay/card.py confirm)
+        # 关键：subscription mode 必须传真 amount_due（不能 hardcode "0"），
+        # 否则 stripe 不创建 PI / setup_intent → next_action 永远 None。
+        # 先 GET payment_pages 拿 invoice.amount_due；缺了 client_betas / TOS consent
+        # 也是 stripe 沉默拒绝的常见原因（参考 CTF-pay/card.py confirm）
         amount_due = self._fetch_invoice_amount_due(cs_id, stripe_pk)
         body = {
             "guid": uuid.uuid4().hex,
@@ -384,7 +383,7 @@ class GoPayCharger:
             "elements_session_client[referrer_host]": "chatgpt.com",
             "elements_session_client[is_aggregation_expected]": "false",
             "elements_session_client[elements_init_source]": "custom_checkout",
-            # manual_approval beta: let stripe enter new protocol, confirm will produce setup_intent.next_action
+            # manual_approval beta：让 stripe 进入新协议，confirm 后会出 setup_intent.next_action
             "elements_session_client[client_betas][0]": "custom_checkout_server_updates_1",
             "elements_session_client[client_betas][1]": "custom_checkout_manual_approval_1",
             "client_attribution_metadata[client_session_id]": str(uuid.uuid4()),
@@ -413,7 +412,7 @@ class GoPayCharger:
             f"https://api.stripe.com/v1/payment_pages/{cs_id}/confirm",
             data=body, timeout=DEFAULT_TIMEOUT,
         )
-        # TOS auto retry: some merchants' confirm requires consent, send with this flag first for retry
+        # TOS 自动 retry：有的商户 confirm 会要求 consent，先把这条带上重发一次
         if r.status_code == 400 and "terms of service" in (r.text or "").lower():
             self.log("[gopay] confirm 提示 terms_of_service，已经带 consent 但被拒，retry 一次")
             r = self.ext.post(
@@ -422,13 +421,13 @@ class GoPayCharger:
             )
         if r.status_code != 200:
             raise GoPayError(f"stripe confirm {r.status_code}: {r.text[:400]}")
-        # Save amount_due for subclass (QrisCharger) sanity check:
-        # promo hit should be ≤ 100 IDR (1 IDR test charge); if not hit then full price ~349k IDR.
+        # 保存 amount_due 给子类（QrisCharger）防呆 check 用：
+        # promo 命中时应 ≤ 100 IDR (1 IDR test charge)；不命中则全价 ~349k IDR。
         self._last_amount_due = amount_due
         self.log(f"[gopay] stripe confirm: {r.json().get('payment_status')} amount={amount_due}")
 
     def _fetch_invoice_amount_due(self, cs_id: str, stripe_pk: str) -> int:
-        """GET payment_pages to get invoice.amount_due (subscription mode required)."""
+        """GET payment_pages 拿 invoice.amount_due（subscription mode 必须）。"""
         try:
             r = self.ext.get(
                 f"https://api.stripe.com/v1/payment_pages/{cs_id}",
@@ -468,14 +467,14 @@ class GoPayCharger:
             self.log(f"[gopay] sentinel/ping skipped: {e}")
 
     def _chatgpt_approve(self, cs_id: str, processor_entity: str = "openai_llc"):
-        # sentinel/ping before approve, otherwise approve succeeds but setup_intent doesn't create
+        # sentinel/ping 在 approve 之前刷一下，否则 approve 过但 setup_intent 不创
         self._chatgpt_sentinel_ping()
 
-        # ★CRITICAL★ approve must use a **fresh session with only necessary headers** (reference card.py
+        # ★关键★ approve 必须用一个**只带必要 headers** 的全新 session（参考 card.py
         # _create_chatgpt_http_session + manual_approval approve_headers）。
-        # your own self.cs long-lived session carries bunch of sec-ch-ua / Referer:chatgpt.com/
-        # default headers, will let OpenAI fraud detection recognize as stale checkout context →
-        # directly result=blocked, regardless of IP/email/promo compliance.
+        # 自己 self.cs 的 long-lived session 带了一堆 sec-ch-ua / Referer:chatgpt.com/
+        # 的 default headers，会让 OpenAI 反欺诈识别为 stale checkout context →
+        # 直接 result=blocked，不论 IP/邮箱/promo 是否合规。
         approve_session = _new_session()
         try:
             approve_session.proxies = self.cs.proxies  # type: ignore[attr-defined]
@@ -507,7 +506,7 @@ class GoPayCharger:
         if cookie_header:
             approve_headers["cookie"] = cookie_header
 
-        # Risk control occasional: retry with short delay when result='blocked' (max 3 times)
+        # 风控偶发：result='blocked' 时短延迟再试一次（最多 3 次）
         last_resp_text = ""
         last_resp_status = 0
         for attempt in range(1, 4):
@@ -527,17 +526,17 @@ class GoPayCharger:
             if r.status_code == 200 and result == "approved":
                 self.log("[gopay] chatgpt approved")
                 return
-            # dump full response to help analyze risk control reason (reason / detail / error_code)
+            # dump full response 帮助分析风控原因（reason / detail / error_code）
             self.log(
                 f"[gopay] chatgpt approve attempt {attempt}/3: "
                 f"http={r.status_code} body={last_resp_text[:500]!r}"
             )
             if result == "blocked":
-                # short delay + resend sentinel ping, avoid token stale
+                # 短延迟 + 重发 sentinel ping，避免 token stale
                 time.sleep(2 + attempt * 1.5)
                 self._chatgpt_sentinel_ping()
                 continue
-            # non-blocked: throw HTTP error directly
+            # 非 blocked：HTTP 错误直接抛
             r.raise_for_status()
             raise GoPayError(
                 f"chatgpt approve: result={result!r} body={last_resp_text[:300]}"
@@ -590,9 +589,9 @@ class GoPayCharger:
             )
             if r.status_code == 200:
                 payload = r.json() or {}
-                # OpenAI may use payment_intent / subscription / invoice path after checkout change,
-                # old logic only looks at setup_intent and won't get redirect. Dump all suspicious fields
-                # once for protocol revision.
+                # OpenAI 改 checkout 后可能用 payment_intent / subscription / invoice 路径，
+                # 老逻辑只看 setup_intent 会拿不到 redirect。把可疑字段全 dump 一次便于
+                # 修订 protocol。
                 if not first_dump_done:
                     keys_full = sorted(list(payload.keys()))
                     self.log(f"[gopay] payment_pages keys ({len(keys_full)}): {keys_full}")
@@ -609,8 +608,8 @@ class GoPayCharger:
                     if isinstance(sub, dict):
                         self.log(f"[gopay] subscription keys: {sorted(sub.keys())}")
                     first_dump_done = True
-                # Prioritize setup_intent (old path), fallback payment_intent (new path);
-                # simultaneously scan invoice.payment_intent (subscription mode)
+                # 优先 setup_intent（老路径），回退 payment_intent（新路径）；
+                # 同时扫 invoice.payment_intent（subscription mode）
                 intent = (
                     payload.get("setup_intent")
                     or payload.get("payment_intent")
@@ -673,9 +672,11 @@ class GoPayCharger:
         return {"Authorization": f"Basic {token}"}
 
     def _get_protocol_client(self):
-        """Lazy-load GoPay protocol client.
+        """Lazy-load GoPay 协议客户端。
 
-Only created when config explicitly enables `gopay.protocol.enabled`, to avoid affecting the currently stable `/nb` compatibility path and unit tests."""
+        只在 config 明确启用 `gopay.protocol.enabled` 时才创建，避免影响当前
+        已稳定的 `/nb` 兼容路径与单元测试。
+        """
         if self._protocol_client is not None:
             return self._protocol_client
         if not self.protocol_cfg.get("enabled"):
@@ -1003,7 +1004,11 @@ Only created when config explicitly enables `gopay.protocol.enabled`, to avoid a
     def _midtrans_create_charge(self, snap_token: str) -> str:
         """POST snap/v2/transactions/{snap}/charge → charge_ref like A12...
 
-Raises GoPayChargeDenied if midtrans returns status_code=404 "transaction is denied" — this indicates linking is complete but GoPay account-level fraud rejects the first validation charge. The upper layer can decide whether to treat it as linking-only succeeded (Stripe webhook asynchronously processes setup_intent which may still allow plan upgrade) vs overall failure."""
+        Raises GoPayChargeDenied if midtrans returns status_code=404 "transaction
+        is denied" — 这表示 linking 完成但 GoPay 账号级 fraud 拒绝首笔 validation
+        charge. 上层可决定是否当 linking-only succeeded (Stripe webhook 异步处理
+        setup_intent 仍可能让 plan 升级) vs 整体 fail.
+        """
         url = f"https://app.midtrans.com/snap/v2/transactions/{snap_token}/charge"
         headers = {
             **self._midtrans_basic_auth(),
@@ -1018,8 +1023,8 @@ Raises GoPayChargeDenied if midtrans returns status_code=404 "transaction is den
         )
         r.raise_for_status()
         data = r.json()
-        # GoPay account-level fraud: midtrans returns 404 + "transaction is denied"
-        # status_code is string, not HTTP status (HTTP is always 200/201).
+        # GoPay account-level fraud: midtrans 返 404 + "transaction is denied"
+        # status_code 是 string, 不是 HTTP 状态 (HTTP 总是 200/201).
         sc = str(data.get("status_code", "")).strip()
         msg = str(data.get("status_message", "")).strip()
         if sc in ("404", "401", "402", "403"):
@@ -1037,7 +1042,7 @@ Raises GoPayChargeDenied if midtrans returns status_code=404 "transaction is den
     # ───── Step 14: GoPay charge processing ─────
 
     def _gopay_payment_validate(self, charge_ref: str):
-        # After midtrans creates charge, GoPay backend takes several seconds to fetch; poll until ready
+        # midtrans 创建 charge 后 GoPay 后端要数秒才能 fetch；轮询直到 ready
         for i in range(8):
             r = self.ext.get(
                 f"https://gwa.gopayapi.com/v1/payment/validate?reference_id={charge_ref}",
@@ -1120,7 +1125,9 @@ Raises GoPayChargeDenied if midtrans returns status_code=404 "transaction is den
         return self._run_midtrans_and_gopay(snap_token, cs_id)
 
     def run_from_redirect(self, pm_redirect_url: str, cs_id: str = "") -> dict:
-        """Semi-automated mode: user navigates in browser to the pm-redirects.stripe.com step, pastes the URL; gopay takes over Midtrans linking + OTP + PIN + charge + verify."""
+        """半自动模式：用户在浏览器走到 pm-redirects.stripe.com 那一步，把
+        URL 粘过来；gopay 接管 Midtrans linking + OTP + PIN + 扣款 + verify。
+        """
         snap_token = self._fetch_pm_redirect_snap_token(pm_redirect_url)
         self.log(f"[gopay] midtrans snap_token={snap_token}")
         return self._run_midtrans_and_gopay(snap_token, cs_id)
@@ -1145,8 +1152,8 @@ Raises GoPayChargeDenied if midtrans returns status_code=404 "transaction is den
         self._gopay_validate_pin(reference_id, pin_token)
 
         # ── Charge: second PIN
-        # account-level fraud (charge deny) does not fail the entire flow: linking is already complete,
-        # Stripe webhook may asynchronously upgrade account. Upper layer decides whether to retry based on state.
+        # account-level fraud (charge deny) 不让整条 fail: linking 已完成,
+        # Stripe webhook 异步可能仍升级账号. 上层根据 state 决定是否继续 retry.
         try:
             charge_ref = self._midtrans_create_charge(snap_token)
         except GoPayChargeDenied as e:
@@ -1663,8 +1670,8 @@ def _build_chatgpt_session(auth_cfg: dict) -> Any:
     # Cache device_id on session for subsequent header use
     s._oai_device_id = device_id  # type: ignore[attr-defined]
 
-    # Actively refresh access_token once: old token expiration scenario (pay-only reusing yesterday's registered account)
-    # If not refreshed, the first /payments/checkout call will return 401.
+    # 主动刷一次 access_token：旧 token 过期场景（pay-only 复用昨天注册的账号）
+    # 不刷的话第一个 /payments/checkout 调用会 401。
     if session_token or cookie_header:
         try:
             r = s.get(

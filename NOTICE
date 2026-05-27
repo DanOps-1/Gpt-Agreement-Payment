@@ -1,231 +1,208 @@
 ================================================================================
-gpt-pp-team — TERMS OF USE AND DISCLAIMER (NOTICE)
+gpt-pp-team — 使用须知与免责声明 (NOTICE)
 ================================================================================
 
-         This document is legally binding. Cloning / running / modifying / distributing
-         this project constitutes your acknowledgment that you have fully read,
-         completely understood, and explicitly accepted all terms below. If you cannot
-         accept any single term — do not use this project and do not retain any copies.
+         本文件具有法律约束力。clone / 运行 / 修改 / 分发本项目即视为
+         你已完整阅读、完全理解、并明确接受下文全部条款。如有任何一
+         条不能接受 —— 不要使用本项目，不要保留任何副本。
 
 ================================================================================
-0. AS-IS AND NO WARRANTIES
+0. AS-IS 与无任何担保
 ================================================================================
 
-This project ("gpt-pp-team", including all source code, documentation, and research
-materials) is provided on an **"AS IS"** and **"AS AVAILABLE"** basis, **without
-any warranties of any kind**, including but not limited to:
+本项目（"gpt-pp-team"，含全部源代码、文档、研究材料）按 **"现状（AS IS）"**
+和 **"按可用情况（AS AVAILABLE）"** 提供，**不附任何形式的担保**，包括但不
+限于：
 
-  - merchantability
-  - fitness for a particular purpose
-  - non-infringement
-  - security, stability, reliability, accuracy
-  - continued compatibility with third-party services (OpenAI, Stripe, PayPal,
-    Cloudflare, hCaptcha, etc.)
-  - any implied warranties
+  - 适销性 (merchantability)
+  - 适用于特定用途 (fitness for a particular purpose)
+  - 不侵权 (non-infringement)
+  - 安全性、稳定性、可靠性、准确性
+  - 与第三方服务（OpenAI、Stripe、PayPal、Cloudflare、hCaptcha 等）的
+    持续兼容性
+  - 任何隐含承诺
 
-You assume sole responsibility for all risks and consequences that may result from
-using this project.
-
-================================================================================
-1. What is This Project
-================================================================================
-
-This project is an end-to-end replay and research toolkit for the ChatGPT Team
-subscription protocol. It reverses the protocol chain from mitmproxy packet captures
-and implements it as a runnable client, for:
-
-  - Protocol analysis and replay in CTF (Capture The Flag) challenges
-  - Security research within explicitly in-scope assets of public bug bounty programs
-    (HackerOne / Bugcrowd / etc.)
-  - Adversarial ML research on visual CAPTCHA systems such as hCaptcha
-  - Research and education in browser automation anti-detection techniques
-
-Empirical research materials regarding anti-fraud mechanisms in the toolkit are
-published as public security knowledge, in the same tradition as CAPTCHA breaking,
-fingerprinting attacks, and adversarial ML in academic literature.
+你独自承担使用本项目可能导致的一切风险与全部后果。
 
 ================================================================================
-2. Permitted Uses
+1. 本项目是什么
 ================================================================================
 
-You may freely use this project in the following scenarios:
+本项目是 ChatGPT Team 订阅协议的端到端重放与研究工具集。从 mitmproxy 抓包
+中逆向出协议链路并实现成可运行客户端，用于：
 
-  ✓ Testing against accounts / domains / servers that **you own**
-  ✓ Penetration testing where the asset is **explicitly in scope** within a bug bounty
-    program
-  ✓ Protocol analysis and replay in CTF competitions
-  ✓ ML research / academic comparison of the hCaptcha solver implementation in the
-    project
-  ✓ Reading source code to learn browser automation anti-detection techniques
-  ✓ Offline protocol research and teaching without making any requests to third-party
-    platforms
-  ✓ Forking and modifying for use in any of the above scenarios
+  - CTF（Capture The Flag）题目中的协议分析与重放
+  - 在公开 bug bounty 项目（HackerOne / Bugcrowd / 等）的明确 in-scope
+    资产范围内做安全研究
+  - 对 hCaptcha 等视觉 CAPTCHA 系统的对抗性 ML 研究
+  - 浏览器自动化反检测技术的研究与教学
 
-================================================================================
-3. Explicitly Prohibited Uses
-================================================================================
-
-The following activities are explicitly prohibited, regardless of how the project's
-License is written:
-
-  ✗ Defrauding OpenAI, Stripe, PayPal, Cloudflare, hCaptcha or other service providers
-  ✗ Evading payment obligations (using chargebacks / payment disputes / credit card fraud
-    to avoid charges)
-  ✗ Bulk account creation for resale, account black market operations, setting up "GPT
-    mirror sites", "recharge agencies", and other gray-market activities
-  ✗ Violating OpenAI Terms of Use, Stripe Services Agreement, PayPal User Agreement,
-    or applicable laws in your jurisdiction
-  ✗ Testing against any target without authorization
-  ✗ Using this project to harass, deceive, or harm any specific user
-  ✗ Concealing the fact of "using this project" from end users and profiting from it
-
-Uses outside the permitted scope above are **prohibited by default**.
+工具集中关于反欺诈机制的实证研究材料是当作公共安全知识发布的，与 CAPTCHA
+breaking、指纹关联攻击、对抗性 ML 等学术传统是一脉的。
 
 ================================================================================
-4. Legal Responsibility Rests Entirely with Users
+2. 允许的使用
 ================================================================================
 
-  ✗ The authors, contributors, and maintainers of this project are **not** responsible
-    for any consequences resulting from your use of this project
-  ✗ This includes but is not limited to: account bans, financial losses, data loss,
-    service interruption, criminal liability, civil damages, administrative penalties,
-    third-party claims, reputation damage, business losses
-  ✗ You **evaluate at your own risk** the legal implications in your jurisdiction
+下述场景下你可以自由使用本项目：
 
-The following laws may apply, but are not limited to:
-
-  - US Computer Fraud and Abuse Act (CFAA)
-  - US Wire Fraud / Mail Fraud statutes
-  - European Union General Data Protection Regulation (GDPR)
-  - UK Computer Misuse Act 1990
-  - China's Criminal Law Articles 285 / 286 / 287 (illegal computer system intrusion,
-    destruction of computer information systems, fraud via computer, etc.)
-  - China's Anti-Unfair Competition Law, Telecommunications Regulations, Cybersecurity
-    Law, Data Security Law, Personal Information Protection Law
-  - Japan's Act Against Unauthorized Computer Access
-  - Criminal statutes in various countries regarding fraud, forgery, and electronic
-    payment
-
-If you cannot clearly determine whether your use is lawful, consult a licensed attorney
-or the target platform's security team before proceeding.
+  ✓ 针对你**自己拥有**的账号 / 域名 / 服务器测试
+  ✓ 在某个 bug bounty 项目里**该资产明确在 scope 内**的渗透测试
+  ✓ 在 CTF 比赛中分析与重放协议
+  ✓ 对项目中实现的 hCaptcha 求解器做 ML 研究 / 学术比较
+  ✓ 阅读源码学习浏览器自动化反检测技术
+  ✓ 在不向第三方平台发起任何请求的前提下，做离线协议研究和教学
+  ✓ Fork 修改后用于上述任何场景
 
 ================================================================================
-5. Maintainers Have No Obligation or Liability
+3. 明确禁止的使用
 ================================================================================
 
-The authors, contributors, and maintainers of this project:
+下述行为明确禁止，无论本项目的 License 怎么写：
 
-  - have **no** obligation to respond to issues, review PRs, fix bugs, or maintain
-    availability
-  - have **no** obligation to adapt to third-party service changes (OpenAI / Stripe /
-    PayPal / hCaptcha may change protocols at any time)
-  - have **no** obligation to provide technical support to any user
-  - have **no** obligation to guarantee long-term maintenance of this project
-  - **reserve the right** to archive, delete, rename, transfer ownership, change the
-    License (with backward compatibility), or discontinue maintenance of this project
-    at any time without prior notice
+  ✗ 拿来欺诈 OpenAI、Stripe、PayPal、Cloudflare、hCaptcha 等服务商
+  ✗ 规避支付义务（用退款 / 拒付 / 盗刷信用卡等手段绕开扣款）
+  ✗ 批量造号转售、做账号黑产、搭建"GPT 镜像站"、"代充值"等灰产
+  ✗ 违反 OpenAI Terms of Use、Stripe Services Agreement、PayPal User Agreement
+    或者你所在司法辖区的相关法律
+  ✗ 针对未获得授权的目标进行任何形式的测试
+  ✗ 用本项目骚扰、欺骗、或者损害任何特定用户
+  ✗ 对最终用户隐瞒"使用本项目"这一事实，并以此牟利
+
+不在上述允许范围内的用法，**默认禁止**。
 
 ================================================================================
-6. Third-Party Service Relationships
+4. 法律责任完全由使用者承担
 ================================================================================
 
-This project is **not affiliated with, subordinate to, endorsed by, or sponsored by**:
+  ✗ 本项目作者、贡献者、维护者**不**对你使用本项目造成的任何后果负责
+  ✗ 包括但不限于：账号封禁、付款损失、数据丢失、服务中断、刑事责任、
+    民事赔偿、行政处罚、第三方索赔、声誉损失、商业损失
+  ✗ 你**自行评估**你所在司法辖区的法律风险
+
+下述法律可能适用，并不限于：
+
+  - 美国 Computer Fraud and Abuse Act (CFAA)
+  - 美国 Wire Fraud / Mail Fraud 相关条款
+  - 欧盟 General Data Protection Regulation (GDPR)
+  - 英国 Computer Misuse Act 1990
+  - 中国《刑法》第 285 / 286 / 287 条（非法侵入计算机信息系统罪、
+    破坏计算机信息系统罪、利用计算机实施诈骗罪等）
+  - 中国《反不正当竞争法》、《电信条例》、《网络安全法》、
+    《数据安全法》、《个人信息保护法》
+  - 日本《不正アクセス禁止法》
+  - 各国关于诈骗、伪造、电子支付的相关刑事条款
+
+如果你不能明确判断你的使用是否合法，请在使用前咨询执业律师或者目标平
+台的安全团队。
+
+================================================================================
+5. 维护者无义务、无责任
+================================================================================
+
+本项目的作者、贡献者、维护者：
+
+  - **没有**义务回复 issue、审查 PR、修复 bug、维护可用性
+  - **没有**义务针对第三方服务变更（OpenAI / Stripe / PayPal / hCaptcha
+    随时改协议）做适配
+  - **没有**义务为任何使用者提供技术支持
+  - **没有**义务保证本项目长期维护
+  - **保留权利**：在任何时候归档（archive）、删除（delete）、改名、
+    转移所有权、改 License（向后兼容）、停止维护本项目，且不需要
+    事先通知
+
+================================================================================
+6. 第三方服务关系
+================================================================================
+
+本项目**不属于、不附属于、不被授权于、不被赞助于**：
 
   - OpenAI / ChatGPT
   - Stripe
   - PayPal
   - Cloudflare
   - hCaptcha / Intuition Machines
-  - Webshare or any proxy service provider
-  - any CAPTCHA-solving service
+  - Webshare 或任何代理服务商
+  - 任何打码平台
 
-References to the above services are made solely for technical accuracy. All
-trademarks and service marks belong to their respective owners.
+提及上述服务名称仅出于技术准确性。所有商标 / 服务标志归各自所有者。
 
-If you are legal, compliance, or security personnel at any of the above companies
-and have concerns about the existence or specific content of this project, please
-contact us through GitHub Security Advisory (private channel). We will take your
-concerns seriously and respond promptly.
+如果你是上述任何公司的法务 / 合规 / 安全人员，对本项目的存在或某段
+具体内容有顾虑，请通过 GitHub Security Advisory（私密渠道）联系。我们
+会认真对待并尽快回复。
 
 ================================================================================
-7. What Maintainers Will Not Do
+7. 维护者不会做的事
 ================================================================================
 
-This project's maintainers **will not**:
+本项目维护者**不会**：
 
-  - Assist in any use against unauthorized targets
-  - Debug problems you encounter while running black-market operations
-  - Provide specific strategic advice on "bypassing OpenAI anti-fraud" (empirical
-    sections are research materials, not operational manuals)
-  - Accept contributions (PRs / Issues / Discussions) intended for unauthorized use
-  - Provide warranties / attestations / mediation to third-party services on behalf
-    of users
+  - 协助任何针对未授权目标的使用
+  - 帮你 debug 你跑黑产时遇到的问题
+  - 提供"绕过 OpenAI 反欺诈"的具体策略建议（实证段是研究材料，不是
+    操作手册）
+  - 接受任何意图未授权使用的贡献（PR / Issue / Discussion）
+  - 为使用者向第三方服务做担保 / 证明 / 调解
 
-Any Issues / PRs / Discussions that appear to be requesting assistance with the above
-will be closed, and the author may be banned from the repository.
-
-================================================================================
-8. Regarding Research Materials
-================================================================================
-
-Empirical data regarding ChatGPT's anti-fraud mechanisms in docs/anti-fraud-research.md
-has been anonymized in the following ways:
-
-  - All IP addresses are replaced with RFC 5737 documentation ranges (203.0.113.0/24,
-    198.51.100.0/24, 192.0.2.0/24)
-  - All domains are replaced with *.example / *.example.com placeholders
-  - All ASN / ISP names are replaced with AS-XX / ISP-A placeholders
-  - No specific operator accounts, tokens, cookies, or personal information is disclosed
-
-If OpenAI / Cloudflare / other companies believe any material in the documentation
-crosses into operational details that should be removed, please contact us through
-the repository's Security Advisory (GitHub private vulnerability reporting), and we
-will discuss adjustments together.
+任何看起来在求帮忙做上述事的 Issue / PR / Discussion 会被关闭，提问者
+可能被仓库封禁。
 
 ================================================================================
-9. Regarding the hCaptcha Solver
+8. 关于研究材料
 ================================================================================
 
-The visual solver in CTF-pay/hcaptcha_auto_solver.py is an independently usable
-research product. We publish it because:
+docs/anti-fraud-research.md 中关于 ChatGPT 反欺诈机制的实证数据，已经按
+下列方式做了脱敏：
 
-  - Whether visual CAPTCHAs can be automatically solved is already an open academic
-    question
-  - hCaptcha's design assumption is that "solvers require human annotation + model
-    training"; this project demonstrates the "VLM zero-shot decision" approach that
-    emerged between 2024–2026
-  - No CAPTCHA system's security should be built on "the adversary hasn't seen the
-    internal details"
+  - 所有 IP 地址用 RFC 5737 文档段（203.0.113.0/24, 198.51.100.0/24,
+    192.0.2.0/24）替换
+  - 所有域名用 *.example / *.example.com 占位符替换
+  - 所有 ASN / ISP 名用 AS-XX / ISP-A 占位符替换
+  - 不公布任何特定运营者的真实账号、token、cookie、个人信息
 
-If you work at hCaptcha / Intuition Machines and have concerns about the solver's
-use in your production environment, please contact us through Security Advisory. We
-have no interest in publishing research that would make genuinely effective abuse
-prevention systems harder to operate.
+如果 OpenAI / Cloudflare / 等公司的防守方认为材料中有任何越界到该删的
+运营细节，请通过仓库的 Security Advisory（GitHub 私密漏洞报告）联系我
+们，会一起讨论调整。
 
 ================================================================================
-10. Modification and Severability
+9. 关于 hCaptcha 求解器
 ================================================================================
 
-If any term in this document is found unenforceable or invalid by any court of
-competent jurisdiction, **all remaining terms remain in full effect**.
+CTF-pay/hcaptcha_auto_solver.py 的视觉求解器是独立可用的研究产物。我们
+公布它是因为：
 
-This document may be revised. Revised versions take immediate effect for all who
-continue using this project. If you do not accept a revision, you should cease use
-and delete all copies.
+  - 视觉 CAPTCHA 的"是否可被自动化求解"问题已经是公开学术议题
+  - hCaptcha 的设计假设是"求解器需要人工标注 + 模型训练"，本项目展示
+    的"VLM zero-shot 决策"路径是 2024–2026 年的新发展
+  - 任何 captcha 系统的安全性都不应该建立在"对手没看到内部细节"之上
 
-================================================================================
-11. Do You Accept These Terms?
-================================================================================
-
-If you accept — you may use this project.
-
-If you do not accept — please immediately stop using it, delete all clones / forks /
-derivative copies, and cease any activities based on this project.
-
-Continued use constitutes your full understanding and irrevocable acceptance of all
-terms in this document and the LICENSE file.
+如果你是 hCaptcha / Intuition Machines 的工作人员，对求解器在你们生产
+环境中的使用有顾虑，请通过 Security Advisory 联系。我们没有兴趣发表内
+容会让真正的反 abuse 系统更难做的研究。
 
 ================================================================================
-Last Modified: 2026-04-27
-Contact: GitHub Security Advisory (https://github.com/DanOps-1/gpt-pp-team/security/advisories/new)
+10. 修改与可分性
+================================================================================
+
+如果本文件中任何条款被某司法辖区认定为不可执行或无效，**其余条款仍然
+完全有效**。
+
+本文件可能被修订。修订后的版本对所有继续使用本项目的人立即生效；不接
+受修订的，应停止使用并删除所有副本。
+
+================================================================================
+11. 你接受这些条款吗？
+================================================================================
+
+如果你接受 —— 你可以使用本项目。
+
+如果你不接受 —— 请立即停止使用，删除所有 clone / fork / 衍生副本，并停
+止任何基于本项目的活动。
+
+继续使用即表示你完全理解并不可撤回地接受本文件以及 LICENSE 文件中的全
+部条款。
+
+================================================================================
+最后修改：2026-04-27
+联系方式：通过 GitHub Security Advisory（https://github.com/DanOps-1/gpt-pp-team/security/advisories/new）
 ================================================================================

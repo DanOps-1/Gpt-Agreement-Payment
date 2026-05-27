@@ -62,10 +62,11 @@ def test_run_requires_auth(client):
 
 
 def test_run_start_then_409(client, monkeypatch):
-    """Mock a subprocess that won't exit immediately, ensuring the second start returns 409.
+    """Mock 一个不会立即退出的 subprocess，确保第二次 start 返 409。
 
     We bypass the drain thread entirely by also monkeypatching _drain to a no-op,
-    so the module-level _proc stays alive (poll() returns None)."""
+    so the module-level _proc stays alive (poll() returns None).
+    """
     _login(client)
     import webui.backend.runner as runner_mod
 

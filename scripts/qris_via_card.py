@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Go through card.py complete fresh_checkout path to get chatgpt approve + pm-redirects URL,
-then monkey-patch to replace card._drive_gopay_from_redirect, taking over from redirect to do
-**untokenized** GoPay charge → output QR + deeplink, **without phone OTP / WhatsApp**.
+"""走 card.py 完整 fresh_checkout 路径拿到 chatgpt approve + pm-redirects URL，
+然后 monkey-patch 替换 card._drive_gopay_from_redirect，从 redirect 接管做
+**untokenized** GoPay charge → 出 QR + deeplink，**不要 phone OTP / WhatsApp**。
 
-card.py auto --gopay path is known to stably pass chatgpt approve (including complete sentinel /
-warm-up / manual_approval beta flow, 500+ lines so porting is not feasible here). Reuse it here.
+card.py auto --gopay 路径已知能稳定过 chatgpt approve（含完整 sentinel /
+warm-up / manual_approval beta 流程，500+ 行就 port 不动了）。这里复用它。
 
-Usage:
-    python scripts/qris_via_card.py"""
+用法：
+    python scripts/qris_via_card.py
+"""
 from __future__ import annotations
 
 import json
@@ -22,9 +23,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "CTF-pay"))
 
-import card  # noqa: E402  card.py must in-process import to enable monkey-patch
+import card  # noqa: E402  card.py 必须 in-process import 才能 monkey-patch
 import gopay as _gopay  # noqa: E402
-from qris import QrisCharger  # noqa: E402  Reuse charge / artifacts / wait
+from qris import QrisCharger  # noqa: E402  复用 charge / artifacts / wait
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -35,15 +36,16 @@ logging.basicConfig(
 
 
 class _QrisHookSuccess(Exception):
-    """sentinel: thrown from _drive_gopay_from_redirect after taking over, blocking subsequent poll in card.run."""
+    """sentinel：从 _drive_gopay_from_redirect 接管完成后抛出，阻断 card.run 后续 poll。"""
     def __init__(self, ref: str):
         super().__init__(ref)
         self.ref = ref
 
 
 def _qris_drive_from_redirect(redirect_url: str, cfg: dict, otp_file: str = "", session_id: str = ""):
-    """Replace card._drive_gopay_from_redirect: take over from pm-redirects URL to do untokenized
-    midtrans charge (payment_type=gopay tokenization=false) → get deeplink_url + render QR."""
+    """替代 card._drive_gopay_from_redirect：从 pm-redirects URL 接管走 untokenized
+    midtrans charge（payment_type=gopay tokenization=false）→ 拿 deeplink_url + 渲染 QR。
+    """
     logger.info(f"[qris-via-card] 接管 redirect: {redirect_url[:100]}...")
     auth_cfg = (cfg.get("fresh_checkout") or {}).get("auth") or {}
     cs_session = _gopay._build_chatgpt_session(auth_cfg)
@@ -75,8 +77,8 @@ def _qris_drive_from_redirect(redirect_url: str, cfg: dict, otp_file: str = "", 
     if parsed.get("expiry_time"):
         logger.info(f"[qris-via-card] 过期: {parsed['expiry_time']}")
     logger.info("─" * 64)
-    # Don't call wait_for_settlement (card.run subsequent will poll, avoid duplicate polling)
-    # Write result to a sentinel file so card.run can read after exit
+    # 不调 wait_for_settlement（card.run 后续会 poll，不要重复 poll）
+    # 把结果写到一个 sentinel 文件让 card.run 退出后能读
     out_meta = ROOT / "qris_artifacts" / f"latest_charge_{ref}.json"
     out_meta.parent.mkdir(parents=True, exist_ok=True)
     out_meta.write_text(json.dumps({
@@ -96,13 +98,13 @@ def main():
     config_path = str(ROOT / "CTF-pay" / "config.paypal.json")
     logger.info(f"[qris-via-card] config: {config_path}")
 
-    # gost keep-alive
+    # gost 保活
     from pipeline import _read_card_cfg, _ensure_gost_alive
     pay_cfg = _read_card_cfg(config_path)
     _ensure_gost_alive(pay_cfg)
 
-    # Get latest unused registered account from webui DB, write to config.fresh_checkout.auth.access_token,
-    # Let card.run use access_token mode (no longer auto_register for new account).
+    # 从 webui DB 拿最新一个未消耗的注册账号，写到 config.fresh_checkout.auth.access_token，
+    # 让 card.run 走 access_token 模式（不再 auto_register 注册新账号）。
     from webui.backend.db import get_db
     db = get_db()
     con = db._conn()
@@ -116,7 +118,7 @@ def main():
     acct = dict(row)
     logger.info(f"[qris-via-card] 复用账号: {acct['email']}  session={bool(acct['session_token'])}  access={bool(acct['access_token'])}")
 
-    # Temporarily inject account token into config, let card.py use access_token mode
+    # 临时把账号 token 注入 config，让 card.py 走 access_token 模式
     tmp_cfg_path = ROOT / "CTF-pay" / "config.paypal-tmp-qris.json"
     raw = json.loads(Path(config_path).read_text(encoding="utf-8"))
     auth = raw.setdefault("fresh_checkout", {}).setdefault("auth", {})
@@ -132,13 +134,13 @@ def main():
     config_path = str(tmp_cfg_path)
     logger.info(f"[qris-via-card] 临时 config: {config_path}")
 
-    # ★ Replace _drive_gopay_from_redirect → our untokenized handler
+    # ★ 替换 _drive_gopay_from_redirect → 我们的 untokenized handler
     card._drive_gopay_from_redirect = _qris_drive_from_redirect
     logger.info("[qris-via-card] monkey-patched card._drive_gopay_from_redirect → qris untokenized")
 
-    # in-process call card.run, go through complete fresh_checkout + manual_approval.
-    # checkout_input='auto' makes it fresh_checkout=True auto-create cs; use_gopay=True
-    # Use manual_approval beta + reach redirect and call _drive_gopay_from_redirect (our replacement)
+    # in-process 调 card.run，走完整 fresh_checkout + manual_approval。
+    # checkout_input='auto' 让它 fresh_checkout=True 自己创建 cs；use_gopay=True
+    # 走 manual_approval beta + 走到 redirect 时调 _drive_gopay_from_redirect (我们替换的)
     try:
         result = card.run(
             checkout_input="auto",
@@ -147,15 +149,15 @@ def main():
             use_gopay=True,
         )
     except _QrisHookSuccess as e:
-        # Our hook throws this sentinel to block subsequent polling in card.run
+        # 我们的 hook 抛这个 sentinel 阻断 card.run 后续 polling
         logger.info(f"[qris-via-card] hook 接管成功 ref={e.ref}")
         return
     except SystemExit as e:
-        # card.run finishes last with SystemExit; this is expected
+        # card.run 跑完最后会 SystemExit；这是预期
         logger.info(f"[qris-via-card] card.run 完成 SystemExit({e.code})")
     except Exception as e:
         logger.error(f"[qris-via-card] card.run 异常: {e}")
-        # Check if sentinel file was written by our hook
+        # 看 sentinel 文件是否被我们 hook 写了
         sentinel_dir = ROOT / "qris_artifacts"
         latest = sorted(sentinel_dir.glob("latest_charge_*.json"))
         if latest:

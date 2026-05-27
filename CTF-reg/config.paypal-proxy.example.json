@@ -1,6 +1,6 @@
 {
   "mail": {
-    "_comment": "OTP flows through Cloudflare Email Worker → KV (see scripts/setup_cf_email_worker.py + scripts/otp_email_worker.js). CF credentials are stored in SQLite runtime_meta[secrets].cloudflare section, not here.",
+    "_comment": "OTP 走 Cloudflare Email Worker → KV（见 scripts/setup_cf_email_worker.py + scripts/otp_email_worker.js）。CF 凭证存 SQLite runtime_meta[secrets].cloudflare 段，不在这里。",
     "catch_all_domain": "subdomain.example.com",
     "catch_all_domains": [
       "subdomain.example.com"

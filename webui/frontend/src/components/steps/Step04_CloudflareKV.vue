@@ -1,11 +1,12 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">Step 04: Cloudflare KV</div>
-    <h2 class="step-h">$&nbsp;OTP Reception（CF Email Worker → KV）<span class="term-cursor"></span></h2>
+    <div class="term-divider" data-tail="──────────">步骤 04: Cloudflare KV</div>
+    <h2 class="step-h">$&nbsp;OTP 接收（CF Email Worker → KV）<span class="term-cursor"></span></h2>
     <p class="step-sub">
-      Fill in just one API token, and the rest (creating KV, uploading Worker, setting up catch-all routing for all zones configured in Step 03) will be handled with one click on the backend. The token defaults to the <code>cf_token</code> from Step 03,
-      or you can provide a separate one with broader permissions (requires <code>Workers Scripts:Edit</code> +
-      <code>Workers KV:Edit</code> + <code>Email Routing Rules:Edit</code>).
+      只填一个 API token，剩下的（建 KV、上传 Worker、给 Step 03 配的所有 zone
+      切 catch-all 路由）后端一键搞定。token 默认借 Step 03 的 <code>cf_token</code>，
+      也可以单独填一个权限更全的（需 <code>Workers Scripts:Edit</code> +
+      <code>Workers KV:Edit</code> + <code>Email Routing Rules:Edit</code>）。
     </p>
 
     <div class="form-stack">
@@ -17,17 +18,17 @@
       />
       <TermField
         v-model="form.fallback_to"
-        label="Backup Forward · fallback_to (optional)"
-        placeholder="After capturing OTP, forward a copy to this email address (insurance during migration)"
+        label="备份转发 · fallback_to (可选)"
+        placeholder="抓到 OTP 后同时转发一份到这个邮箱（迁移期保险）"
       />
     </div>
 
     <div class="step-actions">
-      <TermBtn :loading="deploying" @click="deploy">One-click Deploy + Test</TermBtn>
+      <TermBtn :loading="deploying" @click="deploy">一键部署 + 测试</TermBtn>
     </div>
 
     <div v-if="deployResult" class="result-block result--ok" style="margin-top:14px">
-      <div class="result-head"><span class="result-icon">✓</span> Deployment Successful</div>
+      <div class="result-head"><span class="result-icon">✓</span> 部署成功</div>
       <ul class="result-list">
         <li class="row-ok"><span class="row-name">account</span><span class="row-msg">{{ deployResult.account_name }} ({{ deployResult.account_id }})</span></li>
         <li class="row-ok"><span class="row-name">kv_namespace_id</span><span class="row-msg">{{ deployResult.kv_namespace_id }}</span></li>
@@ -39,12 +40,12 @@
         >
           <span class="row-name">zone:{{ z.zone }}</span>
           <span class="row-msg">
-            {{ z.ok ? `before=[${z.before}] → worker` : `Failed: ${z.error}` }}
+            {{ z.ok ? `before=[${z.before}] → worker` : `失败: ${z.error}` }}
           </span>
         </li>
         <li v-if="deployResult.secrets_path" class="row-ok">
           <span class="row-name">SQLite runtime_meta[secrets]</span>
-          <span class="row-msg">Saved to {{ deployResult.secrets_path }}</span>
+          <span class="row-msg">已落 {{ deployResult.secrets_path }}</span>
         </li>
       </ul>
     </div>
@@ -73,7 +74,7 @@ const form = ref({
 });
 
 const defaultTokenPlaceholder = computed(() =>
-  cfAns.cf_token ? "Leave blank = use cf_token from Step 03" : "Paste token"
+  cfAns.cf_token ? "留空 = 用 Step 03 的 cf_token" : "粘贴 token"
 );
 
 const deploying = ref(false);
@@ -96,12 +97,12 @@ async function deploy() {
   deployResult.value = null;
   const token = (form.value.api_token || cfAns.cf_token || "").trim();
   if (!token) {
-    error.value = "Missing API token (either fill it here or provide cf_token in Step 03)";
+    error.value = "缺 API token（要么填这里，要么在 Step 03 填 cf_token）";
     return;
   }
   const zones: string[] = (cfAns.zone_names ?? []) as string[];
   if (!zones.length) {
-    error.value = "zone_names not configured in Step 03 yet. Please go back to Step 03 to configure zones";
+    error.value = "Step 03 还没填 zone_names，先回 Step 03 配 zones";
     return;
   }
 
@@ -116,7 +117,7 @@ async function deploy() {
     });
     const res = r.data;
     deployResult.value = res;
-    // Save returned fields to answers so they display directly next time in wizard
+    // 答案里把回来的字段也存上，下次进 wizard 直接显示
     store.setAnswer("cloudflare_kv", {
       api_token: token,
       fallback_to: form.value.fallback_to,
@@ -129,11 +130,11 @@ async function deploy() {
     });
     await store.saveToServer();
 
-    // Mark preflight as ok after successful one-click deployment to unlock step gate
+    // 一键部署成功也给 preflight 写一个 ok，方便 step gate 解锁
     const allOk = (res.zones_configured ?? []).every((z: any) => z.ok);
     const result: PreflightResult = allOk
-      ? { status: "ok", message: `Deployment complete, ${res.zones_configured.length} zones switched to worker`, checks: [] }
-      : { status: "warn", message: "Partial deployment success, see zone list above", checks: [] };
+      ? { status: "ok", message: `部署完成，${res.zones_configured.length} 个 zone 已切到 worker`, checks: [] }
+      : { status: "warn", message: "部署部分成功，看上面 zone 列表", checks: [] };
     store.setPreflight("cloudflare_kv", result);
   } catch (e: any) {
     error.value = e?.response?.data?.detail || String(e);
@@ -143,7 +144,7 @@ async function deploy() {
 }
 
 watch(form, () => {
-  // Only sync user changes to token/fallback, don't overwrite fields after deployment
+  // form 只在用户改 token / fallback 时同步，不覆盖 deploy 后的字段
   const cur = (store.answers.cloudflare_kv ?? {}) as any;
   store.setAnswer("cloudflare_kv", {
     ...cur,

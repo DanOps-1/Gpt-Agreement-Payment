@@ -1,32 +1,32 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">Step 14: Complete</div>
-    <h2 class="step-h">$&nbsp;Review + Export<span class="term-cursor"></span></h2>
-    <p class="step-sub">Below are the two configurations that will be written (snapshot based on your answers). After verifying, click "Write to repo path" to back up and overwrite.</p>
+    <div class="term-divider" data-tail="──────────">步骤 14: 完成</div>
+    <h2 class="step-h">$&nbsp;Review + 导出<span class="term-cursor"></span></h2>
+    <p class="step-sub">下面是即将写入的两份配置（基于你填的答案的快照）。检查无误后点"写到 repo 路径"，会先备份再覆盖。</p>
 
-    <div class="review-label">All Answers</div>
+    <div class="review-label">所有答案</div>
     <pre class="review-pre">{{ prettyAll }}</pre>
 
     <div class="step-actions">
-      <TermBtn :loading="loading" @click="exportConfigs">Write to repo path</TermBtn>
-      <TermBtn variant="ghost" @click="copy">Copy JSON</TermBtn>
-      <TermBtn variant="ghost" @click="downloadJson">Download JSON</TermBtn>
+      <TermBtn :loading="loading" @click="exportConfigs">写到 repo 路径</TermBtn>
+      <TermBtn variant="ghost" @click="copy">复制 JSON</TermBtn>
+      <TermBtn variant="ghost" @click="downloadJson">下载 JSON</TermBtn>
     </div>
 
     <div v-if="result" class="result-block ok">
       <div class="result-head">
         <span class="result-icon">✓</span>
-        <span>Written</span>
+        <span>已写入</span>
       </div>
       <div class="export-paths">
         <div class="export-path">{{ result.pay_path }}</div>
         <div class="export-path">{{ result.reg_path }}</div>
         <div v-if="result.backups?.length" class="export-path" style="color: var(--fg-tertiary)">
-          Backups: {{ result.backups.join(", ") }}
+          备份：{{ result.backups.join(", ") }}
         </div>
       </div>
       <pre class="export-cmd">{{ exportCmd }}</pre>
-      <TermBtn @click="goRun" style="margin-top:12px">Run in Web now →</TermBtn>
+      <TermBtn @click="goRun" style="margin-top:12px">立即在 Web 里运行 →</TermBtn>
     </div>
   </section>
 </template>
@@ -53,9 +53,9 @@ const result = ref<ExportResult | null>(null);
 
 const prettyAll = computed(() => JSON.stringify(store.answers, null, 2));
 
-// Export CLI command matches wizard actual selection: payment method + subscription plan.
-// Team is the default value, no explicit --plan; Plus must have --plan plus,
-// otherwise if config is overwritten back to Team template it will revert.
+// 导出 CLI 命令跟着 wizard 实际选择拼：支付方式 + 订阅方案。Team 是默认值，
+// 不显式带 --plan；Plus 必须带 --plan plus，否则 config 万一被人覆盖回 Team 模板
+// 就会回退。
 const exportCmd = computed(() => {
   if (!result.value) return "";
   const pm = (store.answers.payment as any)?.method ?? "both";
@@ -72,15 +72,15 @@ async function exportConfigs() {
   try {
     const r = await api.post<ExportResult>("/config/export", { answers: store.answers });
     result.value = r.data;
-    message.success("Configuration written successfully");
+    message.success("配置已写入");
   } catch (e: any) {
-    message.error(e.response?.data?.detail || "Write failed");
+    message.error(e.response?.data?.detail || "写入失败");
   } finally { loading.value = false; }
 }
 
 function copy() {
   navigator.clipboard.writeText(prettyAll.value);
-  message.success("Copied to clipboard");
+  message.success("已复制到剪贴板");
 }
 
 function downloadJson() {

@@ -1,1 +1,1 @@
-"""hCaptcha solver: VLM/vision solver + Playwright bridge helper."""
+"""hCaptcha 解算: VLM/视觉 solver + Playwright bridge helper。"""

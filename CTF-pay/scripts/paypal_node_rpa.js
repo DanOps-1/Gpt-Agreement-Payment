@@ -16,16 +16,16 @@ const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright-core');
 
-// When multiple workers run concurrently, add worker_id to /tmp/paypal_node_rpa_* filename to prevent conflicts
-// Python side exports NCPP_WORKER_ID on spawn; single worker defaults to empty, path remains backward compatible.
+// 多 worker 并发时, /tmp/paypal_node_rpa_* 文件名加 worker_id 防串
+// Python 端 spawn 时 export NCPP_WORKER_ID; 单 worker 默认空, 路径保持向后兼容.
 const _WORKER_ID = (process.env.NCPP_WORKER_ID || '').trim().replace(/[^A-Za-z0-9_\-]/g, '');
 const T_BASE = `/tmp/paypal_node_rpa${_WORKER_ID ? '_' + _WORKER_ID : ''}`;
 const T = (suffix) => `${T_BASE}_${suffix}`;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Phone OTP critical section coordination (concurrent workers share same phone). Via webui parallel_runner
-// HTTP lock; when env is missing (single worker / CLI) it's a no-op to maintain backward compatibility.
+// Phone OTP 临界区协调 (并发 worker 用同一 phone). 通过 webui parallel_runner
+// 的 HTTP 锁; 缺 env (单 worker / CLI) 时整体 no-op 保持向后兼容.
 const PHONE_LOCK_URL = (process.env.NCPP_PHONE_LOCK_URL || '').trim();
 
 async function tryAcquirePhoneLock(phone, workerId) {
@@ -729,8 +729,8 @@ async function getOtp(smsApiUrl, timeoutMs, baselineText = '', opts = {}) {
     }
     attempt++;
     try {
-      // Node global fetch has no default timeout, must explicitly use AbortSignal.timeout otherwise sms
-      // gateway occasionally hangs connection causing entire RPA deadlock (5+ minutes with no new events after OTP modal appears).
+      // Node 全局 fetch 无默认 timeout, 必须显式 AbortSignal.timeout 否则 sms
+      // gateway 偶发挂连接时整个 RPA 死锁(OTP modal 出现后 5+ 分钟没新事件).
       const r = await fetch(smsApiUrl, { method: 'GET', signal: AbortSignal.timeout(10000) });
       const t = (await r.text()).trim();
       log('sms attempt', attempt, t.slice(0, 80).replace(/[0-9]{6}/g, '******'));
@@ -821,8 +821,8 @@ async function fillOtp(page, code) {
 }
 
 async function pageSnapshot(page, outPrefix) {
-  // Add timeout to screenshot / content to prevent chromium main thread being blocked by hcaptcha
-  // iframe + PerimeterX EvalError, causing fullPage to never return → entire RPA deadlock.
+  // 给 screenshot / content 加 timeout, 防止 chromium 主线程被 hcaptcha
+  // iframe + PerimeterX EvalError 卡住时 fullPage 永不返回 → 整个 RPA 死锁.
   const withTimeout = (promise, ms, fallback) =>
     Promise.race([
       promise,
@@ -1143,8 +1143,8 @@ async function main() {
   const email = payload.email || randEmail();
   const password = payload.password || randPass();
   const phone = phoneForUi(payload.phone || process.env.PPS_PAYPAL_PHONE || '');
-  // When concurrent workers share same phone, use PHONE_LOCK_URL during OTP phase to queue and avoid SMS collision.
-  // Single worker / no PHONE_LOCK_URL: both ensure/release are no-ops.
+  // 并发 worker 共享同一 phone 时, OTP 阶段用 PHONE_LOCK_URL 排队避免短信串.
+  // 单 worker / 无 PHONE_LOCK_URL 时, ensure/release 都是 no-op.
   const _LOCK_WID = (process.env.NCPP_WORKER_ID || '').trim();
   let phoneLockHeld = false;
   const ensurePhoneLock = async () => {
@@ -1283,14 +1283,14 @@ async function main() {
       ccLinkedToFullAccount = true;
       if (!decisiveError) decisiveError = 'CC_LINKED_TO_FULL_ACCOUNT';
     }
-    // PayPal createMember validation rejection, usually persona/card combo hits risk control rules;
-    // retry submit is useless (infinite same GraphQL fail), exit early to let upper layer re-roll persona.
+    // PayPal createMember 校验拒, 通常是 persona/card combo 命中风控规则;
+    // retry submit 没用 (会无限相同 GraphQL fail), 早退让上层 re-roll persona.
     if (/CREATE_CARD_ACCOUNT_CANDIDATE_VALIDATION_ERROR/i.test(t)) {
       cardAccountCandidateInvalid = true;
       if (!decisiveError) decisiveError = 'CREATE_CARD_ACCOUNT_CANDIDATE_VALIDATION_ERROR';
     }
-    // DataDome slider timeout / active rejection → PayPal won't actually send SMS, exit early to avoid wasting 4 minutes.
-    // slider_timeout is PayPal's t.paypal.com/ts beacon URL, appears in fetch CORS error text.
+    // DataDome slider 超时 / 主动拒绝 → PayPal 不会真发 SMS, 早退避免空跑 4 分钟.
+    // slider_timeout 是 PayPal 的 t.paypal.com/ts beacon URL, 出现在 fetch CORS 报错文本里.
     if (/event_name=slider_timeout|datadome.*?(?:blocked|denied|captcha_failed)/i.test(t)) {
       dataDomeBlocked = true;
       if (!decisiveError) decisiveError = 'paypal_datadome_blocked';
@@ -1882,8 +1882,8 @@ async function main() {
         await selectAny(page, 'billingAdministrativeArea', addr.state);
         formFilled = true;
         await sleep(800);
-        // When concurrent workers contend for same phone, block here to queue for lock;
-        // after acquiring lock, click submit to let PayPal send SMS, avoid two workers triggering SMS collision simultaneously.
+        // 并发 worker 抢同 phone 时, 在这里阻塞排队拿锁;
+        // 拿到锁后再 click submit 让 PayPal 发 SMS, 避免两 worker 同时触发短信串码.
         await ensurePhoneLock();
         await clickSubmitLike(page);
         lastSubmitClick = Date.now();
@@ -1915,15 +1915,15 @@ async function main() {
           };
         }
         if (!code) {
-          // OTP timeout: release lock to let other worker take over; current worker throws error for upper layer to retry.
+          // OTP timeout: 释放锁让别的 worker 接手; 当前 worker 抛错由上层 retry.
           await releaseIfHeld();
           throw new Error('PayPal OTP timeout');
         }
         const ok = await fillOtp(page, code);
         log('OTP fill', ok ? 'ok' : 'miss');
         otpHandled = true;
-        // OTP filled → release phone lock to let next worker enter critical section.
-        // post-OTP phase (Hermes / Stripe return) no longer needs SMS, can run in parallel with other workers.
+        // OTP 填完 → 释放 phone 锁让下一个 worker 进入临界区.
+        // post-OTP 阶段 (Hermes / Stripe return) 不再需要短信, 可与其它 worker 并行.
         await releaseIfHeld();
         await sleep(1200);
         await clickSubmitLike(page);

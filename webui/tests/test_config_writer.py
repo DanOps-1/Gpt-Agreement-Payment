@@ -23,7 +23,7 @@ def _seed(tmp_path, monkeypatch):
     monkeypatch.setattr(s, "REG_EXAMPLE_PATH", reg_ex)
     monkeypatch.setattr(s, "PAY_CONFIG_PATH", tmp_path / "CTF-pay" / "config.paypal.json")
     monkeypatch.setattr(s, "REG_CONFIG_PATH", tmp_path / "CTF-reg" / "config.paypal-proxy.json")
-    # Note: conftest has set WEBUI_DATA_DIR to tmp_path, SQLite will be stored in tmp_path/webui.db.
+    # 注：conftest 已经把 WEBUI_DATA_DIR 设到 tmp_path，SQLite 会落到 tmp_path/webui.db。
 
 
 def test_export_writes_two_files(client, tmp_path, monkeypatch):
@@ -33,8 +33,8 @@ def test_export_writes_two_files(client, tmp_path, monkeypatch):
     answers = {
         "paypal": {"email": "you@example.com"},
         "cloudflare": {"cf_token": "tok-abc", "zone_names": ["a.com", "b.com"]},
-        # Note: forward_to has been replaced by fallback_to (in cloudflare_kv); here
-        # it also ensures that _write_secrets no longer requires forward_to.
+        # Note: forward_to 已被 fallback_to 取代（在 cloudflare_kv 里）；这里
+        # 顺带保证 _write_secrets 不再要求 forward_to。
         "cloudflare_kv": {
             "account_id": "acct-123",
             "kv_namespace_id": "kv-456",
@@ -49,13 +49,13 @@ def test_export_writes_two_files(client, tmp_path, monkeypatch):
     reg = json.loads((tmp_path / "CTF-reg" / "config.paypal-proxy.json").read_text())
     assert pay["paypal"]["email"] == "you@example.com"
     assert pay["captcha"]["api_key"] == "k"
-    # mail.catch_all_domain(s) come from cloudflare zone_names; there is no longer an imap field
+    # mail.catch_all_domain(s) 来自 cloudflare zone_names；不再有 imap 字段
     assert reg["mail"]["catch_all_domain"] == "a.com"
     assert reg["mail"]["catch_all_domains"] == ["a.com", "b.com"]
     assert "imap_server" not in reg["mail"]
     assert reg["captcha"]["client_key"] == "k"
 
-    # Cloudflare credentials should be written to SQLite runtime_meta[secrets], no longer to secrets.json.
+    # Cloudflare 凭证应写入 SQLite runtime_meta[secrets]，不再落 secrets.json。
     secrets = get_db().get_runtime_json("secrets", {})
     cf = secrets["cloudflare"]
     assert not (tmp_path / "secrets.json").exists()
@@ -193,12 +193,12 @@ def test_exported_reg_config_accepts_checkout_link_fields(client, tmp_path, monk
 
 
 def test_export_strips_team_only_fields_when_plan_is_plus(client, tmp_path, monkeypatch):
-    """Plus subscription has no workspace / seat concept; example skeleton defaults to Team template,
-    deep_merge will retain seat=5 / workspace=MyWorkspace, causing abcard path to not match
-    plan_name under Plus. The export layer must actively strip them clean."""
+    """Plus 订阅没有 workspace / seat 概念；example skeleton 默认填 Team 模板，
+    deep_merge 会把 seat=5 / workspace=MyWorkspace 留下来，让 abcard 路径在
+    Plus 下跟 plan_name 不匹配。导出层必须主动剥干净。"""
     _login(client)
 
-    # Explicitly add Team default fields to skeleton, simulating the real form of config.paypal.example.json
+    # 显式让 skeleton 带上 Team 默认字段，模拟 config.paypal.example.json 的真实形态
     pay_ex = tmp_path / "CTF-pay" / "config.paypal.example.json"
     reg_ex = tmp_path / "CTF-reg" / "config.paypal-proxy.example.json"
     pay_ex.parent.mkdir(parents=True)
@@ -249,7 +249,7 @@ def test_export_strips_team_only_fields_when_plan_is_plus(client, tmp_path, monk
     plan = pay["fresh_checkout"]["plan"]
     assert plan["plan_name"] == "chatgptplusplan"
     assert plan["promo_campaign_id"] == "plus-1-month-free"
-    # Critical assertion: team-only fields must be stripped, otherwise abcard payload will not match Plus plan
+    # 关键断言：team-only 字段必须被剥掉，否则 abcard payload 会跟 Plus plan 不匹配
     assert "seat_quantity" not in plan
     assert "workspace_name" not in plan
 
@@ -261,7 +261,7 @@ def test_export_strips_team_only_fields_when_plan_is_plus(client, tmp_path, monk
 
 
 def test_export_keeps_team_fields_when_plan_is_team(client, tmp_path, monkeypatch):
-    """Control group: Team subscription must retain the workspace / seat default values from example skeleton."""
+    """对照组：Team 订阅必须保留 example skeleton 的 workspace / seat 默认值。"""
     _login(client)
 
     pay_ex = tmp_path / "CTF-pay" / "config.paypal.example.json"

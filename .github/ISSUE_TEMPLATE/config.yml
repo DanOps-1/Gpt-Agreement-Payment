@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Security Vulnerability
+  - name: 安全漏洞
     url: https://github.com/DanOps-1/Gpt-Agreement-Payment/security/advisories/new
-    about: Do not publicly disclose security issues in GitHub issues. Use GitHub private vulnerability reporting instead.
-  - name: Bug bounty findings related to Stripe / PayPal / OpenAI / Cloudflare
-    url: https://github.com/DanOps-1/Gpt-Agreement-Payment/blob/main/SECURITY.md#not-in-scope
-    about: For findings related to third-party services, please report directly to the corresponding vendor. This project does not forward reports on behalf of users.
+    about: 安全问题别公开提 issue，走 GitHub 私密漏洞报告
+  - name: 关于 Stripe / PayPal / OpenAI / Cloudflare 的 bug bounty 发现
+    url: https://github.com/DanOps-1/Gpt-Agreement-Payment/blob/main/SECURITY.md#不在受理范围
+    about: 关于第三方服务的发现请直接报给对应厂商，本项目不代为转发

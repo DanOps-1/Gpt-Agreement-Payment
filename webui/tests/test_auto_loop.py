@@ -32,7 +32,7 @@ def test_auto_loop_classify_kinds(client):
 
     assert auto_loop._classify(["random log line"]) == "unknown"
 
-    # 407 + SOCKS5 unreachable should all be categorized to proxy_dead
+    # 407 + SOCKS5 unreachable 都应分到 proxy_dead
     assert auto_loop._classify([
         '{"handler":"socks5","level":"error","msg":"route(retry=0) 407 Proxy Authentication Required"}',
     ]) == "proxy_dead"
@@ -54,7 +54,7 @@ def test_auto_loop_extract_email(client):
 
     assert auto_loop._extract_email(["nothing relevant"]) == ""
 
-    # Retain buffer across iter: use the latest entry instead of the earliest
+    # 跨 iter 保留 buffer：取最新一条而不是最早
     lines3 = [
         "[reg] 邮箱已创建: old@619462.xyz (旧轮)",
         "[fresh] 当前账号: old@619462.xyz",
@@ -150,5 +150,5 @@ def test_auto_loop_status_exposes_zone_fields(client):
 def test_auto_loop_load_zone_list_from_cardw(client):
     from webui.backend import auto_loop
     z = auto_loop._load_zone_list_from_cardw()
-    # Not required to exist, only required to be a list
+    # 不要求一定有，只要求是个 list
     assert isinstance(z, list)

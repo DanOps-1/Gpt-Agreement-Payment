@@ -1,6 +1,9 @@
-"""Auto-setup endpoint: users only need to fill in the API token, and the backend automatically configures KV + Worker + 3 zone catch-all routing, returning the fields needed to write to SQLite secrets.
+"""Auto-setup endpoint：用户只填 API token，后端把 KV + Worker + 3 zone 的
+catch-all 路由全配好，返回写入 SQLite secrets 所需的字段。
 
-Reuse CFClient from scripts/setup_cf_email_worker.py (refactored to throw CFError instead of SystemExit), no longer requiring users to run CLI scripts."""
+复用 scripts/setup_cf_email_worker.py 的 CFClient（已重构成抛 CFError 而
+非 SystemExit），不再要求用户跑 CLI 脚本。
+"""
 from __future__ import annotations
 
 import sys
@@ -13,7 +16,7 @@ from pydantic import BaseModel
 from ..auth import CurrentUser
 from ..db import get_db
 
-# Add scripts/ to sys.path to import setup_cf_email_worker
+# 把 scripts/ 加到 sys.path 以便 import setup_cf_email_worker
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
@@ -25,7 +28,7 @@ router = APIRouter(prefix="/api/cloudflare_kv", tags=["cloudflare_kv"])
 
 class AutoSetupInput(BaseModel):
     api_token: str
-    account_id: Optional[str] = None  # Use the first one from /accounts list when not provided
+    account_id: Optional[str] = None  # 不传时从 /accounts 列表里挑第一个
     zones: list[str] = []
     worker_name: str = "otp-relay"
     kv_name: str = "OTP_KV"
@@ -56,13 +59,13 @@ def _short_actions(actions: list) -> str:
 
 @router.post("/auto-setup", response_model=AutoSetupResult)
 def auto_setup(body: AutoSetupInput, user: str = CurrentUser):
-    """One-click deployment: create KV → upload Worker → configure catch-all for each zone → write to SQLite secrets."""
+    """一键部署：建 KV → 上传 Worker → 给每 zone 切 catch-all → 落 SQLite secrets。"""
     if not WORKER_JS.exists():
         raise HTTPException(status_code=500, detail=f"找不到 Worker 脚本: {WORKER_JS}")
 
     client = CFClient(body.api_token)
 
-    # ── account_id: auto-discover by default (take the first accessible one)
+    # ── account_id：缺省自动发现（取第一个能访问的）
     account_id = (body.account_id or "").strip()
     if not account_id:
         r = client._req("GET", "/accounts?per_page=10")
@@ -81,7 +84,7 @@ def auto_setup(body: AutoSetupInput, user: str = CurrentUser):
             )
         account_id = results[0]["id"]
 
-    # ── Validate that token actually has access to account
+    # ── 校验 token 实际能访问 account
     try:
         info = client.verify_token(account_id)
     except CFError as e:
@@ -106,7 +109,7 @@ def auto_setup(body: AutoSetupInput, user: str = CurrentUser):
     except CFError as e:
         raise HTTPException(status_code=400, detail=f"Worker 上传失败: {e}")
 
-    # ── Configure catch-all for each zone
+    # ── 每个 zone 切 catch-all
     zones_results: list[ZoneResult] = []
     for zone in body.zones:
         zone = zone.strip()
@@ -122,7 +125,7 @@ def auto_setup(body: AutoSetupInput, user: str = CurrentUser):
         except CFError as e:
             zones_results.append(ZoneResult(zone=zone, ok=False, error=str(e)))
 
-    # ── Write to SQLite secrets (incremental merge)
+    # ── 写 SQLite secrets（增量合并）
     db = get_db()
     existing = db.get_runtime_json("secrets", {})
     if not isinstance(existing, dict):

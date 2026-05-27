@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """Headless helper for the local Stripe hCaptcha bridge page.
 
-Purpose:
-- Open the local bridge URL output by `card.py` in a headless environment
-- Automatically click the checkbox
-- Accept simple commands via stdin: screenshot / click / submit challenge
+用途：
+- 在无图形环境下打开 `card.py` 输出的本地 bridge URL
+- 自动点击 checkbox
+- 通过 stdin 接受简单命令，截图 / 点击 / 提交 challenge
 
-Example:
+示例：
     python hcaptcha_bridge_helper.py http://127.0.0.1:46005/index.html
     TEXT
     SHOT /tmp/bridge.png
     ECLICK 238 145
     VERIFY
-    STATE"""
+    STATE
+"""
 
 from __future__ import annotations
 

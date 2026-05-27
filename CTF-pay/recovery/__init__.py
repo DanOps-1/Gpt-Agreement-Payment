@@ -1,1 +1,1 @@
-"""Payment failure retry / terminal rejection recovery tool."""
+"""支付失败重试 / 终态拒卡 recovery 工具。"""

@@ -1,20 +1,20 @@
-"""Device Code Flow to obtain outlook refresh_token (Thunderbird client_id, v2 IMAP scope).
+"""Device Code Flow 拿 outlook refresh_token (Thunderbird client_id, v2 IMAP scope).
 
-Why Device Code instead of Auth Code Flow:
-- Auth Code uses Playwright to launch firefox + webshare proxy IP, Microsoft server-side risk
-  score marks IP as "UnfamiliarLocation" → forces identity/confirm + requires code from mailbox, dead end.
-- Device Code: you enter user_code in your own trusted browser, Microsoft only checks your IP/cookie,
-  doesn't check our webshare. Perfect workaround.
+为什么 Device Code 而不是 Auth Code Flow:
+- Auth Code 走 Playwright 起 firefox + webshare 代理 IP, Microsoft server 端 risk
+  score 把 IP 标 "UnfamiliarLocation" → 强制 identity/confirm + mailtb 收码, 死路.
+- Device Code: 你在自己 trusted 浏览器输 user_code, Microsoft 只查你那边 IP/cookie,
+  不查我们这边 webshare. 完美绕开.
 
-# webui calls: POST /api/outlook/device-code/start → returns user_code + URL
-# User enters code at microsoft.com/link + logs into outlook + consents to Thunderbird IMAP access
-# POST /api/outlook/device-code/poll {device_code, target_email} → obtains RT and writes to DB
+# webui 调用: POST /api/outlook/device-code/start → 返 user_code + URL
+# 用户在 microsoft.com/link 输 code + 登 outlook + 同意 Thunderbird IMAP 访问
+# POST /api/outlook/device-code/poll {device_code, target_email} → 拿到 RT 写 DB
 #
-# History: previously used Auth Code Flow + Playwright (suffered from ROPC not supporting consumer,
-# and blocked by webshare IP UnfamiliarLocation challenge). Device Code is the only fully automated
-# path that doesn't rely on IP trust, but requires user to authorize once on their own trusted device.
-# Current webui doesn't expose UI (users refuse manual steps), this module serves as backend fallback;
-# old Auth Code Flow functions also retained for compatibility."""
+# 历史: 之前用 Auth Code Flow + Playwright (吃 ROPC 不支持 consumer 的亏, 又被 webshare IP
+# 的 UnfamiliarLocation 挑战卡死). Device Code 是唯一不依赖 IP trust 的纯自动化路径,
+# 但需要用户在自己 trusted device 一次性 authorize. 当前 webui 没暴露 UI (用户拒手工),
+# 此模块只作 backend 备用; Auth Code Flow 老函数也保留兼容.
+"""
 from __future__ import annotations
 
 import json
@@ -27,13 +27,13 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Thunderbird publicly exposed client_id, declared v2 IMAP scope during registration (consistent with supplier's 9e5f94bc batch)
+# Thunderbird 公开 client_id, 注册时声明了 v2 IMAP scope (跟 supplier 的 9e5f94bc 批一致)
 THUNDERBIRD_CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
 
-# v2 endpoint (old wl.imap v1 token outlook IMAP no longer accepts)
+# v2 endpoint (旧 wl.imap v1 token outlook IMAP 不再接受)
 OAUTH_DEVICECODE = "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode"
 OAUTH_TOKEN = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-OAUTH_AUTHORIZE = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize"  # Old Auth Code path reserved for compatibility
+OAUTH_AUTHORIZE = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize"  # 老 Auth Code 路径保留兼容
 OOB_REDIRECT = "https://login.live.com/oauth20_desktop.srf"
 SCOPE = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
 
@@ -42,10 +42,10 @@ SCOPE = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
 
 
 def device_code_start(client_id: str = THUNDERBIRD_CLIENT_ID, scope: str = SCOPE) -> dict:
-    """Step 1: Request device_code + user_code. Return fields:
+    """Step 1: 请求 device_code + user_code. 返字段:
     {user_code, device_code, verification_uri, expires_in, interval, message}.
-    The frontend displays user_code and verification_uri to the user, 
-    allowing the user to enter them in the browser."""
+    前端把 user_code 跟 verification_uri 显示给用户, 让用户去浏览器输.
+    """
     import urllib.request, urllib.parse
     data = urllib.parse.urlencode({"client_id": client_id, "scope": scope}).encode()
     req = urllib.request.Request(OAUTH_DEVICECODE, data=data,
@@ -59,10 +59,11 @@ def device_code_start(client_id: str = THUNDERBIRD_CLIENT_ID, scope: str = SCOPE
 
 def device_code_poll(device_code: str, target_email: str = "",
                      client_id: str = THUNDERBIRD_CLIENT_ID) -> dict:
-    """Step 2: Poll the token endpoint. Returns:
-      - {"status": "pending"}         User hasn't completed authorize in browser yet
-      - {"status": "ok", ...}         Got token, already written to DB (e.g. target_email in pool)
-      - {"status": "error", "error"}  Failed (user rejected / device_code expired / IMAP rejected)"""
+    """Step 2: 轮询 token endpoint. 返:
+      - {"status": "pending"}         用户还没在浏览器完成 authorize
+      - {"status": "ok", ...}         拿到 token, 已写 DB (如 target_email 在池里)
+      - {"status": "error", "error"}  失败 (用户拒绝 / device_code 过期 / IMAP 拒)
+    """
     import urllib.request, urllib.parse, urllib.error
     data = urllib.parse.urlencode({
         "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
@@ -96,7 +97,7 @@ def device_code_poll(device_code: str, target_email: str = "",
     if not new_rt or not at:
         return {"status": "error", "error": f"token dict 缺 fields: {list(token_data.keys())}"}
 
-    # decode access_token JWT to get email for verification (prevent users from entering a different account)
+    # decode access_token JWT 取 email 校验 (避免用户输了别的号)
     actual_email = ""
     try:
         import base64
@@ -115,12 +116,12 @@ def device_code_poll(device_code: str, target_email: str = "",
                 "error": f"授权邮箱不匹配: 期望 {target_email}, 实际 {actual_email}. "
                          f"请用浏览器登出后用对应邮箱重新 authorize."}
 
-    # Select update object: target_email > actual_email > raise error
+    # 选择更新对象: target_email > actual_email > 报错
     email_to_update = target_email or actual_email
     if not email_to_update:
         return {"status": "error", "error": "无法确定邮箱 (target_email + JWT 都空)"}
 
-    # Verify IMAP once
+    # IMAP 验证一遍
     imap_alive = False
     imap_err = ""
     try:
@@ -138,7 +139,7 @@ def device_code_poll(device_code: str, target_email: str = "",
     except Exception as e:
         imap_err = f"{type(e).__name__}: {e}"
 
-    # Write to DB (if the email is already in the pool)
+    # 写 DB (如果该 email 已在池子)
     from . import outlook_pool
     import time as _time
     con = outlook_pool.get_db()._conn()
@@ -170,7 +171,7 @@ def device_code_poll(device_code: str, target_email: str = "",
     }
 
 
-# ────────────────────────── Legacy Auth Code Flow (Playwright) ──────────────────────────
+# ────────────────────────── 老 Auth Code Flow (Playwright) ──────────────────────────
 
 
 def _parse_proxy(proxy_url: str) -> Optional[dict]:
@@ -191,10 +192,11 @@ def refresh_token_via_oauth(
     proxy_url: str = "socks5://127.0.0.1:18898",
     timeout_s: int = 90,
 ) -> Optional[str]:
-    """Run Auth Code Flow to get new refresh_token. Return None on failure.
+    """跑 Auth Code Flow 拿新 refresh_token. 失败返 None.
 
-    Steps: Firefox login → skip proofs/Add → accept Consent → capture redirect code
-           → POST token endpoint to exchange for RT."""
+    步骤: Firefox 登入 → skip proofs/Add → accept Consent → 抓 redirect code
+         → POST token endpoint 换 RT.
+    """
     from playwright.sync_api import sync_playwright
 
     authorize_url = OAUTH_AUTHORIZE + "?" + urllib.parse.urlencode({
@@ -227,14 +229,14 @@ def refresh_token_via_oauth(
                 logger.error(f"[{email}] navigate authorize fail (代理是否 alive?): {e}")
                 return None
 
-            # Auto login
+            # 自动登入
             try:
                 page.wait_for_selector('input[type="email"], input[name="loginfmt"]', timeout=30000)
                 page.fill('input[type="email"], input[name="loginfmt"]', email)
                 page.click('#idSIButton9, button[type="submit"], input[type="submit"]')
 
-                # Wait for the password field, but Microsoft's new flow will first show "メールをご確認ください" (passwordless priority, send code to recovery email)
-                # Need to click "パスワードを使用する" / "Use password" toggle. Loop for 30s to see which one appears first.
+                # 等密码框, 但 Microsoft 新流程会先弹 "メールをご確認ください" (passwordless 优先, 发码到 recovery 邮箱),
+                # 需要点 "パスワードを使用する" / "Use password" 切回. 循环 30s 看到哪个先来.
                 use_pwd_selectors = [
                     'span[role="button"]:has-text("パスワードを使用する")',
                     'span[role="button"]:has-text("Use your password")',
@@ -271,7 +273,7 @@ def refresh_token_via_oauth(
                 page.fill('input[type="password"], input[name="passwd"]', password)
                 page.click('#idSIButton9, button[type="submit"], input[type="submit"]')
             except Exception as e:
-                # dump current URL + screenshot + HTML snippet for user judgment
+                # dump 当前 URL + 截图 + HTML 切片让用户判断
                 try:
                     cur_url = page.url
                     safe_name = email.replace("@", "_at_").replace("/", "_")
@@ -327,8 +329,8 @@ def refresh_token_via_oauth(
                                 page.wait_for_timeout(1500)
                                 break
                     elif "proofs/Add" in url or "account.live.com" in url:
-                        # proofs/Add: Points "Later"/"Skip" will be interpreted by Microsoft as "deny authorization" returning access_denied,
-                        # Must navigate directly to the post= URL in the query to continue the OAuth flow.
+                        # proofs/Add: 点 "後で"/"Skip" 会被微软解释为"拒绝授权"返 access_denied,
+                        # 直接 navigate 到 query 里的 post= URL 才能继续 OAuth flow.
                         qs = urllib.parse.urlparse(url).query
                         post = urllib.parse.parse_qs(qs).get("post", [None])[0]
                         if post:
@@ -336,7 +338,7 @@ def refresh_token_via_oauth(
                             logger.info(f"[{email}] bypass proofs → post={target[:80]}")
                             page.goto(target, wait_until="domcontentloaded", timeout=30000)
                         else:
-                            # Without post=, fall back to clicking iCancel (only available in English UI)
+                            # 没 post= 时退而点 iCancel (英文 UI 才有)
                             for sel in ['#iCancel', 'a[id="iCancel"]']:
                                 btn = page.query_selector(sel)
                                 if btn and btn.is_visible():
@@ -345,7 +347,7 @@ def refresh_token_via_oauth(
                                     page.wait_for_timeout(1200)
                                     break
                     else:
-                        # stay-signed-in / Other primary button fallback
+                        # stay-signed-in / 其它 primary 按钮兜底
                         for sel in ['#idSIButton9', 'button[data-testid="primaryButton"]']:
                             btn = page.query_selector(sel)
                             if btn and btn.is_visible():
@@ -356,7 +358,7 @@ def refresh_token_via_oauth(
                     pass
                 page.wait_for_timeout(1500)
 
-            # Main loop ends (got code or timeout). Dump the last page when timeout so user can see it
+            # 主循环结束 (拿到 code or timeout). timeout 时 dump 最后页面让用户看
             if not code:
                 try:
                     safe_name = email.replace("@", "_at_").replace("/", "_")
@@ -378,14 +380,14 @@ def refresh_token_via_oauth(
                 pass
 
     if not code:
-        # Assemble a precise error message to return to the caller
+        # 拼一份精确错误信息回给 caller
         reason = locals().get("block_reason") or "登入超时 / 密码错 / 异常挑战"
-        # Stuff reason into logger and bring it back through the new return value
+        # 把 reason 塞进 logger 然后通过新的 return value 把它带回去
         logger.error(f"[{email}] 未拿到 OAuth code: {reason}")
-        # Using global variables this way, refresh_and_update_db can access it; the simple approach is to attach it as a property to the function
+        # 借用全局变量这样 refresh_and_update_db 能拿到; 简单做法用属性挂到函数
         refresh_token_via_oauth.last_block_reason = reason  # type: ignore[attr-defined]
         return None
-    # Clear block_reason on success
+    # 成功时清掉 block_reason
     refresh_token_via_oauth.last_block_reason = ""  # type: ignore[attr-defined]
 
     # code → refresh_token
@@ -417,7 +419,7 @@ def refresh_token_via_oauth(
 
 
 def _ensure_proxy_alive(listen_port: int = 18898) -> tuple[bool, str]:
-    """Ensure socks5://127.0.0.1:<port> has gost listening; if not, reuse the pipeline main logic to start it."""
+    """确保 socks5://127.0.0.1:<port> 有 gost 在听; 没有则复用 pipeline 主逻辑拉起."""
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1.5)
@@ -426,7 +428,7 @@ def _ensure_proxy_alive(listen_port: int = 18898) -> tuple[bool, str]:
             return True, "already alive"
         except Exception:
             pass
-    # Not heard → Go pipeline._ensure_gost_alive to start up (it will read pay config to get webshare upstream)
+    # 没听 → 走 pipeline._ensure_gost_alive 拉起 (它会读 pay config 拿 webshare upstream)
     import json
     from pathlib import Path
     from . import settings as s
@@ -439,13 +441,13 @@ def _ensure_proxy_alive(listen_port: int = 18898) -> tuple[bool, str]:
         if str(s.ROOT) not in _sys.path:
             _sys.path.insert(0, str(s.ROOT))
         from pipeline import _ensure_gost_alive  # type: ignore
-        # _ensure_gost_alive(card_cfg, team_client=None) — listen_port is read from cfg.webshare.gost_listen_port
+        # _ensure_gost_alive(card_cfg, team_client=None) — listen_port 从 cfg.webshare.gost_listen_port 读
         ok = _ensure_gost_alive(cfg)
         if not ok:
             return False, "_ensure_gost_alive 返回 False (webshare 未启用 / 无 api_key / 上游探活失败?)"
     except Exception as e:
         return False, f"_ensure_gost_alive 异常: {e}"
-    # Explore once more
+    # 再探一次
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s2:
         s2.settimeout(2.0)
         try:
@@ -456,9 +458,10 @@ def _ensure_proxy_alive(listen_port: int = 18898) -> tuple[bool, str]:
 
 
 def refresh_and_update_db(email: str, proxy_url: str = "socks5://127.0.0.1:18898") -> dict:
-    """Read email/password/client_id from DB → OAuth flow → if successful then UPDATE DB.
+    """读 DB 拿 email/password/client_id → OAuth flow → 成功则 UPDATE DB.
 
-    Returns {ok, email, error?, new_rt_prefix?, imap_alive?}."""
+    返回 {ok, email, error?, new_rt_prefix?, imap_alive?}.
+    """
     from . import outlook_pool
     con = outlook_pool.get_db()._conn()
     row = con.execute(
@@ -470,7 +473,7 @@ def refresh_and_update_db(email: str, proxy_url: str = "socks5://127.0.0.1:18898
     if not row["password"]:
         return {"ok": False, "email": email, "error": "DB 里没保存密码, 无法 OAuth flow"}
 
-    # Ensure proxy is alive before running firefox (go through webshare → outlook not blocked by Microsoft GeoIP risk control)
+    # 跑 firefox 前先 ensure 代理活着 (走 webshare → outlook 不被微软 GeoIP 风控)
     import urllib.parse
     proxy_port = urllib.parse.urlparse(proxy_url).port or 18898
     alive, msg = _ensure_proxy_alive(proxy_port)
@@ -482,7 +485,7 @@ def refresh_and_update_db(email: str, proxy_url: str = "socks5://127.0.0.1:18898
     new_rt = refresh_token_via_oauth(row["email"], row["password"], row["client_id"], proxy_url=proxy_url)
     if not new_rt:
         reason = getattr(refresh_token_via_oauth, "last_block_reason", "") or "OAuth 流程未拿到 refresh_token (见日志)"
-        # identity/confirm class challenge → mark status as dead so users can directly see the root cause on the UI
+        # identity/confirm 类挑战 → 把 status 标 dead 让用户在 UI 上能直接看到根因
         if "二次验证" in reason or "拒绝授权" in reason:
             con.execute(
                 "UPDATE outlook_accounts SET status='dead', fail_reason=? WHERE email=?",
@@ -492,7 +495,7 @@ def refresh_and_update_db(email: str, proxy_url: str = "socks5://127.0.0.1:18898
             return {"ok": False, "email": email, "error": reason, "status": "dead"}
         return {"ok": False, "email": email, "error": reason}
 
-    # Immediately verify that IMAP XOAUTH2 can log in; if it can't log in, mark it as dead even if the RT is written to the DB.
+    # 立刻验证 IMAP XOAUTH2 真能登; 不能登的 RT 写进 DB 也没用, 标 dead.
     imap_alive = False
     imap_err = ""
     try:
@@ -520,7 +523,7 @@ def refresh_and_update_db(email: str, proxy_url: str = "socks5://127.0.0.1:18898
         return {"ok": True, "email": email, "new_rt_prefix": new_rt[:25] + "...",
                 "imap_alive": True, "status": "available"}
     else:
-        # RT received but IMAP rejected — mark dead but keep new RT, fail_reason explains
+        # RT 拿到了但 IMAP 拒 — 标 dead 但保留新 RT, fail_reason 说明
         con.execute(
             "UPDATE outlook_accounts SET refresh_token=?, status='dead', "
             "fail_reason=? WHERE email=?",

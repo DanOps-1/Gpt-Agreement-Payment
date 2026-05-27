@@ -253,7 +253,7 @@ def test_linking_406_exhaustion_raises():
 
 @responses.activate
 def test_linking_429_bypass_drops_authorization():
-    """Midtrans linking 429 risk control → resend to same endpoint but strip Authorization → 201 + reference."""
+    """Midtrans linking 429 风控 → 同 endpoint 重发但剥 Authorization → 201 + reference."""
     responses.post(
         f"https://app.midtrans.com/snap/v3/accounts/{SNAP_TOKEN}/linking",
         json={"error_messages": ["There's a technical error"]},
@@ -285,7 +285,7 @@ def test_linking_429_bypass_drops_authorization():
 
 @responses.activate
 def test_linking_200_with_technical_error_body_triggers_bypass():
-    """In some environments Midtrans uses 200 + body containing 'technical error' to express risk control, should also trigger bypass."""
+    """有些环境下 Midtrans 用 200 + body 含 'technical error' 表达风控，也应触发 bypass。"""
     responses.post(
         f"https://app.midtrans.com/snap/v3/accounts/{SNAP_TOKEN}/linking",
         json={"error_messages": ["There's a technical error"]},
@@ -316,7 +316,7 @@ def test_linking_200_with_technical_error_body_triggers_bypass():
 
 @responses.activate
 def test_linking_429_bypass_also_fails_raises():
-    """If bypass also fails (e.g., returns 500), throw GoPayError."""
+    """如果 bypass 也失败（例如返回 500），抛出 GoPayError。"""
     responses.post(
         f"https://app.midtrans.com/snap/v3/accounts/{SNAP_TOKEN}/linking",
         json={"error_messages": ["technical error"]},

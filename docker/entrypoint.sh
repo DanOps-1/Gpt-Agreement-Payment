@@ -1,6 +1,6 @@
 #!/bin/sh
-# Container startup hook: bootstrap user config (if still empty after host bind mount,
-# copy from .example), then exec docker CMD (uvicorn).
+# 容器启动钩子：bootstrap 用户配置（host bind mount 后如果还是空的，从 .example 拷一份），
+# 然后 exec docker CMD（uvicorn）。
 
 set -eu
 
@@ -10,16 +10,15 @@ bootstrap() {
     if [ ! -f "$dst" ] && [ -f "$src" ]; then
         cp "$src" "$dst"
         echo "[entrypoint] bootstrap $dst from $(basename "$src")"
-        echo "[entrypoint]   ↑ This is the template default value, please edit and restart the container (changes on host take effect via bind mount)"
+        echo "[entrypoint]   ↑ 这是模板默认值，请编辑后重启容器（host 上同步生效，bind mount）"
     fi
 }
 
 bootstrap /app/CTF-pay/config.paypal.example.json     /app/CTF-pay/config.paypal.json
 bootstrap /app/CTF-reg/config.paypal-proxy.example.json /app/CTF-reg/config.paypal-proxy.json
 
-# Sentinel QuickJS has a hard dependency on node. Explicitly validate before startup here
-# to avoid `[Errno 2] No such file or directory: 'node'` appearing during registration phase,
-# or unexpected fallback to pure Python.
+# Sentinel QuickJS 强依赖 node。这里启动前显式校验，避免运行到注册阶段才
+# 出现 `[Errno 2] No such file or directory: 'node'`，或意外回退纯 Python。
 if ! command -v node >/dev/null 2>&1; then
     if command -v nodejs >/dev/null 2>&1; then
         ln -sf "$(command -v nodejs)" /usr/local/bin/node
@@ -38,7 +37,7 @@ if [ -d /app/webui/frontend/node_modules ]; then
         || echo "[entrypoint] WARN: happy-dom not resolvable; rebuild image or run npm install in /app/webui/frontend" >&2
 fi
 
-# Create webui runtime data directory (webui SQLite + wizard state + registration results)
+# 创建 webui 运行时数据目录（webui SQLite + wizard state + 注册结果）
 mkdir -p /app/output
 
 exec "$@"

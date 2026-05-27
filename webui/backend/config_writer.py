@@ -106,8 +106,8 @@ def _project_pay(answers: dict) -> dict:
                 "gost_listen_port": gost_port,
                 "sync_team_proxy": proxy.get("sync_team_proxy", True),
             }
-            # In webshare mode, pipeline._ensure_gost_alive will start up a local gost relay;
-            # card.py connects directly to this address for outbound traffic (avoiding the USER:PASS placeholder passed through by the example template)
+            # webshare 模式下 pipeline._ensure_gost_alive 会拉起本地 gost 中继；
+            # card.py 直接连这个地址出网（避开 example 模板透传的 USER:PASS 占位）
             out["proxy"] = f"socks5://127.0.0.1:{gost_port}"
         elif mode == "none":
             out["proxy"] = ""
@@ -120,9 +120,9 @@ def _project_reg(answers: dict) -> dict:
     """Map flat wizard answers onto CTF-reg config schema."""
     out: dict = {}
     pm = _payment_method(answers)
-    # mail.catch_all_domain(s) come from Step03 Cloudflare's zone_names
-    # IMAP fields (imap_server/port/email/auth_code) have been completely removed — OTP goes
-    # CF Email Worker → KV, credentials stored in SQLite runtime_meta[secrets].
+    # mail.catch_all_domain(s) 来自 Step03 Cloudflare 的 zone_names
+    # IMAP 字段（imap_server/port/email/auth_code）已彻底删除——OTP 走
+    # CF Email Worker → KV，凭证存 SQLite runtime_meta[secrets]。
     zones = (answers.get("cloudflare") or {}).get("zone_names") or []
     if zones:
         out["mail"] = {
@@ -151,14 +151,15 @@ def _project_reg(answers: dict) -> dict:
 
 
 def _write_secrets(answers: dict) -> str | None:
-    """Merge Cloudflare credentials into SQLite runtime_meta[secrets].
+    """合并 Cloudflare 凭证到 SQLite runtime_meta[secrets]。
 
-    Input composition:
-      - api_token / zone_names: Step03 cloudflare's cf_token + zone_names
+    输入合成：
+      - api_token / zone_names: Step03 cloudflare 的 cf_token + zone_names
       - account_id / otp_kv_namespace_id / otp_worker_name: Step04 cloudflare_kv
-      - forward_to (optional): Step03 forward_to
+      - forward_to (可选): Step03 forward_to
 
-    Return storage location description; return None if no fields exist."""
+    返回存储位置描述；如无任何字段则返回 None。
+    """
     cf = answers.get("cloudflare") or {}
     kv = answers.get("cloudflare_kv") or {}
 
@@ -173,8 +174,8 @@ def _write_secrets(answers: dict) -> str | None:
         cf_section["otp_kv_namespace_id"] = kv["kv_namespace_id"]
     if kv.get("worker_name"):
         cf_section["otp_worker_name"] = kv["worker_name"]
-    # Note: fallback_to is not written to secrets — it's only bound during Worker deployment
-    # FALLBACK_TO env var is used, pipeline.py doesn't read it on this side.
+    # 注：fallback_to 不写 secrets——它只是给 Worker 部署时绑的
+    # FALLBACK_TO env var 用，pipeline.py 这边没人读它。
 
     if not cf_section:
         return None
@@ -189,13 +190,13 @@ def _write_secrets(answers: dict) -> str | None:
 
 
 def _strip_team_only_fields_for_plus(cfg: dict) -> None:
-    """Plus subscription doesn't require workspace/seat; skeleton defaults to Team template, must strip first
-    then merge, otherwise the exported config.paypal.json will have fields like seat_quantity=5,
-    causing abcard path / CTF-reg under Plus to not match plan_name.
+    """Plus 订阅不需要 workspace/seat；skeleton 默认填 Team 模板，必须先剥掉
+    再 merge，否则导出的 config.paypal.json 会带 seat_quantity=5 之类字段，
+    让 abcard 路径 / CTF-reg 在 Plus 下跟 plan_name 不匹配。
 
-    pay config uses fresh_checkout.plan path; reg config uses team_plan path.
-    Whenever any segment's plan_name contains "plus", strip both segments (to avoid leaving
-    the other segment's team default value when the wizard only fills in one segment)."""
+    pay 配置使用 fresh_checkout.plan 路径；reg 配置使用 team_plan 路径。
+    只要任一段 plan_name 含 "plus" 就两段都剥（避免 wizard 只填了其中一段时
+    残留另一段的 team 默认值）。"""
     pay_plan = ((cfg.get("fresh_checkout") or {}).get("plan") or {})
     reg_plan = cfg.get("team_plan") or {}
     candidate_names = (pay_plan.get("plan_name"), reg_plan.get("plan_name"))
@@ -211,9 +212,9 @@ def write_configs(answers: dict) -> dict:
     pay_skeleton = json.loads(s.PAY_EXAMPLE_PATH.read_text(encoding="utf-8"))
     reg_skeleton = json.loads(s.REG_EXAMPLE_PATH.read_text(encoding="utf-8"))
 
-    # Skeleton's auto_register.config_path defaults to pointing to .example.json template,
-    # after direct merge the pipeline subprocess will read the template. Use the actual
-    # reg path written by the wizard to override it.
+    # Skeleton 里 auto_register.config_path 默认指向 .example.json 模板，
+    # 直接 merge 后 pipeline 子进程会读到模板。用 wizard 实际写的真实
+    # reg 路径覆盖它。
     auth = pay_skeleton.setdefault("fresh_checkout", {}).setdefault("auth", {})
     auto = auth.setdefault("auto_register", {})
     auto["config_path"] = str(s.REG_CONFIG_PATH)

@@ -1,6 +1,6 @@
 {
   "gopay": {
-    "_comment": "GoPay payment configuration. When OTP is not filled by default, it falls back to CLI; at WebUI runtime, a SQLite-backed HTTP OTP endpoint will be injected.",
+    "_comment": "GoPay 支付配置。默认不填 otp 时回退 CLI；WebUI 运行时会注入 SQLite-backed HTTP OTP endpoint。",
     "country_code": "62",
     "phone_number": "81234567890",
     "pin": "YOUR_6_DIGIT_GOPAY_PIN",
@@ -12,7 +12,7 @@
       "issued_after_slack_s": 15
     },
     "protocol": {
-      "_comment": "Optional: X-E1/X-E2 protocol signature. Disabled by default; after filling in runtime keys, gopay.py can first attempt signed pin-token, then fallback to the original /nb.",
+      "_comment": "可选：X-E1/X-E2 协议签名。默认关闭；填 runtime keys 后 gopay.py 可先尝试 signed pin-token，再 fallback 到原 /nb。",
       "_v2_comment": "2026-05-14 reverse 完成：sign_version='v2' 走 HMAC-SHA256(K, msg) + HMAC cipher chain + device-static X-E2。需 display_encoder_key (frida memscan from libbatteryOpt+0x92948) + signed_msg_template (frida 抓 SHA-82394 outer hash input)。",
       "enabled": false,
       "sign_version": "v1",

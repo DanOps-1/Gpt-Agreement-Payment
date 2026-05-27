@@ -1,8 +1,13 @@
-"""A single active-run pipeline process controller.
+"""单 active-run 的 pipeline 进程控制器。
 
-Wraps `xvfb-run -a python pipeline.py [args]` subprocess: spawn / stream stdout to circular log buffer / SIGTERM-prioritized stop / expose status + log to routing layer.
+封装 `xvfb-run -a python pipeline.py [args]` 子进程：spawn / 流式收 stdout
+到环形日志缓冲 / SIGTERM-优先 stop / 暴露 status + log 给路由层。
 
-In GoPay mode, additionally supports OTP proxy: by default writes WhatsApp / manual OTP entries to SQLite via WebUI internal HTTP endpoint, gopay.py polls that endpoint. Retains `GOPAY_OTP_REQUEST path=<file>` legacy format recognition, solely as explicit fallback for legacy file provider compatibility."""
+GoPay 模式下额外支持 OTP 中转：默认通过 WebUI 内部 HTTP endpoint
+把 WhatsApp / 手动补录 OTP 写入 SQLite，gopay.py 轮询该 endpoint。
+保留 `GOPAY_OTP_REQUEST path=<file>` 旧格式识别，只作为显式 legacy
+file provider 的兼容 fallback。
+"""
 import json
 import os
 import re
@@ -43,11 +48,11 @@ def _read_pay_config() -> dict:
 
 _LINK_OK_RE = re.compile(r"\[gopay\]\s+midtrans linking ok\s+reference=(\S+)")
 _CHARGE_SETTLED_RE = re.compile(r"\[gopay\]\s+charge settled")
-# 406 "account already linked" signal —— Midtrans server confirms phone is bound
-# Regardless of retry success, local should mark linked to sync with server
+# 406「account already linked」signal —— Midtrans 服务端确认该号已绑，
+# 不论后续重试是否成功，本地都应该 mark linked 来跟服务端对齐
 _LINK_406_RE = re.compile(r"\[gopay\]\s+midtrans linking 406")
 
-# QRIS: extract PNG path + remote URL + reference + settled from qris.py standard logs
+# QRIS：从 qris.py 的标准日志里抓 PNG 路径 + 远端 URL + reference + settled
 _QRIS_PNG_RE = re.compile(r"\[qris\]\s+PNG:\s+(\S+)")
 _QRIS_URL_RE = re.compile(r"\[qris\]\s+远端预览:\s+(\S+)")
 _QRIS_DEEPLINK_RE = re.compile(r"\[qris\]\s+DEEPLINK:\s+(\S+)")
@@ -55,8 +60,8 @@ _QRIS_REF_RE = re.compile(r"\[qris\]\s+QR 已生成 reference=(\S+)")
 _QRIS_SETTLED_RE = re.compile(r"\[qris\]\s+settled")
 _QRIS_EXPIRY_RE = re.compile(r"\[qris\]\s+过期:\s+(\S.*)")
 
-# Current QRIS run artifacts: PNG / qr_image_url / reference / expiry.
-# Frontend polls /api/qris/state; also returned in status() to avoid multiple endpoints.
+# 当前 QRIS 跑的 artifacts：PNG / qr_image_url / reference / expiry。
+# 前端轮询 /api/qris/state 拿；status() 里也回传，避免多端点。
 _qris_state: dict = {}
 
 
@@ -99,7 +104,7 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
               target_emails: Optional[list] = None, rt_only: bool = False,
               promo_plan: str = "plus", promo_country: str = "ID",
               promo_currency: str = "IDR", promo_campaign_id: str = "",
-              # no_card_plus parameter (uses standalone scripts/no_card_paypal_plus.py, not pipeline.py)
+              # no_card_plus 参数 (走独立 scripts/no_card_paypal_plus.py, 不走 pipeline.py)
               no_card_promo_link_id: int = 0,
               no_card_phone: str = "",
               no_card_otp_timeout: int = 240,
@@ -111,10 +116,10 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
               no_card_paypal_country: str = "US",
               no_card_paypal_lang: str = "en",
               no_card_inventory_mail_source: str = "any") -> list[str]:
-    """Compose final command line from parameters."""
-    # no_card_plus mode: standalone script, runs Chromium RPA on promo link → PayPal → ChatGPT plus.
-    # SMS API URL read from config.paypal.json::paypal.sms_api_url or environment variable, not via cmdline
-    # to avoid exposing token (sensitive, prevent leaking into ps/log).
+    """根据参数拼出最终命令行。"""
+    # no_card_plus 模式: 独立脚本, 走 Chromium RPA 跑 promo link → PayPal → ChatGPT plus.
+    # SMS API URL 从 config.paypal.json::paypal.sms_api_url 或环境变量读, 不通过 cmdline
+    # 传 (token 敏感, 避免落进 ps/log).
     if mode == "no_card_plus":
         cmd = ["xvfb-run", "-a", "python", "-u", "scripts/no_card_paypal_plus.py",
                "--config", str(s.PAY_CONFIG_PATH),
@@ -139,7 +144,7 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
 
     cmd = ["xvfb-run", "-a", "python", "-u", "pipeline.py",
            "--config", str(s.PAY_CONFIG_PATH)]
-    # free_only two sub-modes + promo_link all skip paypal / gopay / qris payment stage
+    # free_only 两个子模式 + promo_link 都不走 paypal / gopay / qris 支付段
     if mode in ("free_register", "free_backfill_rt"):
         if mode == "free_register":
             cmd.append("--free-register")
@@ -171,7 +176,7 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
             cmd.extend(["--gopay-otp-file", gopay_otp_file])
     elif paypal:
         cmd.append("--paypal")
-    # mode determines loop structure (daemon ∞ / self_dealer / batch N / single)
+    # mode 决定循环结构（daemon ∞ / self_dealer / batch N / 单次）
     if mode == "daemon":
         cmd.append("--daemon")
     elif mode == "self_dealer":
@@ -179,8 +184,8 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
     elif mode == "batch":
         cmd.extend(["--batch", str(batch), "--workers", str(workers)])
     # mode == "single" → no extra flags
-    # register_only / pay_only are modifiers, orthogonal to mode (batch + register-only
-    # = bulk register N; single + register-only = single register)
+    # register_only / pay_only 是 modifier，跟 mode 正交（batch + register-only
+    # = 批量注册 N 个；single + register-only = 单次注册）
     if register_only:
         cmd.append("--register-only")
     elif pay_only:
@@ -195,12 +200,12 @@ def build_cmd(mode: str, paypal: bool, batch: int, workers: int, self_dealer: in
 
 
 def qris_state() -> dict:
-    """Artifacts captured from current/most recent QRIS run. Frontend uses to render QR + status."""
+    """当前/最近一次 QRIS run 抓到的 artifacts。前端用来渲染 QR + 状态。"""
     return dict(_qris_state)
 
 
 def qris_png_bytes() -> Optional[bytes]:
-    """Read latest QR PNG file bytes; return None if absent/read fails."""
+    """读最新 QR PNG 文件 bytes；没有/读失败返 None。"""
     p = _qris_state.get("png_path")
     if not p:
         return None
@@ -236,7 +241,7 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
           env_overrides: Optional[dict] = None,
           target_emails: Optional[list] = None, rt_only: bool = False,
           mail_source: str = "outlook", outlook_email: str = "",
-          # no_card_plus parameter
+          # no_card_plus 参数
           no_card_promo_link_id: int = 0,
           no_card_phone: str = "",
           no_card_sms_api_url: str = "",
@@ -256,7 +261,7 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
         if _proc is not None and _proc.poll() is None:
             raise RuntimeError("a pipeline is already running")
 
-        # OTP defaults to WebUI SQLite endpoint; no longer creates temp FIFO file.
+        # OTP 默认走 WebUI SQLite endpoint；不再创建临时 FIFO 文件。
         otp_p: Optional[Path] = None
 
         cmd = build_cmd(mode, paypal, batch, workers, self_dealer,
@@ -292,7 +297,7 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
                     "external service must POST /api/gopay/link-state/unlink first"
                 )
 
-        # Reset (auto-loop preserves prior iteration logs across iterations for continuous user visibility)
+        # Reset (auto-loop 跨 iteration 时保留之前的日志，方便用户连续看)
         global _preserve_log_on_next_start
         if not _preserve_log_on_next_start:
             _log_lines = []
@@ -308,39 +313,39 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
         _otp_file_is_temp = otp_p is not None
         _otp_pending = False
         _active_gopay_phone = active_phone
-        # Clear QRIS previous artifacts before each run start, prevent frontend from reading stale QR
+        # 每次 run 开始前清 QRIS 上一次的 artifacts，避免前端拿到旧 QR
         _qris_state.clear()
 
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         if gopay:
             env["WEBUI_GOPAY_OTP_URL"] = wa_relay.otp_url()
-        # Registration/login path: respect register_mode passed by frontend (protocol / browser).
-        # protocol = AuthFlow HTTP direct + Node/QuickJS Sentinel; RT refresh uses AuthFlow.run_protocol_login.
-        # browser = Camoufox/Playwright, triggers real browser; post-run RT uses card._exchange_refresh_token_with_session.
-        # Both paths fail under forced add-phone scenario (OpenAI risk control), but equivalent capability otherwise.
+        # 注册/登录路径：尊重前端传入的 register_mode (protocol / browser)。
+        # protocol = AuthFlow HTTP 直连 + Node/QuickJS Sentinel；RT 补领走 AuthFlow.run_protocol_login。
+        # browser  = Camoufox/Playwright，会触发真浏览器；事后 RT 走 card._exchange_refresh_token_with_session。
+        # 两条路在 add-phone 强制场景下都过不去（OpenAI 风控），但其余场景能力等价。
         rm = (register_mode or "protocol").strip().lower()
         if rm not in ("protocol", "browser"):
             print(f"[runner] register_mode={rm!r} 不识别，回退 protocol")
             rm = "protocol"
         env["WEBUI_REG_MODE"] = rm
         env.setdefault("OPENAI_SENTINEL_REQUIRE_QUICKJS", "1")
-        # Email source (strict binary choice) → CTF-reg/mail/provider.py:create_mailbox() read
+        # 邮箱来源 (二选一 strict) → CTF-reg/mail/provider.py:create_mailbox() 读
         src = (mail_source or "outlook").strip().lower()
         env["WEBUI_MAIL_SOURCE"] = "catch_all" if src == "catch_all" else "outlook"
-        env.pop("WEBUI_MAIL_MODE", None)  # Remove legacy obfuscation prevention
+        env.pop("WEBUI_MAIL_MODE", None)  # 移除 legacy 防混淆
         if outlook_email and outlook_email.strip() and src == "outlook":
             env["WEBUI_OUTLOOK_EMAIL"] = outlook_email.strip().lower()
         else:
             env.pop("WEBUI_OUTLOOK_EMAIL", None)
-        # QRIS demo mode: webui startup sets WEBUI_QRIS_FORCE_MOCK=1 to let qris=true run
-        # built-in mock charge (bypass OpenAI/Stripe risk control, demo QR rendering to frontend). Don't set in production.
+        # QRIS demo 模式：webui 启动时 set WEBUI_QRIS_FORCE_MOCK=1 让 qris=true 走
+        # 内置 mock charge（绕过 OpenAI/Stripe 风控演示前端 QR 渲染）。生产不要 set。
         if qris and os.getenv("WEBUI_QRIS_FORCE_MOCK", "").strip().lower() in ("1", "true", "yes"):
             env["QRIS_MOCK"] = "1"
             print("[runner] WEBUI_QRIS_FORCE_MOCK=1 → 子进程 QRIS_MOCK=1 (demo 模式，绕过 OpenAI)")
-        # no_card_plus mode: scripts/no_card_paypal_plus.py requires SMS API URL.
-        # Not via cmdline (token sensitive), three-layer injection fallback in env:
-        #   1. no_card_sms_api_url input by user in webui form (priority)
-        #   2. host process env PAYPAL_SMS_API_URL / PPS_SMS_API_URL
+        # no_card_plus 模式: scripts/no_card_paypal_plus.py 要 SMS API URL.
+        # 不走 cmdline (token 敏感), 三层兜底注入 env:
+        #   1. 用户在 webui form 输入的 no_card_sms_api_url (优先)
+        #   2. host 进程 env PAYPAL_SMS_API_URL / PPS_SMS_API_URL
         #   3. config.paypal.json::paypal.sms_api_url
         if mode == "no_card_plus":
             sms_url = (no_card_sms_api_url or "").strip()
@@ -373,8 +378,8 @@ def start(*, mode: str, paypal: bool = True, batch: int = 0, workers: int = 3,
                 text=True,
                 bufsize=1,
                 env=env,
-                # Make pipeline subprocess an independent session leader; when webui backend restarts,
-                # won't be killed alongside. stop() explicitly terminates entire process group with killpg.
+                # 让 pipeline 子进程独立成 session leader，webui 后端重启时
+                # 不会随之被杀。stop() 用 killpg 显式终止整组。
                 start_new_session=True,
             )
         except FileNotFoundError as e:
@@ -439,9 +444,9 @@ def _drain(proc: subprocess.Popen) -> None:
                 if m:
                     last_link_ref = m.group(1).strip().strip(",.")
 
-                # Pre-detect 406: Midtrans already determined phone is bound, local should sync.
-                # Don't wait for charge settled before updating —— failed payments also leave linked status,
-                # else next charge blindly retries, blocked by same 406.
+                # 提前检测 406：Midtrans 已经认定 phone 绑了，本地应同步。
+                # 不等 charge settled 才更新——失败的支付也会留下 linked 状态，
+                # 否则下一单还会盲目重试，被同样的 406 拦下。
                 if _LINK_406_RE.search(line) and _active_gopay_phone:
                     try:
                         link_state.mark_linked(
@@ -466,8 +471,8 @@ def _drain(proc: subprocess.Popen) -> None:
                     except Exception:
                         pass
 
-                # QRIS artifacts —— drop PNG path / remote URL / reference into _qris_state
-                # for GET /api/qris/state and /api/qris/qr.png to use
+                # QRIS artifacts —— 把 PNG 路径 / 远端 URL / reference 落到 _qris_state
+                # 给 GET /api/qris/state 和 /api/qris/qr.png 用
                 m_png = _QRIS_PNG_RE.search(line)
                 if m_png:
                     _qris_state["png_path"] = m_png.group(1).strip()
@@ -508,8 +513,8 @@ def stop() -> dict:
         proc = _proc
         if proc is None or proc.poll() is not None:
             return status()
-    # subprocess is an independent session leader (start_new_session=True), use killpg
-    # to terminate the entire group, otherwise only SIGTERM parent process will leave xvfb-run/python pipeline orphans.
+    # subprocess 是独立 session leader（start_new_session=True），用 killpg
+    # 终止整组，否则只 SIGTERM 父进程会留下 xvfb-run/python pipeline 孤儿。
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
     except (ProcessLookupError, PermissionError):

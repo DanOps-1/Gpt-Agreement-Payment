@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""GoPay "multiple accounts from one credential" protocol batch runner.
+"""GoPay "一号多开" 协议 batch runner.
 
-Link a set of GoPay credentials (phone, pin, country_code) at protocol layer to N
-ChatGPT accounts. Each attempt uses a different device fingerprint (sign rotator) + different
-user-agent + different correlation-id, so GoPay server treats each request as a different device
-session, avoiding cumulative risk score.
+用一组 GoPay credentials (phone, pin, country_code) 协议层 linking 到 N 个
+ChatGPT 账号. 每次 attempt 用不同 device fingerprint (sign rotator) + 不同
+user-agent + 不同 correlation-id, 让 GoPay 服务端把每次请求看作不同 device
+session, 避免 cumulative risk score.
 
 Flow per ChatGPT account:
   1. fresh_checkout (ChatGPT) → cs_live + Stripe pm + redirect_url
   2. midtrans linking (new reference_id)
   3. GoPay validate-reference (browser, no signing)
   4. GoPay user-consent → OTP sent (WhatsApp/SMS to phone)
-  5. user provides OTP → write to /tmp/gopay_otp_<idx>.txt
-  6. validate-otp → pin tokenize (/nb, PIN plaintext) → validate-pin
+  5. user 给 OTP → write to /tmp/gopay_otp_<idx>.txt
+  6. validate-otp → pin tokenize (/nb, PIN 明文) → validate-pin
   7. midtrans/charge:
-     - SUCCESS → payment/process settle → Stripe webhook → Plus upgrade
-     - DENIED (fraud)  → linking_only state, Stripe webhook async may still upgrade
-  8. wait verify_delay seconds then re-fetch ChatGPT plan_type to check if plus
+     - SUCCESS → payment/process settle → Stripe webhook → Plus 升级
+     - DENIED (fraud)  → linking_only state, Stripe webhook 异步可能仍升级
+  8. 等 verify_delay 秒后 re-fetch ChatGPT plan_type 看是否 plus
 
 CLI:
   python -m scripts.gopay_oneshot_multi \
@@ -25,7 +25,8 @@ CLI:
       --otp-base /tmp/gopay_otp \
       --verify-delay 60
 
-per-account artifact: ./output/gopay_multi_<email>_<ts>.json"""
+per-account artifact: ./output/gopay_multi_<email>_<ts>.json
+"""
 from __future__ import annotations
 
 import argparse
@@ -36,7 +37,7 @@ import sys
 import time
 from pathlib import Path
 
-# Allow this script to run as both `python -m scripts.gopay_oneshot_multi` and `python scripts/...`
+# 让本 script 既能 `python -m scripts.gopay_oneshot_multi` 也能 `python scripts/...`
 _HERE = Path(__file__).resolve().parent
 _CTF_PAY = _HERE.parent
 if str(_CTF_PAY) not in sys.path:
@@ -53,9 +54,9 @@ def _now_ts() -> str:
 
 def run_one(*, target_email: str, config_path: str, otp_file: str,
             verify_delay: int, outdir: Path, idx: int, total: int) -> dict:
-    """Run GoPay protocol linking flow for a single ChatGPT account."""
+    """跑单个 ChatGPT account 的 GoPay protocol linking flow."""
     print(f"\n{'#'*72}\n# [{idx+1}/{total}] target={target_email}\n{'#'*72}")
-    # Clean up old OTP files (avoid misreading previous OTP)
+    # 清旧 OTP 文件 (避免误读上次 OTP)
     if os.path.exists(otp_file):
         os.unlink(otp_file)
         print(f"  cleared {otp_file}")
@@ -89,7 +90,7 @@ def run_one(*, target_email: str, config_path: str, otp_file: str,
         proc.wait(timeout=900)
         rc = proc.returncode
         state = "ok" if rc == 0 else f"exit_{rc}"
-        # Find CARD_RESULT_JSON
+        # 找 CARD_RESULT_JSON
         for line in log_file.read_text(errors="replace").splitlines()[::-1]:
             line = line.strip()
             if line.startswith("CARD_RESULT_JSON="):
@@ -105,7 +106,7 @@ def run_one(*, target_email: str, config_path: str, otp_file: str,
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
 
-    # verify phase: wait for webhook async processing, then check plan_type
+    # verify 阶段: 等 webhook 异步处理, 然后看 plan_type
     plan_now = ""
     if verify_delay > 0:
         print(f"  ⏳ wait {verify_delay}s for Stripe webhook → ChatGPT plan_type")
@@ -132,7 +133,7 @@ def run_one(*, target_email: str, config_path: str, otp_file: str,
 
 
 def _probe_plan(email: str) -> str:
-    """Fetch new access_token using session_token from webui DB email, parse chatgpt_plan_type."""
+    """用 webui DB 里 email 的 session_token 拉新 access_token, 解析 chatgpt_plan_type."""
     import sqlite3
     try:
         from curl_cffi import requests as creq

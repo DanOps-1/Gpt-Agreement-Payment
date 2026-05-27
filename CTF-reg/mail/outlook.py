@@ -166,8 +166,8 @@ def scrape_otp(
     password: str,
     timeout: int = 120,
     threshold_ts: Optional[float] = None,
-    # Default refers to port 18898 started by pipeline._ensure_gost_alive (reachable within container).
-    # 18899 is an independent relay started by webui preflight, but may not be alive after webui restart.
+    # 默认指 pipeline._ensure_gost_alive 启的 18898 (容器内可达).
+    # 18899 是 webui preflight 启的独立 relay, 但 webui 重启后不一定 alive.
     proxy_url: str = "socks5://127.0.0.1:18898",
 ) -> str:
     """Login outlook web with password + scrape OTP from inbox. Raises on failure."""
@@ -177,7 +177,7 @@ def scrape_otp(
         threshold_ts = time.time() - 30
 
     with sync_playwright() as p:
-        # firefox first — chromium socks5 typically ERR_PROXY_CONNECTION_FAILED
+        # firefox first — chromium socks5 通常 ERR_PROXY_CONNECTION_FAILED
         try:
             browser = p.firefox.launch(headless=True, proxy=_parse_proxy(proxy_url))
         except Exception:

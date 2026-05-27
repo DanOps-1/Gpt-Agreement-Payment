@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from ._common import CheckResult, PreflightResult, aggregate
 
 
-# Camoufox does not support socks5+auth; CTF-reg/browser_register.py expects a gost socks5 relay without auth on local
-# 127.0.0.1:18899 forwarding to upstream.
+# Camoufox 不支持 socks5+auth；CTF-reg/browser_register.py 期望本地
+# 127.0.0.1:18899 上有一条无 auth 的 gost socks5 中继转发到上游。
 GOST_RELAY_PORT = 18899
 
 
@@ -50,7 +50,7 @@ def _spawn_gost_relay(upstream_url: str, listen_port: int) -> tuple[bool, str]:
             os.close(fd)
     except Exception as e:
         return False, f"spawn 失败: {e}"
-    # Wait for listener to be ready
+    # 等监听就绪
     deadline = time.time() + 4
     while time.time() < deadline:
         if proc.poll() is not None:
@@ -74,7 +74,7 @@ def check(body: dict) -> PreflightResult:
 
     checks: list[CheckResult] = []
 
-    # Direct connection to upstream: first confirm the proxy itself works
+    # 直连上游：先确认 proxy 本身能用
     try:
         with httpx.Client(proxy=proxy_url, timeout=15.0) as c:
             ip = c.get("https://api.ipify.org").text.strip()
@@ -83,7 +83,7 @@ def check(body: dict) -> PreflightResult:
                                       message=f"proxy connect failed: {e}")])
     checks.append(CheckResult(name="exit_ip", status="ok", message=ip))
 
-    # Country detection
+    # 国家检测
     try:
         with httpx.Client(timeout=10.0) as c:
             geo = c.get(f"http://ip-api.com/json/{ip}").json()
@@ -99,7 +99,7 @@ def check(body: dict) -> PreflightResult:
         checks.append(CheckResult(name="country", status="warn",
                                   message=f"geo lookup failed: {e}"))
 
-    # socks5+auth → CTF-reg uses Camoufox, requires local :18899 relay without auth
+    # socks5+auth → CTF-reg 走 Camoufox，需要本地 :18899 无 auth 中继
     if _is_socks5_with_auth(proxy_url):
         if _port_listening(GOST_RELAY_PORT):
             checks.append(CheckResult(name="gost_relay", status="ok",
@@ -109,7 +109,7 @@ def check(body: dict) -> PreflightResult:
             if ok:
                 checks.append(CheckResult(name="gost_relay", status="ok",
                                           message=f"auto-spawned: {info}"))
-                # Verify the relay can actually forward
+                # 验证中继真能转发
                 try:
                     with httpx.Client(proxy=f"socks5://127.0.0.1:{GOST_RELAY_PORT}",
                                       timeout=10.0) as c:

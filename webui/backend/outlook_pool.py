@@ -1,10 +1,11 @@
-"""Outlook Account Pool — 4-segment format bulk import + claim next unused at runtime.
+"""Outlook 账号池 — 4 段接码格式批量入库 + Run 时 claim 下一个未用的。
 
-Format (one per line):
+格式（每行一个）：
     email----password----client_id----refresh_token
 
-DB table outlook_accounts, state machine:
-    available → claim → in_use → mark_used (registration success) | mark_dead (refresh_token expired)"""
+DB 表 outlook_accounts，状态机：
+    available → claim → in_use → mark_used (注册成功) | mark_dead (refresh_token 失效)
+"""
 from __future__ import annotations
 
 import imaplib
@@ -25,11 +26,11 @@ IMAP_SCOPE = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
 IMAP_HOST = "outlook.office365.com"
 
 
-# ──────────────────────── Parse + Import ────────────────────────
+# ──────────────────────── 解析 + 入库 ────────────────────────
 
 
 def parse_lines(text: str) -> list[dict]:
-    """Parse multi-line 4-segment format → list of dicts. Invalid lines skipped."""
+    """解析多行 4 段格式 → list of dicts。无效行被跳过。"""
     out: list[dict] = []
     for raw in (text or "").splitlines():
         line = raw.strip()
@@ -52,26 +53,27 @@ def parse_lines(text: str) -> list[dict]:
 
 def validate_account(email: str, refresh_token: str, client_id: str,
                      timeout: int = 12) -> tuple[str, str]:
-    """Run RT-grant + IMAP XOAUTH2 dual validation on single account.
+    """对单个号跑 RT-grant + IMAP XOAUTH2 双验证.
 
-    Returns (status, fail_reason):
-      - ('available', '')                   RT valid + IMAP pass → truly usable
-      - ('dead', 'RT expired: ...')          refresh_token grant failed (expired/banned)
-      - ('dead', 'IMAP XOAUTH2 rejected: ...') RT ok but IMAP scope missing (supplier client_id restriction)
-      - ('dead', 'IMAP connection error: ...') network/proxy issue"""
+    返 (status, fail_reason):
+      - ('available', '')                   RT 有效 + IMAP 通 → 真能用
+      - ('dead', 'RT 失效: ...')             refresh_token grant 失败 (过期/封号)
+      - ('dead', 'IMAP XOAUTH2 拒绝: ...')   RT 通但 IMAP scope 缺 (supplier client_id 限制)
+      - ('dead', 'IMAP 连接异常: ...')       网络/代理问题
+    """
     # Step 1: RT → access_token (v2 endpoint + IMAP scope)
     try:
         at = get_outlook_access_token(refresh_token, client_id)
     except Exception as e:
         err = str(e)[:180]
-        # Distinguish common reasons
+        # 区分常见原因
         if "service abuse" in err.lower() or "abuse mode" in err.lower():
             return "dead", f"账号被 Microsoft 封禁: {err}"
         if "400" in err or "invalid_grant" in err.lower():
             return "dead", f"refresh_token 失效或 client_id 不匹配: {err}"
         return "dead", f"RT 失效: {err}"
 
-    # Step 2: Real IMAP XOAUTH2 (~3-5s)
+    # Step 2: 真 IMAP XOAUTH2 (~3-5s)
     try:
         import imaplib
         M = imaplib.IMAP4_SSL(IMAP_HOST, 993)
@@ -96,11 +98,12 @@ def validate_account(email: str, refresh_token: str, client_id: str,
 
 
 def import_lines(text: str, validate: bool = True, concurrency: int = 8) -> dict:
-    """Bulk import + run RT/IMAP validation concurrently by default, mark failed ones as dead on DB write.
+    """批量入库 + 默认并发跑 RT/IMAP 验证, 失败的入 DB 时就标 dead.
 
-    validate=True uses ThreadPoolExecutor concurrency N=8 (single account ~3-8s, 100 accounts ~10s);
-    too high concurrency triggers Microsoft rate limiting (HTTP 429 / IMAP banned), 8 is stable;
-    use validate=False for pure import (skip validation)."""
+    validate=True 走 ThreadPoolExecutor 并发 N=8 (单号 ~3-8s, 100 号也只要 ~10s);
+    concurrency 太高会被 Microsoft 限速 (HTTP 429 / IMAP banned), 8 是稳态;
+    想纯入库 (跳过验证) 走 validate=False.
+    """
     rows = parse_lines(text)
     db = get_db()
     con = db._conn()
@@ -109,7 +112,7 @@ def import_lines(text: str, validate: bool = True, concurrency: int = 8) -> dict
     fail_reasons: dict[str, int] = {}
     now = time.time()
 
-    # Step 1: Concurrent validate, collect (idx, status, fail_reason)
+    # Step 1: 并发跑 validate, 收集 (idx, status, fail_reason)
     results: dict[int, tuple[str, str]] = {}
     if validate and rows:
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -135,7 +138,7 @@ def import_lines(text: str, validate: bool = True, concurrency: int = 8) -> dict
         for i in range(len(rows)):
             results[i] = ("available", "")
 
-    # Step 2: Serial DB write (SQLite not good at concurrent writes)
+    # Step 2: 串行写 DB (SQLite 不擅长并发写)
     for i, r in enumerate(rows):
         status, fail = results[i]
         cur = con.execute(
@@ -176,10 +179,11 @@ def import_lines(text: str, validate: bool = True, concurrency: int = 8) -> dict
 
 
 def revalidate_all(concurrency: int = 8, include_used: bool = False) -> dict:
-    """Run concurrent RT + IMAP validation on all accounts in pool (default exclude status='used'), write back status + fail_reason.
+    """对池子里所有 (默认排除 status='used') 的号并发跑 RT + IMAP 验证, 写回 status + fail_reason.
 
-    'used' excluded by default: already marked used by OpenAI, RT status irrelevant going forward (unless include_used=True).
-    Returns {scanned, valid_imap, invalid_imap, transitions, fail_reasons, elapsed}."""
+    used 默认排除: 它们已被 OpenAI 标 used, RT 状态不影响后续 (除非 include_used=True).
+    返 {scanned, valid_imap, invalid_imap, transitions, fail_reasons, elapsed}.
+    """
     import time as _t
     con = get_db()._conn()
     if include_used:
@@ -224,7 +228,7 @@ def revalidate_all(concurrency: int = 8, include_used: bool = False) -> dict:
             fail_reasons[short] = fail_reasons.get(short, 0) + 1
         if old_status != new_status:
             transitions.append({"email": r["email"], "from": old_status, "to": new_status})
-        # claimed_at=0 because possibly released from in_use but status not updated
+        # claimed_at=0 因为可能之前 in_use 被释放但状态没改
         if new_status == "available":
             con.execute(
                 "UPDATE outlook_accounts SET status=?, fail_reason=?, claimed_at=0 WHERE email=?",
@@ -250,7 +254,7 @@ def revalidate_all(concurrency: int = 8, include_used: bool = False) -> dict:
 
 
 def claim_next() -> Optional[dict]:
-    """Atomically claim next available outlook for registration; return None if none available."""
+    """原子 claim 下一个 available outlook 给 register 用；无可用返 None。"""
     db = get_db()
     con = db._conn()
     cur = con.execute(
@@ -266,7 +270,7 @@ def claim_next() -> Optional[dict]:
         (time.time(), email),
     )
     if rc.rowcount != 1:
-        # Concurrently taken by others, retry once
+        # 并发场景被别人抢了，重试一次
         con.commit()
         return claim_next()
     con.commit()
@@ -279,10 +283,11 @@ def claim_next() -> Optional[dict]:
 
 
 def claim_email(email: str) -> Optional[dict]:
-    """Atomically claim specific email (succeeds only if status='available'); return None for other states.
+    """原子 claim 指定 email（仅 status='available' 时成功）；其它状态返 None。
 
-    Differs from claim_next: caller explicitly specifies which account (UI dropdown selection),
-    if account is already in_use/used/dead return None directly for upstream error, don't auto-switch."""
+    跟 claim_next 的区别：调用方明确指定要用哪个号（webui UI 下拉选定），
+    若该号已 in_use/used/dead 直接返 None 让上游报错，不擅自换号。
+    """
     email = (email or "").strip().lower()
     if not email:
         return None
@@ -303,7 +308,7 @@ def claim_email(email: str) -> Optional[dict]:
     )
     if rc.rowcount != 1:
         con.commit()
-        return None  # Concurrently taken
+        return None  # 并发被抢
     con.commit()
     return {
         "email": email,
@@ -314,7 +319,7 @@ def claim_email(email: str) -> Optional[dict]:
 
 
 def mark_used(email: str, chatgpt_email: str = "") -> None:
-    """Registration successful; later reused for pay-only (registered_accounts table)."""
+    """注册成功；后续 pay-only 复用 (registered_accounts 表)。"""
     con = get_db()._conn()
     con.execute(
         "UPDATE outlook_accounts SET status='used', used_at=?, chatgpt_email=? WHERE email=?",
@@ -333,7 +338,7 @@ def mark_dead(email: str, reason: str = "") -> None:
 
 
 def release_unused(email: str) -> None:
-    """Post-claim not actually registered (exception / user canceled) → return to available."""
+    """claim 后没真注册（异常 / 用户取消）→ 还回 available。"""
     con = get_db()._conn()
     con.execute(
         "UPDATE outlook_accounts SET status='available', claimed_at=0 WHERE email=? AND status='in_use'",
@@ -342,7 +347,7 @@ def release_unused(email: str) -> None:
     con.commit()
 
 
-# ──────────────────────── List / Status ────────────────────────
+# ──────────────────────── 列表 / 状态 ────────────────────────
 
 
 def list_accounts(limit: int = 200, status: str = "") -> list[dict]:
@@ -421,10 +426,11 @@ def _extract_otp_from_html(body: str) -> Optional[str]:
 
 def fetch_otp_via_imap(email: str, refresh_token: str, client_id: str,
                        timeout: int = 240, threshold_ts: float = 0) -> str:
-    """Block-pull outlook OTP (latest email from OpenAI). Return 6-digit OTP or raise TimeoutError.
+    """阻塞拉 outlook OTP（OpenAI 来的最新邮件）。返回 6 位 OTP 或抛 TimeoutError。
 
-    Scan multiple folders: INBOX, Junk, Junk Email, Spam. Outlook anti-spam often routes
-    OpenAI OTP emails to strangers directly to Junk; single INBOX query pretends "not received"."""
+    扫描多 folder：INBOX、Junk、Junk Email、Spam。outlook 反垃圾经常把 OpenAI
+    第一次发给陌生收件人的验证码邮件直接 route 到 Junk，单查 INBOX 会假装"未收到"。
+    """
     import email as _email
     deadline = time.time() + max(60, timeout)
     if not threshold_ts:
@@ -433,7 +439,7 @@ def fetch_otp_via_imap(email: str, refresh_token: str, client_id: str,
     cached_token = ""
     cached_at = 0.0
     folders_to_scan = ["INBOX", "Junk", "Junk Email", "Spam"]
-    found_folders: list[str] | None = None  # LIST detection cached once
+    found_folders: list[str] | None = None  # LIST 探测一次就缓存
     while time.time() < deadline:
         try:
             if not cached_token or time.time() - cached_at > 3000:
@@ -444,7 +450,7 @@ def fetch_otp_via_imap(email: str, refresh_token: str, client_id: str,
             typ, _ = M.authenticate("XOAUTH2", lambda x: auth_string.encode())
             if typ != "OK":
                 raise RuntimeError("imap XOAUTH2 失败")
-            # First connection probes real folder names (Junk naming differs by Outlook region)
+            # 第一次连接时探测真实 folder 名字（不同 outlook 区域 Junk 命名不同）
             if found_folders is None:
                 try:
                     typ, listing = M.list()
@@ -453,7 +459,7 @@ def fetch_otp_via_imap(email: str, refresh_token: str, client_id: str,
                         if not raw:
                             continue
                         s = raw.decode(errors="ignore") if isinstance(raw, bytes) else str(raw)
-                        # IMAP LIST line end is quoted mailbox name
+                        # IMAP LIST 行末是带引号的 mailbox 名
                         m = re.search(r'"([^"]+)"\s*$', s) or re.search(r"\s(\S+)\s*$", s)
                         if m:
                             nm = m.group(1).strip('"')
@@ -463,7 +469,7 @@ def fetch_otp_via_imap(email: str, refresh_token: str, client_id: str,
                         real = names_lower.get(cand.lower())
                         if real and real not in picked:
                             picked.append(real)
-                    # Fallback: fuzzy match "junk" / "spam" / "bulk" substrings
+                    # 兜底：模糊匹配 "junk" / "spam" / "bulk" 子串
                     for k, v in names_lower.items():
                         if any(x in k for x in ("junk", "spam", "bulk")) and v not in picked:
                             picked.append(v)
@@ -477,7 +483,7 @@ def fetch_otp_via_imap(email: str, refresh_token: str, client_id: str,
 
             for folder in found_folders:
                 try:
-                    # Folder names with spaces need quotes
+                    # 带空格的 folder 名要加引号
                     sel_arg = f'"{folder}"' if " " in folder else folder
                     typ, _ = M.select(sel_arg, readonly=True)
                     if typ != "OK":
@@ -485,13 +491,13 @@ def fetch_otp_via_imap(email: str, refresh_token: str, client_id: str,
                 except Exception:
                     continue
                 try:
-                    # SEARCH ALL + python layer From validation. Previously used 5-level nested OR compound query
-                    # Triggers 'BAD Command Argument Error. 12' on Office365 IMAP then
-                    # silently swallowed by except, email never found.
-                    # Actual From observed may be:
-                    #   - ChatGPT <noreply@tm.openai.com>  (outlook.com recipient)
-                    #   - bounces+xxx@em7877.tm.open       (catch_all domain recipient, SendGrid relay)
-                    # Validate with python layer (line 526) covers both, no complex IMAP query dependency.
+                    # SEARCH ALL + python 层 From 校验. 之前用 5 层嵌套 OR 复合 query
+                    # 在 Office365 IMAP 触发 'BAD Command Argument Error. 12' 然后被
+                    # except 静默吞掉, 永远找不到邮件.
+                    # 真实 From 实测可能是:
+                    #   - ChatGPT <noreply@tm.openai.com>  (outlook.com 收件人)
+                    #   - bounces+xxx@em7877.tm.open       (catch_all 域名收件人, SendGrid 中转)
+                    # 用 python 层校验 (line 526) 涵盖两种, 不依赖 IMAP 复杂 query.
                     typ, data = M.search(None, "ALL")
                     ids = (data[0].split() if data and data[0] else [])
                 except Exception as e:
@@ -515,21 +521,21 @@ def fetch_otp_via_imap(email: str, refresh_token: str, client_id: str,
                         msg_ts = 0
                     if msg_ts and msg_ts < threshold_ts:
                         continue
-                    # Validate From field, must be OpenAI domain (prevent forgery / system emails containing "OpenAI" false positive)
+                    # 校验 From 字段, 必须是 OpenAI 域 (防伪造 / 系统邮件含 "OpenAI" 字样误判)
                     from_field = (msg.get("From") or "").lower()
                     if not any(d in from_field for d in (
-                        # OpenAI own + SendGrid relay (tested from
+                        # OpenAI 自家 + SendGrid 中转 (实测 from
                         # = "bounces+xxxxxxx-fdd4-isiner1988=lukyface.com@em7877.tm.open")
                         "openai.com", "auth.openai", "tm.openai", "chatgpt.com",
-                        "tm.open",  # OpenAI SendGrid relay subdomain (em*.tm.open)
+                        "tm.open",  # OpenAI SendGrid 中转子域 (em*.tm.open)
                     )):
                         logger.debug(f"[outlook-pool] skip non-OpenAI from={from_field[:80]}")
                         continue
-                    # tm1.openai.com is OpenAI current broken "shadow" OTP domain: returns fixed
-                    # OTP=493682 across all accounts, validate 100% 401 wrong_email_otp_code. Each
-                    # OpenAI sign-in sends both tm.openai.com (genuine) + tm1.openai.com (broken)
-                    # two emails, by IMAP id reverse order often hits tm1's 493682 first → protocol login hangs.
-                    # Hard filter tm1.* here, keep only tm.openai.com domain genuine OTP.
+                    # tm1.openai.com 是 OpenAI 当前坏掉的"影子"发码域: 跨所有账号都返
+                    # 固定 OTP=493682, validate 100% 401 wrong_email_otp_code。每次
+                    # sign-in OpenAI 同时发 tm.openai.com (真有效) + tm1.openai.com (坏)
+                    # 两封, 按 IMAP id 倒序常先命中 tm1 的 493682 → 协议层登录全挂。
+                    # 这里硬过滤 tm1.*, 只保留 tm.openai.com 域的真 OTP。
                     if "tm1.openai" in from_field:
                         logger.info(
                             f"[outlook-pool] skip tm1.openai.com 影子发码: id={mid.decode()} "

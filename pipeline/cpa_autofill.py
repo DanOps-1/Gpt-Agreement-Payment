@@ -1,18 +1,19 @@
-"""Push accounts to cpa_autofill retail panel (https://github internal project /root/cpa_autofill).
+"""把账号推到 cpa_autofill 散户面板 (https://github 内部项目 /root/cpa_autofill).
 
-cpa_autofill server is Node.js + SQLite, interface `POST /api/supplier/upload`
-authenticated with Bearer token (personal API token rotated from retail UI).
-Single batch ≤1000, ≤5 times per 60s, ≤5000 accounts per 24h.
+cpa_autofill 服务端是 Node.js + SQLite, 接口 `POST /api/supplier/upload`
+用 Bearer token (散户 UI 里轮换出来的 personal API token) 鉴权。
+单批 ≤1000, 每 60s ≤5 次, 24h ≤5000 账号。
 
-This module only formats accounts that webui library already holds (email, refresh_token, access_token,
-id_token) into codex JSON expected by cpa_autofill, then batch POST.
+本模块只负责把 webui 库里已经握有 (email, refresh_token, access_token,
+id_token) 的账号格式化成 cpa_autofill 期望的 codex JSON, 然后批量 POST。
 
-Server will RT-refresh once itself (auth.openai.com /oauth/token), so we don't
-do token exchange on our end — but retail panel will reject rows without id_token / fake refresh_token,
-so we only upload accounts with complete fields.
+服务端会自己 RT-refresh 一次 (auth.openai.com /oauth/token), 所以本端不再
+做 token 交换 — 但散户面板会拒收没有 id_token / 假 refresh_token 的行,
+所以这里只挑齐字段的账号上传。
 
-Server response:
-    {ok: true, accepted: N, rejected: N, results: [{index, email, accepted, reason?}, ...], price: X}"""
+服务端响应:
+    {ok: true, accepted: N, rejected: N, results: [{index, email, accepted, reason?}, ...], price: X}
+"""
 
 from __future__ import annotations
 
@@ -21,8 +22,8 @@ from typing import Iterable
 
 
 def _decode_jwt_chatgpt_account_id(access_token: str) -> str:
-    """Decode chatgpt_account_id from access_token JWT (cpa_autofill doesn't mandate
-    upload with it, but server will compare with JWT — filling it directly is more stable)."""
+    """从 access_token JWT 里解 chatgpt_account_id (cpa_autofill 不强制
+    上传带,但服务端会拿 JWT 里的对比 — 我们直接填进去更稳)。"""
     import base64
     if not access_token or "." not in access_token:
         return ""
@@ -39,8 +40,8 @@ def _decode_jwt_chatgpt_account_id(access_token: str) -> str:
 
 
 def _required_fields_ok(acc: dict) -> str:
-    """Replicate cpa_autofill validateShape main rules, pre-filter obviously unqualified rows,
-    save one round-trip. Return "" means OK, otherwise is reject reason."""
+    """复刻 cpa_autofill validateShape 主要规则,提前过滤明显不合格的行,
+    省一次 round-trip。返回 "" 表示 OK,否则是 reject reason。"""
     for k in ("email", "refresh_token", "access_token", "id_token"):
         v = acc.get(k)
         if not isinstance(v, str) or not v:
@@ -56,8 +57,8 @@ def _required_fields_ok(acc: dict) -> str:
 
 
 def build_payload_row(account: dict) -> dict | None:
-    """Convert one row from webui registered_accounts to codex JSON expected by cpa_autofill.
-    Return None if field is missing — caller handles missing_field marking."""
+    """把 webui registered_accounts 一行转成 cpa_autofill 期望的 codex JSON。
+    缺字段返回 None — 调用方负责标 missing_field。"""
     email = (account.get("email") or "").strip()
     rt = (account.get("refresh_token") or "").strip()
     at = (account.get("access_token") or "").strip()
@@ -81,24 +82,25 @@ def upload_accounts(
     *,
     price_override: float | None = None,
 ) -> dict:
-    """Batch upload to cpa_autofill retail panel.
+    """批量上传到 cpa_autofill 散户面板。
 
     Args:
-        accounts: list of dict, each must have at least (email, refresh_token, access_token, id_token).
-            account_id can be missing (we decode JWT to fill it).
-        cfg: cpa_autofill config, from PAY_CONFIG.cpa_autofill. Requires enabled / base_url / api_token.
-            Optional price / timeout_s / batch_size.
-        price_override: caller temporarily override cfg.price listing price for this batch (yuan/account).
+        accounts: list of dict, 每个至少有 (email, refresh_token, access_token, id_token)。
+            account_id 可缺(本端自解 JWT 补)。
+        cfg: cpa_autofill 配置, 来自 PAY_CONFIG.cpa_autofill。需要 enabled / base_url / api_token。
+            可选 price / timeout_s / batch_size。
+        price_override: 调用方临时覆盖 cfg.price 的本批挂单价 (元/号)。
 
     Returns:
         {
             "ok": bool,
-            "results": [{email, status, reason?}, ...],  # one per account
+            "results": [{email, status, reason?}, ...],  # 一行一个账号
             "summary": {total, accepted, rejected, missing_field, api_error},
-            "batches": int,            # actual batches sent (single batch ≤ batch_size)
-            "api_errors": [str, ...],  # failure reasons for entire batches
-            "price": float | None,     # actual listing price reported this time
-        }"""
+            "batches": int,            # 实际发了多少批 (单批 ≤ batch_size)
+            "api_errors": [str, ...],  # 整批失败的 batch 原因
+            "price": float | None,     # 本次实际上报的挂单价
+        }
+    """
     out_results: list[dict] = []
     summary = {"total": len(accounts), "accepted": 0, "rejected": 0,
                "missing_field": 0, "api_error": 0}
@@ -131,7 +133,7 @@ def upload_accounts(
     if batch_size <= 0 or batch_size > 1000:
         batch_size = 100
 
-    # ── Pre-filter: select rows with complete fields, missing_field marked for incomplete ──
+    # ── 前置过滤:挑出字段齐的行,缺字段的直接 missing_field ──
     valid_rows: list[tuple[int, dict, dict]] = []  # (orig_idx, source_acc, payload_row)
     for i, acc in enumerate(accounts):
         row = build_payload_row(acc)
@@ -158,14 +160,14 @@ def upload_accounts(
         return {"ok": True, "results": out_results, "summary": summary,
                 "batches": 0, "api_errors": [], "price": price_val}
 
-    # ── Batch POST ──
+    # ── 分批 POST ──
     url = f"{base_url}/api/supplier/upload"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json",
         "Accept": "application/json",
-        # autofill.lukyface.com goes through CF, default urllib UA triggers 1010 block —
-        # use chrome desktop UA consistent with _cpa_import_after_team.
+        # autofill.lukyface.com 走 CF, 默认 urllib UA 触发 1010 拦截 —
+        # 用 chrome desktop UA 跟 _cpa_import_after_team 一致。
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/136.0 Safari/537.36",
     }
@@ -189,7 +191,7 @@ def upload_accounts(
             print(f"[CPA-AF] ✗ batch {batches} 失败: {e}")
             continue
 
-        # Server returns {ok, accepted, rejected, results:[{index, email, accepted, reason?}], price}
+        # 服务端返回 {ok, accepted, rejected, results:[{index, email, accepted, reason?}], price}
         results = resp_json.get("results")
         if not isinstance(results, list):
             err = f"服务端响应缺 results 字段: {json.dumps(resp_json)[:200]}"
@@ -229,12 +231,12 @@ class _UploadError(RuntimeError):
 
 
 def _post_json(url: str, headers: dict, body: bytes, timeout: int) -> dict:
-    """POST body, return parsed JSON. Non-2xx raises _UploadError with status + body summary.
+    """POST body, return parsed JSON. 非 2xx 抛 _UploadError 带 status + body 摘要。
 
-    Use urllib direct connection — retail panel is internal service, Bearer auth suffices, no need for curl_cffi
-    chrome fingerprint evasion of CF. curl_cffi's impersonate + IPv6 dual-stack previously had
-    "Could not connect" false timeout (host curl can reach same address), using urllib directly is more stable.
-    Explicit ProxyHandler({}) blocks HTTPS_PROXY environment variable, consistent with existing _cpa_import_after_team."""
+    用 urllib 直连 — 散户面板是自家服务, Bearer auth 即可, 不需要 curl_cffi
+    chrome 指纹规避 CF。curl_cffi 的 impersonate + IPv6 dual-stack 之前出过
+    "Could not connect" 假超时 (host curl 同地址能通), 直接走 urllib 更稳。
+    显式 ProxyHandler({}) 屏蔽 HTTPS_PROXY 环境变量, 跟现有 _cpa_import_after_team 一致。"""
     import urllib.request as _urlreq
     import urllib.error as _urlerr
     opener = _urlreq.build_opener(_urlreq.ProxyHandler({}))

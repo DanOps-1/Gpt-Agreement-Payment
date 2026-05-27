@@ -33,16 +33,14 @@ export default {
     const subjMatch = raw.match(/^Subject:\s*(.+?)(?:\r?\n[^\s])/ms);
     const subject = subjMatch ? subjMatch[1].trim().slice(0, 200) : '';
 
-    // Digits in recipient address + sender address (zone names often contain 6 digits,
-    // which can be falsely extracted as OTP by fallback regex, e.g., random@123456.example.com
-    // zone → "123456" false positive)
+    // 收件地址 + 发件地址里的数字（zone 名常含 6 位，会被 fallback regex
+    // 误抽成 OTP，比如 random@123456.example.com 这种 zone → "123456" 假阳性）
     const addrDigits = ((to + ' ' + from).match(/\d/g) || []).join('');
     const isFromAddr = (s) => addrDigits.length >= 6 && addrDigits.includes(s);
 
-    // OpenAI emails contain brand colors like #353740 / #10A37F in HTML, fallback
-    // \b\d{6}\b would falsely extract all-digit hex (e.g., #353740) as OTP.
-    // Use negative lookbehind to exclude cases where # precedes, and explicitly
-    // exclude common CSS hex contexts.
+    // OpenAI 邮件 HTML 里大量出现 #353740 / #10A37F 等品牌色 hex，fallback
+    // \b\d{6}\b 会把全数字 hex（如 #353740）误抽成 OTP。
+    // 用 negative lookbehind 排除前面是 # 的，并显式排除常见 CSS hex 上下文。
     const isHexColor = (haystack, idx) => {
       if (idx > 0 && haystack[idx - 1] === '#') return true;
       // "color:353740" / "background-color: #353740" / "bgcolor=\"353740\""
@@ -71,8 +69,8 @@ export default {
       if (otp) break;
     }
     if (!otp) {
-      // Body-only fallback: skip header section (start after first blank line) so
-      // digits in To:/From:/Delivered-To: don't participate in fallback matching
+      // Body-only fallback: skip header section (从第一个空行后开始) so
+      // To:/From:/Delivered-To: 里的数字不参与 fallback 匹配
       const bodyStart = raw.search(/\r?\n\r?\n/);
       const body = bodyStart >= 0 ? raw.slice(bodyStart) : raw;
       const re = /\b(\d{6})\b/g;

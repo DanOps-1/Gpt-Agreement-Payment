@@ -1,4 +1,4 @@
-"""Promo long-link pool HTTP routing: list / status / mark used / delete / zone conversion."""
+"""Promo 长链接池 HTTP 路由: 列表 / 状态 / 标记 used / 删除 / 区域转换."""
 from __future__ import annotations
 
 import json
@@ -69,11 +69,12 @@ def _read_proxy_url() -> str:
 
 
 def _ensure_checkout_proxy(proxy_url: str) -> str:
-    """Ensure that the local gost socks relay used during checkout conversion is already running.
+    """确保转换 checkout 时使用的本地 gost socks 中继已经启动。
 
-    The pipeline main process calls _ensure_gost_alive before entering promo_link_loop;
-    but /api/promo-links/*/convert is called directly by the WebUI backend via fetch_promo_link,
-    and without the same keep-alive check, it will hit socks5://127.0.0.1:18898 connect refused."""
+    pipeline 主流程在进入 promo_link_loop 前会调用 _ensure_gost_alive；
+    但 /api/promo-links/*/convert 是 WebUI 后端直接调用 fetch_promo_link，
+    如果不做同样保活，就会踩到 socks5://127.0.0.1:18898 connect refused。
+    """
     proxy_url = (proxy_url or "").strip()
     if not proxy_url:
         return ""
@@ -85,7 +86,7 @@ def _ensure_checkout_proxy(proxy_url: str) -> str:
     if not is_local or port <= 0:
         return proxy_url
 
-    # Use external/manual gost if already listening.
+    # 已有外部/手动 gost 在听就直接用。
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.8)
         try:
@@ -151,9 +152,9 @@ def _plan_from_row(row: dict, requested: str = "") -> str:
 
 
 def _promo_threshold(currency: str, configured: int) -> int:
-    # ChatGPT API returns a field named amount_due_cents, but Stripe for JPY/KRW/IDR
-    # and other zero-decimal/special currencies also commonly use minor amounts. Here we continue to follow the project's existing
-    # "≤100 minor units ~= ≤1 currency unit" conservative judgment, and allow frontend/interface override.
+    # ChatGPT API 返回字段名叫 amount_due_cents，但 Stripe 对 JPY/KRW/IDR
+    # 这类 zero-decimal/特殊币种也常用 minor amount。这里继续沿用项目既有
+    # “≤100 minor units ~= ≤1 currency unit” 的保守判断，并允许前端/接口覆盖。
     return max(0, int(configured or 100))
 
 
@@ -194,8 +195,8 @@ def _convert_link(link_id: int, req: "ConvertReq") -> dict:
     country = _norm_country(req.country)
     currency = _norm_currency(req.currency, country)
     plan = _plan_from_row(row, req.plan)
-    # By default follow the promotion activity from the original inventory row; only override when user explicitly fills it in.
-    # If the original row is empty, fetch_promo_link will automatically supplement plus/team default campaign by plan.
+    # 默认沿用原库存行的优惠活动；只有用户显式填写时才覆盖。
+    # 如果原行为空，fetch_promo_link 会按 plan 自动补 plus/team 默认 campaign。
     campaign = (req.promo_campaign_id or "").strip() or (row.get("promo_campaign_id") or "").strip()
     account = get_db().find_latest_registered_account(row["email"])
     if not account:
@@ -331,11 +332,12 @@ def set_status(link_id: int, req: MarkStatusReq, user: str = CurrentUser):
 
 @router.post("/{link_id}/convert")
 def convert_link(link_id: int, req: ConvertReq, user: str = CurrentUser):
-    """Recreate hosted checkout for specified country/currency using the same inventory account.
+    """用同一个库存账号重新创建指定国家/币种的 hosted checkout。
 
-    Note: The region of Stripe/ChatGPT checkout session is not a URL string field and cannot be changed by text replacement;
-    here we will read the access_token from the most recent registration in the inventory corresponding to the email and re-call
-    the ChatGPT checkout API. mode=clone retains the old link and adds a new one; mode=replace overwrites the original row."""
+    注意：Stripe/ChatGPT checkout session 的区域不是 URL 字符串字段，不能靠替换
+    文本改区；这里会读取对应 email 最近一次注册库存里的 access_token，重新调用
+    ChatGPT checkout API。mode=clone 保留旧链接并新增一条；mode=replace 覆盖原行。
+    """
     return _convert_link(link_id, req)
 
 
@@ -370,7 +372,7 @@ def delete_link(link_id: int, user: str = CurrentUser):
 
 @router.delete("")
 def delete_bulk(status: str = "", user: str = CurrentUser):
-    """Delete all with specified status (empty = disallow batch delete, prevent misoperation)."""
+    """删除指定状态全部 (空 = 不允许批量删, 防误操作)."""
     if status not in ("used", "expired"):
         raise HTTPException(
             status_code=400,

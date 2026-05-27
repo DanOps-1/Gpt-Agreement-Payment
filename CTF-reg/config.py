@@ -1,4 +1,6 @@
-"""Automated card binding payment - configuration file"""
+"""
+自动化绑卡支付 - 配置文件
+"""
 import os
 import json
 from dataclasses import dataclass, field
@@ -7,24 +9,25 @@ from typing import Optional
 
 @dataclass
 class MailConfig:
-    """Email service configuration (CF Email Worker → KV path).
+    """邮箱服务配置（CF Email Worker → KV 路径）。
 
-    OTP goes through Cloudflare Email Routing → otp-relay Worker → KV. Original IMAP/SMTP
-    fields (imap_server/imap_port/smtp_*/email/auth_code) are completely deprecated; residual
-    these fields in old config files will be silently ignored by Config.from_file.
+    OTP 走 Cloudflare Email Routing → otp-relay Worker → KV。原 IMAP/SMTP
+    字段（imap_server/imap_port/smtp_*/email/auth_code）已彻底废弃；旧
+    config 文件里残留这些字段会被 Config.from_file 静默忽略。
 
-    KV credentials (api_token / account_id / kv_namespace_id) go in SQLite runtime_meta[secrets]
-    cloudflare section or environment variables, not in MailConfig."""
+    KV 凭证（api_token / account_id / kv_namespace_id）放 SQLite runtime_meta[secrets]
+    的 cloudflare 段或环境变量，不在 MailConfig 里。
+    """
     catch_all_domain: str = ""
-    # Domain pool: pipeline runtime picks one from it as catch_all_domain (round-robin + burn based on invite probe results)
+    # 域名池：pipeline 运行时从中挑一个作为 catch_all_domain（轮换 + 根据 invite 探测结果烧掉）
     catch_all_domains: list = field(default_factory=list)
-    # Cloudflare provisions subdomains on-demand (read and used by pipeline, CTF-reg itself does not handle)
+    # Cloudflare 按需开通子域（被 pipeline 读取使用，CTF-reg 自身不处理）
     auto_provision: dict = field(default_factory=dict)
 
 
 @dataclass
 class CardInfo:
-    """Credit card information"""
+    """信用卡信息"""
     number: str = ""
     cvc: str = ""
     exp_month: str = ""
@@ -33,7 +36,7 @@ class CardInfo:
 
 @dataclass
 class BillingInfo:
-    """Billing information"""
+    """账单信息"""
     name: str = "John Smith"
     email: str = ""
     country: str = "US"
@@ -47,7 +50,7 @@ class BillingInfo:
 
 @dataclass
 class TeamPlanConfig:
-    """Team/Plus plan configuration"""
+    """团队/Plus 计划配置"""
     plan_name: str = "chatgptteamplan"
     workspace_name: str = "MyWorkspace"
     price_interval: str = "month"
@@ -56,7 +59,7 @@ class TeamPlanConfig:
     is_coupon_from_query_param: bool = False
     checkout_ui_mode: str = "custom"
     output_url_mode: str = ""
-    # The following fields are written by webui wizard; CTF-reg does not directly consume but needs to support loading
+    # 以下字段由 webui wizard 写入，CTF-reg 不直接消费但需要兼容加载
     plan_type: str = "team"           # team | plus
     entry_point: str = ""             # team_workspace_purchase_modal | all_plans_pricing_modal
     billing_country: str = ""
@@ -65,21 +68,21 @@ class TeamPlanConfig:
 
 @dataclass
 class CaptchaConfig:
-    """CAPTCHA solving service configuration"""
-    api_url: str = ""  # CAPTCHA platform API base URL compatible with createTask/getTaskResult protocol
+    """验证码打码服务配置"""
+    api_url: str = ""  # 兼容 createTask/getTaskResult 协议的打码平台 API base URL
     client_key: str = ""
 
 
 @dataclass
 class Config:
-    """Global configuration"""
+    """总配置"""
     mail: MailConfig = field(default_factory=MailConfig)
     card: CardInfo = field(default_factory=CardInfo)
     billing: BillingInfo = field(default_factory=BillingInfo)
     team_plan: TeamPlanConfig = field(default_factory=TeamPlanConfig)
     captcha: CaptchaConfig = field(default_factory=CaptchaConfig)
     proxy: Optional[str] = None
-    # Existing credentials (optional, used when skipping registration and paying directly)
+    # 已有凭证（可选，跳过注册直接支付时使用）
     session_token: Optional[str] = None
     access_token: Optional[str] = None
     device_id: Optional[str] = None
@@ -88,12 +91,12 @@ class Config:
 
     @classmethod
     def from_file(cls, path: str) -> "Config":
-        """Load configuration from JSON file"""
+        """从 JSON 文件加载配置"""
         import dataclasses
 
         def filtered_kwargs(dataclass_type, raw: dict | None) -> dict:
-            # WebUI and CTF-pay will gradually add configuration fields; CTF-reg only consumes part of them.
-            # Filter unknown keys during loading to avoid interrupting registration flow due to "payment fields unused in registration phase".
+            # WebUI 与 CTF-pay 会逐步增加配置字段；CTF-reg 只消费其中一部分。
+            # 加载时过滤未知 key，避免因为“注册阶段不用的支付字段”中断注册流程。
             valid_keys = {f.name for f in dataclasses.fields(dataclass_type)}
             return {k: v for k, v in (raw or {}).items() if k in valid_keys}
 
@@ -101,9 +104,9 @@ class Config:
             data = json.load(f)
         cfg = cls()
         if "mail" in data:
-            # Filter deprecated IMAP/SMTP fields (imap_server, imap_port, smtp_*,
-            # email, auth_code), allowing old config to still work without throwing unexpected
-            # keyword errors. New code should only configure catch_all_domain(s) + auto_provision.
+            # 过滤已废弃的 IMAP/SMTP 字段（imap_server, imap_port, smtp_*,
+            # email, auth_code），让旧 config 仍然能跑而不抛 unexpected
+            # keyword 错。新代码请只配 catch_all_domain(s) + auto_provision。
             cfg.mail = MailConfig(**filtered_kwargs(MailConfig, data["mail"]))
         if "card" in data:
             cfg.card = CardInfo(**filtered_kwargs(CardInfo, data["card"]))

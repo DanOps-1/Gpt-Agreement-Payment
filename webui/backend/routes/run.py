@@ -21,26 +21,26 @@ class StartRequest(BaseModel):
     pay_only: bool = False
     gopay: bool = False
     qris: bool = False
-    count: int = 0  # Registration count in free_register mode (0 = unlimited)
-    # promo_link mode: freely choose checkout billing region / currency / promotion
+    count: int = 0  # free_register 模式下注册次数（0 = 无限）
+    # promo_link 模式：自由选择 checkout billing 区域 / 币种 / 活动
     promo_plan: str = Field(default="plus", pattern="^(plus|team)$")
     promo_country: str = Field(default="ID", min_length=2, max_length=2)
     promo_currency: str = Field(default="IDR", min_length=3, max_length=3)
     promo_campaign_id: str = ""
     register_mode: str = Field(default="protocol", pattern="^(browser|protocol)$")
-    # Targeted operation on selected account: paired with pay_only or rt_only
+    # 选中账号定向操作：配合 pay_only 或 rt_only
     target_emails: list[str] = []
     rt_only: bool = False
-    # Email source (choose one, strictly mutually exclusive, no fallback):
-    # - outlook   : Outlook OTP pool (4-segment format import to /outlook page), IMAP OAuth2 receive OTP
-    # - catch_all : self-owned domain catch-all + CF Email Worker → KV receive OTP, persona algorithm generate alias
+    # 邮箱来源 (二选一, 严格互斥, 不 fallback):
+    # - outlook   : Outlook 接码池 (4 段格式 import 到 /outlook 页), IMAP OAuth2 收 OTP
+    # - catch_all : 自有域名 catch-all + CF Email Worker → KV 收 OTP, persona 算法生成 alias
     mail_source: str = Field(default="outlook", pattern="^(outlook|catch_all)$")
-    # Only effective when mail_source=outlook, empty = random pick from pool, specific email = designated
+    # 仅在 mail_source=outlook 时生效, 空 = 池里随便挑, 具体 email = 指定
     outlook_email: str = ""
-    # no_card_plus mode: call scripts/no_card_paypal_plus.py use Chromium RPA to open PayPal Plus for 0 yuan
-    no_card_promo_link_id: int = 0  # 0 = auto pick the latest fresh plus link
+    # no_card_plus 模式: 调 scripts/no_card_paypal_plus.py 用 Chromium RPA 走 PayPal 0 元开 Plus
+    no_card_promo_link_id: int = 0  # 0 = 自动挑最新 fresh plus link
     no_card_phone: str = ""
-    no_card_sms_api_url: str = ""  # OTP gateway URL+key, passed via form/env not into ps cmdline
+    no_card_sms_api_url: str = ""  # 接码网关 URL+key, 走 form/env 不进 ps cmdline
     no_card_otp_timeout: int = 240
     no_card_signup_retries: int = 3
     no_card_node_rpa_timeout: int = 900
@@ -49,10 +49,10 @@ class StartRequest(BaseModel):
     no_card_allow_full_price: bool = False
     no_card_paypal_country: str = Field(default="US", min_length=2, max_length=2)
     no_card_paypal_lang: str = Field(default="en", min_length=2, max_length=5)
-    # Filter email source of inventory accounts when auto-gen promo_link
-    # - any       : no limit
-    # - outlook   : only pick microsoft family (@outlook/@hotmail/@live/@msn)
-    # - catch_all : only pick alias accounts from catch_all_domain(s) in CTF-reg config
+    # auto-gen promo_link 时挑库存账号的邮箱来源过滤
+    # - any       : 不限
+    # - outlook   : 只挑 microsoft 系 (@outlook/@hotmail/@live/@msn)
+    # - catch_all : 只挑 CTF-reg config 里 catch_all_domain(s) 的 alias 账号
     no_card_inventory_mail_source: str = Field(
         default="any", pattern="^(any|outlook|catch_all)$"
     )
@@ -113,12 +113,12 @@ def get_logs(tail: int = 500, user: str = CurrentUser):
 
 @router.get("/stream")
 async def stream(user: str = CurrentUser):
-    """SSE: check / push new log lines every 300ms."""
+    """SSE: 每 300ms 检查 / 推送新日志行。"""
     last_seq = 0
 
     async def gen():
         nonlocal last_seq
-        # Backlog: push the most recent 200 lines first
+        # Backlog: 先推最近 200 行
         for entry in runner.get_tail(200):
             last_seq = max(last_seq, entry["seq"])
             yield {"event": "line", "data": json.dumps(entry)}
@@ -134,7 +134,7 @@ async def stream(user: str = CurrentUser):
             if st.get("otp_pending"):
                 yield {"event": "otp_pending", "data": json.dumps({"pending": True})}
             if not st["running"]:
-                # Process exited, scan once more to ensure no missing, then send done
+                # 进程已退出，再扫一次确保没遗漏，然后发 done
                 tail = runner.get_lines_since(last_seq, limit=500)
                 for entry in tail:
                     last_seq = entry["seq"]
@@ -147,7 +147,7 @@ async def stream(user: str = CurrentUser):
 
 @router.post("/preview")
 def preview(req: StartRequest, user: str = CurrentUser):
-    """Dry run: only return command line without actually starting."""
+    """干跑：只返命令行不实际启动。"""
     cmd = runner.build_cmd(
         req.mode, req.paypal, req.batch, req.workers, req.self_dealer,
         req.register_only, req.pay_only, gopay=req.gopay, qris=req.qris,
@@ -160,16 +160,16 @@ def preview(req: StartRequest, user: str = CurrentUser):
     return {"cmd": cmd, "cmd_str": " ".join(cmd)}
 
 
-# QRIS: frontend polls current QR artifacts + PNG bytes
+# QRIS：前端轮询拿当前 QR artifacts + PNG bytes
 @router.get("/qris/state")
 def qris_state(user: str = CurrentUser):
-    """Return reference / remote URL / expiration time / settled of current/latest QRIS run."""
+    """返回当前/最近一次 QRIS run 的 reference / 远端 URL / 过期时间 / settled。"""
     return runner.qris_state()
 
 
 @router.get("/qris/qr.png")
 def qris_qr_png(user: str = CurrentUser):
-    """Return QR PNG bytes. Frontend use directly as <img src>."""
+    """返回 QR PNG bytes。前端直接当 <img src> 用。"""
     data = runner.qris_png_bytes()
     if not data:
         raise HTTPException(status_code=404, detail="no QR yet")

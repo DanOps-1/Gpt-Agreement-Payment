@@ -104,9 +104,10 @@ def list_all() -> list[dict]:
 
 
 def set_status(phone: str, linked: bool, *, source: str = "manual", payment_ref: str = "") -> dict:
-    """Generic bidirectional write. linked=True uses mark_linked, False uses mark_unlinked.
+    """通用双向写入。linked=True 走 mark_linked，False 走 mark_unlinked。
 
-    `payment_ref` is only respected when linked=True; linked=False preserves the old value."""
+    `payment_ref` 仅在 linked=True 时尊重；linked=False 保留旧值。
+    """
     if linked:
         return mark_linked(phone, payment_ref=payment_ref, source=source)
     return mark_unlinked(phone, source=source)

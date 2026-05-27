@@ -296,9 +296,9 @@ def _check_payment_config(checks: list[dict], req: dict, pay_cfg: dict) -> None:
         return
 
     if kind == "qris":
-        # QRIS does not require phone/pin/email/card —— only need fresh_checkout.auth to obtain
-        # access_token (required for ChatGPT checkout creation). account verification is handled by _check_chatgpt_auth_or_register
-        # fallback. Here only mark as OK.
+        # QRIS 不需要 phone/pin/email/card —— 只要 fresh_checkout.auth 能拿到
+        # access_token（ChatGPT checkout 创建必需）。account 检查由 _check_chatgpt_auth_or_register
+        # 兜底。这里只 OK 标记。
         _check(checks, "qris_config", "ok",
                "QRIS 支付不需要绑定/OTP/PIN，扫码即付", blocking=False)
         return

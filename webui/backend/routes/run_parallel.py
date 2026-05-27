@@ -1,4 +1,4 @@
-"""Concurrent run no_card_plus: N worker subprocess, each independently with phone+sms_url."""
+"""并发跑 no_card_plus: N worker subprocess, 各自独立 phone+sms_url."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
@@ -13,15 +13,15 @@ router = APIRouter(prefix="/api/run/parallel", tags=["run-parallel"])
 
 class WorkerCfg(BaseModel):
     phone: str = Field(..., min_length=4, max_length=24)
-    sms_url: str = Field(default="")  # Empty = use common.default_sms_url
+    sms_url: str = Field(default="")  # 空 = 用 common.default_sms_url
     tag: str = Field(default="", max_length=40)
     worker_id: str = Field(default="", max_length=32)
 
 
 class ParallelStartRequest(BaseModel):
-    # N worker. Phone pool (frontend slot row) can be less than N, multiple workers share same phone, OTP phase phone-lock queuing.
+    # N worker. Phone 池 (前端 slot 行) 可以少于 N, 多 worker 共享同 phone, OTP 阶段 phone-lock 排队.
     workers: list[WorkerCfg] = Field(..., min_length=1, max_length=20)
-    # Common parameters (consistent with single run no_card_plus mode)
+    # 公共参数 (与单 run no_card_plus 模式一致)
     config: str = ""
     paypal_country: str = "US"
     paypal_lang: str = "en"
@@ -29,14 +29,14 @@ class ParallelStartRequest(BaseModel):
     otp_timeout: int = 240
     node_rpa_timeout: int = 900
     max_due: int = 100
-    promo_link_id: int = 0  # 0 = each worker auto-claim
+    promo_link_id: int = 0  # 0 = 各 worker 自动 claim
     allow_already_paid: bool = False
     allow_full_price: bool = False
     inventory_mail_source: str = Field(
         default="any", pattern="^(any|outlook|catch_all)$"
     )
-    default_sms_url: str = ""  # Fallback, when worker not separately configured sms_url
-    stagger_s: float = 1.0  # Stagger startup to avoid triggering PayPal/gost in same second
+    default_sms_url: str = ""  # 兜底, 当 worker 未单独配 sms_url
+    stagger_s: float = 1.0  # 错开启动避免同一秒触发 PayPal/gost
 
 
 @router.post("/start")
@@ -73,10 +73,10 @@ def logs(worker_id: str, since: int = 0, user: str = CurrentUser):
     return parallel_runner.get_worker_log(worker_id, since_seq=int(since))
 
 
-# Phone OTP critical section mutex lock: Node RPA try-acquire before form submit (triggers SMS),
-# Release after OTP fill. No auth guardian is intentional — Node self-calls within container loopback,
-# Same as webui already wrapped by reverse-proxy, external cannot directly access :8765; moreover acquire failure
-# will not leak any sensitive information (only return holder worker_id).
+# Phone OTP 临界区互斥锁: Node RPA 在 form submit (触发 SMS) 前 try-acquire,
+# OTP fill 完 release. 无 auth 守护是故意的 — Node 在容器内部 loopback 自调用,
+# 同 webui 已经被 reverse-proxy 框起来, 外部访问不到 :8765 直连; 而且 acquire 失败
+# 不会泄露任何敏感信息 (只回 holder worker_id).
 @router.post("/phone-lock/acquire")
 def phone_lock_acquire(phone: str, worker: str):
     r = parallel_runner.acquire_phone_lock(phone, worker)

@@ -1,16 +1,16 @@
 <template>
   <section class="step-fade-in">
-    <div class="term-divider" data-tail="──────────">Step 11: Downstream Push</div>
-    <h2 class="step-h">$&nbsp;Downstream Push (All Optional)<span class="term-cursor"></span></h2>
+    <div class="term-divider" data-tail="──────────">步骤 11: 下游推送</div>
+    <h2 class="step-h">$&nbsp;下游推送 (全部可选)<span class="term-cursor"></span></h2>
 
     <div class="term-divider" style="margin-top:8px">gpt-team</div>
-    <TermToggle v-model="ts.enabled">Enable gpt-team</TermToggle>
+    <TermToggle v-model="ts.enabled">启用 gpt-team</TermToggle>
     <div v-if="ts.enabled" class="form-stack" style="margin-top:12px">
       <TermField v-model="ts.base_url" label="Base URL · base_url" />
-      <TermField v-model="ts.username" label="Username · username" />
-      <TermField v-model="ts.password" label="Password · password" type="password" />
+      <TermField v-model="ts.username" label="用户名 · username" />
+      <TermField v-model="ts.password" label="密码 · password" type="password" />
       <div class="step-actions">
-        <TermBtn :loading="tsLoading" @click="testTs">Login Test</TermBtn>
+        <TermBtn :loading="tsLoading" @click="testTs">登录测试</TermBtn>
       </div>
       <div v-if="tsResult" class="result-block" :class="`result--${tsResult.status}`">
         <div class="result-head">
@@ -21,12 +21,12 @@
     </div>
 
     <div class="term-divider" style="margin-top:20px">CPA</div>
-    <TermToggle v-model="cpa.enabled">Enable CPA</TermToggle>
+    <TermToggle v-model="cpa.enabled">启用 CPA</TermToggle>
     <div v-if="cpa.enabled" class="form-stack" style="margin-top:12px">
       <TermField v-model="cpa.base_url" label="Base URL · base_url" />
       <TermField v-model="cpa.admin_key" label="Admin Key · admin_key" type="password" />
       <div class="step-actions">
-        <TermBtn :loading="cpaLoading" @click="testCpa">Health Check</TermBtn>
+        <TermBtn :loading="cpaLoading" @click="testCpa">健康检查</TermBtn>
       </div>
       <div v-if="cpaResult" class="result-block" :class="`result--${cpaResult.status}`">
         <div class="result-head">
@@ -36,12 +36,12 @@
       </div>
     </div>
 
-    <div class="term-divider" style="margin-top:20px">Retail Panel (cpa_autofill)</div>
-    <TermToggle v-model="af.enabled">Enable Retail Panel Push</TermToggle>
+    <div class="term-divider" style="margin-top:20px">散户面板 (cpa_autofill)</div>
+    <TermToggle v-model="af.enabled">启用散户面板推送</TermToggle>
     <div v-if="af.enabled" class="form-stack" style="margin-top:12px">
-      <TermField v-model="af.base_url" label="Base URL · base_url (e.g: https://autofill.lukyface.com)" />
-      <TermField v-model="af.api_token" label="API Token · Bearer token rotated from /supplier panel" type="password" />
-      <p style="font-size:12px; color:#7a7363; margin:4px 0 0">Listing price (¥/account) is entered via popup during each push, not preset here.</p>
+      <TermField v-model="af.base_url" label="Base URL · base_url (例: https://autofill.lukyface.com)" />
+      <TermField v-model="af.api_token" label="API Token · /supplier 面板里轮换出来的 Bearer token" type="password" />
+      <p style="font-size:12px; color:#7a7363; margin:4px 0 0">挂单价 (元/号) 在每次推送时弹窗输入,不在这里预设。</p>
     </div>
   </section>
 </template>
@@ -59,8 +59,8 @@ const tsInit = store.answers.team_system ?? {};
 const cpaInit = store.answers.cpa ?? {};
 const afInit = store.answers.cpa_autofill ?? {};
 
-// Toggles default to off (do not read init.enabled), but other fields retain values synced from source
-// This way when users enable the toggle, they immediately see pre-filled url/credentials
+// 开关默认关闭（不读 init.enabled），但其余字段保留 source 同步的值
+// 这样用户启用 toggle 时直接看到预填的 url/凭据
 const ts = ref({
   enabled: false,
   base_url: tsInit.base_url ?? "http://127.0.0.1:3000",
@@ -78,8 +78,8 @@ const af = ref({
   api_token: afInit.api_token ?? "",
 });
 
-// Immediately sync to store to override any enabled=true synced from source,
-// otherwise UI shows off but wizard state / export still writes enabled=true
+// 立即同步到 store 覆盖可能从 source 同步过来的 enabled=true，
+// 否则 UI 显示关但 wizard state / 导出仍会写 enabled=true
 onMounted(() => {
   store.setAnswer("team_system", {});
   store.setAnswer("cpa", {});

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """QRIS payment flow for ChatGPT Plus subscriptions.
 
-Replace GoPay tokenization: QRIS is Indonesia's central bank-mandated unified QR code standard (EMVCo QRCPS). Users scan with any e-wallet (GoPay/DANA/OVO/ShopeePay/LinkAja) or bank app to pay—**no** binding/OTP/PIN/WhatsApp required. Mobile dependency for bulk scenarios is nearly zero.
+替代 GoPay tokenization：QRIS 是印尼央行强制的统一二维码标准（EMVCo QRCPS），
+用户用任意 e-wallet（GoPay/DANA/OVO/ShopeePay/LinkAja）或银行 app 扫码即付，
+**不需要** 绑定/OTP/PIN/WhatsApp。批量化场景对手机的依赖几乎为零。
 
-Flow (reuses gopay.py steps 1-6: Stripe → Midtrans Snap token bootstrap):
+Flow（共用 gopay.py 步骤 1-6 的 Stripe → Midtrans Snap token bootstrap）：
 
     1.  POST chatgpt.com/backend-api/payments/checkout              ← cs_live_xxx
     2.  POST api.stripe.com/v1/payment_methods (type=gopay)          ← pm_xxx
@@ -11,19 +13,20 @@ Flow (reuses gopay.py steps 1-6: Stripe → Midtrans Snap token bootstrap):
     4.  POST chatgpt.com/backend-api/payments/checkout/approve       ← approved
     5.  GET  pm-redirects.stripe.com/authorize/{nonce}               → 302 → midtrans
     6.  GET  app.midtrans.com/snap/v1/transactions/{snap_token}      ← enabled_payments
-    --- QRIS branch below (replaces gopay.py steps 7-14) ---
+    --- 以下为 QRIS 分支（替代 gopay.py 的步骤 7-14） ---
     7q. POST app.midtrans.com/snap/v2/transactions/{snap}/charge
             body: {payment_type: "qris", qris:{acquirer:"gopay"}}    ← qr_string + actions
-        Fallback on failure: {payment_type: "gopay", tokenization: false}
-    8q. Locally render PNG + terminal ASCII using qrcode library based on qr_string;
-        simultaneously output URL merchants-app.midtrans.com/v4/qris/gopay/{ref}/qr-code,
-        users can also open directly in browser.
-    9q. Dual-track polling:
-          Primary axis GET app.midtrans.com/snap/v1/transactions/{snap}/status
-               → transaction_status in ("settlement","capture") treated as settled
-          Secondary axis GET chatgpt.com/checkout/verify?stripe_session_id=...
-               triggered once per N primary polls, as settlement liveness fallback
-    15. GET  chatgpt.com/checkout/verify?stripe_session_id=...       ← Plus active"""
+        失败回退: {payment_type: "gopay", tokenization: false}
+    8q. 本地用 qrcode 库根据 qr_string 渲染 PNG + 终端 ASCII；
+        同时把 merchants-app.midtrans.com/v4/qris/gopay/{ref}/qr-code
+        的 URL 输出，用户也可浏览器直接打开。
+    9q. 双轨轮询：
+          主轴 GET app.midtrans.com/snap/v1/transactions/{snap}/status
+               → transaction_status in ("settlement","capture") 即视为入账
+          辅轴 GET chatgpt.com/checkout/verify?stripe_session_id=...
+               每 N 次主轴轮询触发一次，作为入账兜底探活
+    15. GET  chatgpt.com/checkout/verify?stripe_session_id=...       ← Plus active
+"""
 
 from __future__ import annotations
 
@@ -40,8 +43,8 @@ from typing import Any, Optional
 
 import requests
 
-# Let `python3 CTF-pay/qris.py` / `python3 -m qris` / run from anywhere in repo find gopay/card
-# Wave E: qris.py → qris/_monolith.py, _HERE is now CTF-pay/qris/, what we really need is CTF-pay/
+# 让 `python3 CTF-pay/qris.py` / `python3 -m qris` / 仓库任意位置直接跑都能找到 gopay/card
+# Wave E: qris.py → qris/_monolith.py, _HERE 现在是 CTF-pay/qris/, 真需要的是 CTF-pay/
 _HERE = Path(__file__).resolve().parent
 _CTF_PAY = _HERE.parent
 if str(_CTF_PAY) not in sys.path:
@@ -57,8 +60,8 @@ from gopay import (
     _load_cfg,
 )
 
-# qrcode is optional dependency: if installed, render PNG + ASCII locally; if not, only output qr_string + remote URL,
-# prompt user to install. MIT licensed, ~50KB, pure Python (PIL backend optional).
+# qrcode 是可选依赖：装了就本地渲染 PNG + ASCII；没装就只输出 qr_string + 远端 URL，
+# 提示用户安装。MIT licensed, ~50KB, 纯 Python（PIL 后端可选）。
 try:
     import qrcode  # type: ignore
     _QRCODE_AVAILABLE = True
@@ -67,7 +70,7 @@ except ImportError:
     _QRCODE_AVAILABLE = False
 
 try:
-    from PIL import Image  # type: ignore  # noqa: F401  (qrcode renders PNG using PIL)
+    from PIL import Image  # type: ignore  # noqa: F401  (qrcode 用 PIL 渲染 PNG)
     _PIL_AVAILABLE = True
 except ImportError:
     _PIL_AVAILABLE = False
@@ -76,11 +79,11 @@ except ImportError:
 # ──────────────────────────── constants ───────────────────────────
 
 DEFAULT_POLL_INTERVAL_S = 3.0
-DEFAULT_POLL_TIMEOUT_S = 600.0  # 10 minutes, QRIS default validity period
+DEFAULT_POLL_TIMEOUT_S = 600.0  # 10 分钟，QRIS 默认有效期
 DEFAULT_VERIFY_EVERY_N_POLLS = 4
-# Midtrans Snap charge response actions[].url looks like
+# Midtrans Snap charge 返回里 actions[].url 形如
 #   https://merchants-app.midtrans.com/v4/qris/gopay/{ref}/qr-code
-# This is an HTML page, can be viewed or iframed, but not raw PNG. Local generation is reliable.
+# 这是 HTML 页面，能看也能 iframe，但不是裸 PNG。本地生成是稳的。
 QR_DOWNLOAD_URL_RE = re.compile(
     r"merchants-app\.midtrans\.com/v\d+/qris/[a-z]+/[A-Za-z0-9]+/qr-code"
 )
@@ -90,25 +93,26 @@ QR_DOWNLOAD_URL_RE = re.compile(
 
 
 class QrisError(GoPayError):
-    """QRIS flow error (inherits GoPayError for unified error handling at upper layer)."""
+    """QRIS 流程错误（继承 GoPayError 方便外层统一兜底）。"""
 
 
 # ──────────────────────────── core ────────────────────────────────
 
 
 class QrisCharger(GoPayCharger):
-    """Snap payment using QRIS instead of tokenization.
+    """走 QRIS 而非 tokenization 的 Snap 支付。
 
-    Reuses GoPayCharger's Stripe + Midtrans Snap bootstrap, **bypasses** linking/OTP/PIN,
-    directly charges out QR then polls for settlement.
+    复用 GoPayCharger 的 Stripe + Midtrans Snap bootstrap，**绕过** linking/OTP/PIN，
+    直接 charge 出 QR 然后轮询入账。
 
     Construction:
-        chatgpt_session: chatgpt session with injected cookies (same as GoPay)
+        chatgpt_session: 已注入 cookies 的 chatgpt session（同 GoPay）
         qris_cfg: {"output_dir": str, "poll_interval_s": float, "poll_timeout_s": float,
                    "verify_every_n_polls": int, "acquirer_preference": list[str]}
         log: print-like
         proxy: optional proxy URL
-        runtime_cfg: stripe runtime config"""
+        runtime_cfg: stripe runtime 配置
+    """
 
     def __init__(
         self,
@@ -119,8 +123,8 @@ class QrisCharger(GoPayCharger):
         proxy: Optional[str] = None,
         runtime_cfg: Optional[dict] = None,
     ):
-        # GoPayCharger.__init__ requires country_code/phone_number/pin. QRIS doesn't need these,
-        # so pass stub values for parent class init; subsequent paths never read these three fields.
+        # GoPayCharger.__init__ 强制要求 country_code/phone_number/pin。QRIS 不需要这些，
+        # 所以传桩值让父类初始化通过；后续路径都不会去读这三个字段。
         stub_cfg = {
             "country_code": "00",
             "phone_number": "00000000000",
@@ -130,14 +134,14 @@ class QrisCharger(GoPayCharger):
         super().__init__(
             chatgpt_session,
             stub_cfg,
-            otp_provider=lambda: "",  # Never called
+            otp_provider=lambda: "",  # 永不调用
             log=log,
             proxy=proxy,
             runtime_cfg=runtime_cfg,
         )
         self.qris_cfg = dict(qris_cfg or {})
-        # Must be absolute path: webui runner grabs PNG path from log [qris] PNG: <path> then
-        # `Path(p).read_bytes()` reads it; relative paths fail ENOENT when cwd differs across processes.
+        # 必须绝对路径：webui runner 通过日志 [qris] PNG: <path> 抓到后会
+        # `Path(p).read_bytes()` 读，跨进程 cwd 不同时相对路径会 ENOENT。
         self.output_dir = Path(
             self.qris_cfg.get("output_dir") or "./qris_artifacts"
         ).expanduser().resolve()
@@ -161,8 +165,9 @@ class QrisCharger(GoPayCharger):
         Returns dict with keys: charge_ref, qr_string, qr_image_url, expiry_time,
         transaction_status, raw.
 
-        Tries payment_type=qris (qris.acquirer=gopay) first; falls back to
-        payment_type=gopay + tokenization=false on 405/406/400 (early Midtrans GoPay QRIS method)."""
+        优先尝试 payment_type=qris (qris.acquirer=gopay)；405/406/400 时回退到
+        payment_type=gopay + tokenization=false（这是 Midtrans 早期 GoPay QRIS 的写法）。
+        """
         url = f"https://app.midtrans.com/snap/v2/transactions/{snap_token}/charge"
         headers = {
             **self._midtrans_basic_auth(),
@@ -230,15 +235,15 @@ class QrisCharger(GoPayCharger):
                 or data.get("gopay_verification_link_url")
                 or ""
             )
-        # GoPay untokenized mode: midtrans gives deeplink_url at top level; user taps on mobile to open
-        # GoPay app payment confirmation popup (bypasses QR scan + WhatsApp OTP)
+        # GoPay untokenized 模式 midtrans 直接给 deeplink_url 顶层；用户手机点一下打开
+        # GoPay app 弹付款确认（绕过扫码 + WhatsApp OTP）
         if not deeplink_url:
             deeplink_url = data.get("deeplink_url") or data.get("gopay_deeplink_url") or ""
 
-        # charge_ref source (by priority):
-        # 1. transaction_id at top level
-        # 2. Extract from qr_image_url (pattern: /v4/qris/gopay/{ref}/qr-code)
-        # 3. Extract reference= param from gopay_verification_link_url (GoPay compatible path)
+        # charge_ref 来源（按优先级）：
+        # 1. transaction_id 顶层
+        # 2. 从 qr_image_url 里抽（pattern: /v4/qris/gopay/{ref}/qr-code）
+        # 3. 从 gopay_verification_link_url 里抽 reference= 参数（gopay 兼容路径）
         charge_ref = str(data.get("transaction_id") or "").strip()
         if not charge_ref and qr_image_url:
             m = re.search(r"/qris/[a-z]+/([A-Za-z0-9]+)/qr-code", qr_image_url)
@@ -262,10 +267,10 @@ class QrisCharger(GoPayCharger):
             "raw": data,
         }
 
-    # ───── Step 8q: local persist + ASCII render ─────
+    # ───── Step 8q: 本地落盘 + ASCII 渲染 ─────
 
     def _save_qr_artifacts(self, parsed: dict) -> dict:
-        """Output local artifacts from charge response, return paths dict."""
+        """根据 charge response 输出本地工件，返回 paths dict。"""
         self.output_dir.mkdir(parents=True, exist_ok=True)
         ref = parsed["charge_ref"]
         ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -273,7 +278,7 @@ class QrisCharger(GoPayCharger):
 
         out: dict[str, str] = {}
 
-        # 1) qr_string text (raw EMVCo QRCPS payload, user can paste into any QR renderer)
+        # 1) qr_string 文本（原始 EMVCo QRCPS payload，用户可贴进任意 QR 渲染器）
         qr_string = parsed.get("qr_string") or ""
         if qr_string:
             txt_path = prefix.with_suffix(".txt")
@@ -281,7 +286,7 @@ class QrisCharger(GoPayCharger):
             out["qr_string_path"] = str(txt_path)
             out["qr_string"] = qr_string
 
-        # 2) PNG (local qrcode library preferred; fallback to download remote URL if failed/no qr_string)
+        # 2) PNG（优先本地 qrcode 库；失败/无 qr_string 时尝试下载远端 URL）
         png_path = prefix.with_suffix(".png")
         rendered_local = False
         if qr_string and _QRCODE_AVAILABLE and _PIL_AVAILABLE:
@@ -301,11 +306,11 @@ class QrisCharger(GoPayCharger):
             except Exception as e:
                 self.log(f"[qris] 远端 QR 下载失败: {e}")
 
-        # 3) Remote URL (the one in screenshots, browser-friendly)
+        # 3) 远端 URL（截图里那个，浏览器友好）
         if parsed.get("qr_image_url"):
             out["qr_image_url"] = parsed["qr_image_url"]
 
-        # 4) Metadata json (reference / expiry / status / full charge response persisted for audit trail)
+        # 4) Metadata json（reference / expiry / status / 全 charge response 落盘留痕）
         meta_path = prefix.with_suffix(".json")
         meta_path.write_text(
             json.dumps({
@@ -322,16 +327,16 @@ class QrisCharger(GoPayCharger):
         return out
 
     def _download_qr_image(self, url: str, save_path: Path) -> None:
-        # merchants-app URL is HTML page by default, not raw PNG; try downloading,
-        # check Content-Type to decide suffix. Content-Type=image/png stores PNG,
-        # otherwise save as .html so user can open in browser.
+        # merchants-app 那个 URL 默认是 HTML 页面，不是裸 PNG；尝试下载，
+        # 看 Content-Type 决定后缀。Content-Type=image/png 才存 PNG，
+        # 否则按 .html 备份方便用户浏览器打开。
         r = self.ext.get(url, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
         r.raise_for_status()
         ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if "image" in ctype:
             save_path.write_bytes(r.content)
             return
-        # Not an image: save as HTML
+        # 不是图片：作为 HTML 存
         html_path = save_path.with_suffix(".html")
         html_path.write_bytes(r.content)
         raise QrisError(
@@ -358,11 +363,12 @@ class QrisCharger(GoPayCharger):
         except Exception as e:
             self.log(f"[qris] ASCII 渲染失败: {e}; qr_string={qr_string[:80]}…")
 
-    # ───── Step 9q: dual-track polling ─────
+    # ───── Step 9q: 双轨轮询 ─────
 
     def _midtrans_poll_status(self, snap_token: str) -> dict:
-        """Single GET snap/v1/transactions/{snap_token}/status;
-        midtrans occasionally closes connection abruptly, swallow error return unknown for outer retry."""
+        """单次 GET snap/v1/transactions/{snap_token}/status；
+        midtrans 偶发 connection closed abruptly，吃掉返 unknown 让外层继续 poll。
+        """
         for attempt in range(3):
             try:
                 r = self.ext.get(
@@ -390,11 +396,12 @@ class QrisCharger(GoPayCharger):
 
     def _chatgpt_verify(self, cs_id: str, *, retries: int = 6,
                         sleep: float = 1.5) -> dict:
-        """After settle, fallback verify: short-term retry _chatgpt_verify_once for plan=plus,
-        wrap as dict for upper layer. Stripe webhook → OpenAI backend → chatgpt_plan_type
-        usually within seconds, occasionally 5-10s delay; verify failure shouldn't fail entire payment flow.
+        """settle 后兜底 verify: 短期 retry _chatgpt_verify_once 拿 plan=plus,
+        包装成 dict 给上层. Stripe webhook → OpenAI 后台 → chatgpt_plan_type
+        通常几秒内, 偶发 5-10s 延迟; verify 失败不该 fail 整条支付链路.
 
-        Returns: {state: "verified"|"not_verified"|"verify_error", attempts, [error]}"""
+        返回: {state: "verified"|"not_verified"|"verify_error", attempts, [error]}
+        """
         if not cs_id:
             return {"state": "settled_no_verify"}
         err = ""
@@ -411,9 +418,10 @@ class QrisCharger(GoPayCharger):
         return {"state": "not_verified", "attempts": retries}
 
     def _chatgpt_verify_once(self, cs_id: str) -> bool:
-        """Single verify: check if ChatGPT plan upgraded to plus.
-        Old impl returned r.status_code == 200 was buggy: free account hits this endpoint also returns 200,
-        causing _wait_for_settlement false positive success. Changed to parse JSON and check plan_type."""
+        """单次校验 ChatGPT plan 是否真升 plus。
+        旧实现 return r.status_code == 200 是 bug：free 账号 hit 这个 endpoint 也返 200，
+        会让 _wait_for_settlement 假阳性宣告 succeeded。改成解析 JSON 看 plan_type。
+        """
         try:
             r = self.cs.get(
                 "https://chatgpt.com/checkout/verify",
@@ -430,9 +438,9 @@ class QrisCharger(GoPayCharger):
             try:
                 data = r.json() or {}
             except Exception:
-                # Returns HTML (unregistered redirect) also 200, judge false
+                # 返回 HTML（未付款重定向）也是 200，判 false
                 return False
-            # Any one marked paid/active counts as pass
+            # 任意一个标记为 paid/active 就算过
             plan = str(data.get("plan_type") or data.get("planType") or "").lower()
             state = str(data.get("state") or data.get("status") or "").lower()
             paid = bool(data.get("is_paid") or data.get("paid"))
@@ -443,7 +451,7 @@ class QrisCharger(GoPayCharger):
             return False
 
     def _wait_for_settlement(self, snap_token: str, cs_id: str) -> dict:
-        """Dual-track wait for settlement: Midtrans status primary axis + ChatGPT verify secondary."""
+        """双轨等待入账：Midtrans status 主轴 + ChatGPT verify 辅助。"""
         deadline = time.time() + self.poll_timeout
         attempt = 0
         last_status = "pending"
@@ -469,8 +477,8 @@ class QrisCharger(GoPayCharger):
                     f"fraud={fraud} body={str(data)[:200]}"
                 )
 
-            # Auxiliary axis: Trigger chatgpt verify once every N midtrans polling cycles.
-            # ChatGPT's cs_id must exist to be meaningful; it may not exist in semi-automatic mode.
+            # 辅轴：每 N 次 midtrans 轮询触发一次 chatgpt verify。
+            # ChatGPT 的 cs_id 必须存在才有意义；半自动模式下可能没有。
             if cs_id and attempt % self.verify_every_n == 0:
                 ok = self._chatgpt_verify_once(cs_id)
                 if ok and not last_verify:
@@ -498,16 +506,16 @@ class QrisCharger(GoPayCharger):
         return self._run_midtrans_qris(snap_token, cs_id)
 
     def run_from_redirect(self, pm_redirect_url: str, cs_id: str = "") -> dict:
-        """Semi-automatic: Take over from pm-redirects.stripe.com URL."""
+        """半自动：从 pm-redirects.stripe.com URL 接管。"""
         snap_token = self._fetch_pm_redirect_snap_token(pm_redirect_url)
         self.log(f"[qris] midtrans snap_token={snap_token}")
         return self._run_midtrans_qris(snap_token, cs_id)
 
     def _run_midtrans_qris(self, snap_token: str, cs_id: str) -> dict:
         self._midtrans_load_transaction(snap_token)
-        # Idiot-proof check: when promo 'plus-1-month-free' is triggered, invoice.amount_due should be ≤ 100 IDR
-        # (1 IDR test charge); if full price (~34900000) is shown, it indicates that the export IP / account qualification does not meet requirements
-        # promo, will really deduct ¥150 if you don't set it. Unless user explicitly enables allow_charge_when_coupon_ineligible
+        # 防呆：promo 'plus-1-month-free' 命中时 invoice.amount_due 应该 ≤ 100 IDR
+        # (1 IDR test charge)；如果是全价 (~34900000) 说明出口 IP / 账号资格不满足
+        # promo，再下去就真扣 ¥150。除非 user 显式开 allow_charge_when_coupon_ineligible
         amount = getattr(self, "_last_amount_due", 0) or 0
         promo_ok = amount and amount <= 100  # IDR cents (100 = 1 IDR)
         allow = bool(self.qris_cfg.get("allow_charge_when_coupon_ineligible"))
@@ -523,7 +531,7 @@ class QrisCharger(GoPayCharger):
         parsed = self._midtrans_create_qris_charge(snap_token)
         artifacts = self._save_qr_artifacts(parsed)
 
-        # User-visible prompts
+        # 用户可见提示
         ref = parsed["charge_ref"]
         self.log("─" * 64)
         self.log(f"[qris] QR 已生成 reference={ref}")
@@ -539,15 +547,15 @@ class QrisCharger(GoPayCharger):
             self.log(f"[qris] 过期: {parsed['expiry_time']}")
         self.log(f"[qris] meta: {artifacts['meta_path']}")
         self.log("─" * 64)
-        # Terminal ASCII (Optional)
+        # 终端 ASCII（可选）
         self._print_qr_ascii(parsed.get("qr_string") or "")
         self.log("─" * 64)
 
-        # ═══ adb automation: replace the 30-second manual bottleneck of "waiting for user to scan code" ═══
-        # Config: qris_cfg.adb_auto = {"enabled": bool, "pin": "<6-digit>", "deeplink_only": true,
+        # ═══ adb 自动化：替代"等用户扫码"那 30 秒人工卡点 ═══
+        # 配置：qris_cfg.adb_auto = {"enabled": bool, "pin": "<6位>", "deeplink_only": true,
         #                            "serial": "<adb-serial>", "adb_port": int}
-        # Process: Use adb am start -d <deeplink> to let GoPay on the emulator take over,
-        # Then input tap numeric keypad enter PIN + tap confirm → equivalent to scanning QR + entering PIN.
+        # 流程：用 adb am start -d <deeplink> 让 emulator 上的 GoPay 接管，
+        # 然后 input tap 数字键盘输 PIN + tap 确认 → 与扫 QR + 输 PIN 等价。
         adb_auto_cfg = self.qris_cfg.get("adb_auto") or {}
         adb_auto_enabled = bool(adb_auto_cfg.get("enabled"))
         if adb_auto_enabled:
@@ -578,7 +586,7 @@ class QrisCharger(GoPayCharger):
                     )
                     self.log(f"[qris] adb_auto 结果: state={auto.get('state')} msg={auto.get('message')}")
                     if auto.get("state") not in ("success", "unknown"):
-                        # Automation failed (expired/insufficient/blocked/timeout) → Fallback to legacy path
+                        # 自动化没成功（expired/insufficient/blocked/timeout）→ 降级回老路
                         self.log(f"[qris] adb_auto 未成功，降级到等用户扫码…")
                 except Exception as e:
                     self.log(f"[qris] adb_auto 异常 (降级老路): {type(e).__name__}: {e}")
@@ -592,7 +600,7 @@ class QrisCharger(GoPayCharger):
 
         settled = self._wait_for_settlement(snap_token, cs_id)
 
-        # Double confirmation: even if midtrans reports settle, go through chatgpt verify once more to get the final plan status
+        # 双重确认：即便 midtrans 报 settle，再走一次 chatgpt verify 拿到最终 plan 状态
         verify_result: dict[str, Any] = {"state": "settled_no_verify"}
         if cs_id:
             verify_result = self._chatgpt_verify(cs_id)
@@ -612,21 +620,22 @@ class QrisCharger(GoPayCharger):
 
 
 class _QrisHookSuccess(Exception):
-    """Sentinel thrown from the card._drive_gopay_from_redirect hook,
-    blocking subsequent polling in card.run, allowing main() to get the result and emit JSON."""
+    """从 card._drive_gopay_from_redirect hook 抛出的 sentinel，
+    阻断 card.run 后续 polling，让 main() 能拿结果 emit JSON。"""
     def __init__(self, result: dict):
         super().__init__(result.get("charge_ref", ""))
         self.result = result
 
 
 def _run_via_card(charger: "QrisCharger", config_path: str, cs_id_hint: str = "") -> dict:
-    """Walk through the complete card.py flow of fresh_checkout + manual_approval beta + check_coupon,
-    monkey-patch _drive_gopay_from_redirect to let card.py obtain the pm-redirects URL and
-    hand it off to us for untokenized charge → QR + deeplink.
+    """走 card.py 完整 fresh_checkout + manual_approval beta + check_coupon 路径，
+    monkey-patch _drive_gopay_from_redirect 让 card.py 拿到 pm-redirects URL 后
+    交给我们做 untokenized charge → QR + deeplink。
 
-    qris.py's own simplified _stripe_create_pm/_stripe_confirm/_chatgpt_approve are blocked by result=blocked
-    under OpenAI's new fraud prevention, must reuse card.py's complete 500-line flow."""
-    import card  # in-process import is required to monkey-patch
+    qris.py 自己的简化 _stripe_create_pm/_stripe_confirm/_chatgpt_approve 在 OpenAI
+    新反欺诈下被 result=blocked，必须复用 card.py 的 500 行完整流程。
+    """
+    import card  # in-process import 才能 monkey-patch
     captured: dict = {}
 
     def _hook(redirect_url: str, _cfg: dict, _otp_file: str = "", session_id: str = "") -> None:
@@ -635,7 +644,7 @@ def _run_via_card(charger: "QrisCharger", config_path: str, cs_id_hint: str = ""
         charger.log(f"[qris] midtrans snap_token={snap_token}")
         charger._midtrans_load_transaction(snap_token)
         parsed = charger._midtrans_create_qris_charge(snap_token)
-        # Expose deeplink to charger instance for _wait_with_adb_auto to call adb auto payment
+        # 暴露 deeplink 到 charger 实例，供 _wait_with_adb_auto 调 adb 自动支付
         charger._last_charge_deeplink = parsed.get("deeplink_url", "")
         artifacts = charger._save_qr_artifacts(parsed)
         ref = parsed["charge_ref"]
@@ -656,7 +665,7 @@ def _run_via_card(charger: "QrisCharger", config_path: str, cs_id_hint: str = ""
             f"[qris] 等用户扫码入账（每 {charger.poll_interval:g}s 轮询 midtrans）…"
         )
 
-        # Dual-track settlement: webui runner captures [qris] settled logs → frontend badge turns green
+        # 双轨等 settlement：webui runner 抓 [qris] settled 日志 → 前端徽章变绿
         try:
             settled = charger._wait_for_settlement(snap_token, session_id or "")
             settled_via = settled.get("settled_via", "midtrans")
@@ -679,21 +688,21 @@ def _run_via_card(charger: "QrisCharger", config_path: str, cs_id_hint: str = ""
             "expiry_time": parsed.get("expiry_time", ""),
             "session_id": session_id,
         })
-        # Block subsequent polling of card.run (it will poll paypal/gopay status, which we have already handled ourselves)
+        # 阻断 card.run 的后续 polling（它会用 paypal/gopay 状态轮询，我们已自处理）
         raise _QrisHookSuccess(captured)
 
-    # Early hook: Drive emulator GoPay automatic payment before wait_for_settlement
-    # Make _wait_for_settlement see settlement immediately (instead of waiting for user to scan)
+    # 提前 hook：在 wait_for_settlement 之前驱动 emulator GoPay 自动支付
+    # 让 _wait_for_settlement 立刻看到 settlement（而不是等 user 扫）
     _orig_wait = charger._wait_for_settlement
 
     def _wait_with_adb_auto(snap_token, sess_id):
         adb_cfg = (charger.qris_cfg.get("adb_auto") or {})
         if adb_cfg.get("enabled"):
             try:
-                # Get the deeplink + pin of this charge
+                # 取本次 charge 的 deeplink + pin
                 deeplink = ""
-                # captured is filled within _hook, here it is retrieved through charger's internal cache or re-queried
-                # Simplification: Get from _last_charge_deeplink (set in hook)
+                # captured 在 _hook 内填，这里通过 charger 内部缓存或重新查
+                # 简化：从 _last_charge_deeplink 取（hook 里设置）
                 deeplink = getattr(charger, "_last_charge_deeplink", "") or ""
                 pin = str(adb_cfg.get("pin") or "")
                 if deeplink and len(pin) == 6 and pin.isdigit():
@@ -721,14 +730,14 @@ def _run_via_card(charger: "QrisCharger", config_path: str, cs_id_hint: str = ""
 
     charger._wait_for_settlement = _wait_with_adb_auto
 
-    # Wave F (5/18) After card is a package: card/__init__.py + card/_monolith.py.
-    # card.run/manual_approval internal bare call `_drive_gopay_from_redirect(...)` goes through
-    # Looking up card._monolith module scope, patching `card.*` namespace doesn't work (will make QRIS
-    # Downgrade to GoPay tokenization OTP linking, as fallback implementation still in place.
-    # Must patch _monolith module scope to allow hook to truly take over.
+    # Wave F (5/18) 后 card 是包: card/__init__.py + card/_monolith.py.
+    # card.run/manual_approval 内部裸调 `_drive_gopay_from_redirect(...)` 走的是
+    # card._monolith 模块作用域查找, patch `card.*` 命名空间不起作用 (会让 QRIS
+    # 降级到 GoPay tokenization OTP linking, 因 fallback 实现仍在原位).
+    # 必须 patch _monolith 模块作用域才能让 hook 真正接管.
     import card._monolith as _card_inner
     _card_inner._drive_gopay_from_redirect = _hook
-    card._drive_gopay_from_redirect = _hook  # Compatible: any references going through the `card.*` namespace
+    card._drive_gopay_from_redirect = _hook  # 兼容: 任何走 `card.*` namespace 的引用
     charger.log("[qris] monkey-patched card._monolith._drive_gopay_from_redirect → untokenized hook")
 
     try:
@@ -744,11 +753,12 @@ def _run_via_card(charger: "QrisCharger", config_path: str, cs_id_hint: str = ""
 
 
 def _run_mock_charge(charger: "QrisCharger") -> dict:
-    """Offline mock: use built-in EMVCo specimens to walk _save_qr_artifacts + simulate settle after 5s,
-    used to verify webui runner log parsing + frontend QR rendering. Do not modify OpenAI/Stripe/Midtrans."""
+    """离线 mock：用内置 EMVCo 标本走 _save_qr_artifacts + 模拟 5s 后 settle，
+    用来验证 webui runner 日志解析 + 前端 QR 渲染。不动 OpenAI/Stripe/Midtrans。
+    """
     import time as _t
     ref = "A2MOCK" + _dt.datetime.now().strftime("%Y%m%d%H%M%S") + "DEMO"
-    # Real QRIS specimen (EMV QRCPS Merchant Presented, adapted version from OpenAI LLC GoPay acquirer)
+    # 真 QRIS 标本（EMV QRCPS Merchant Presented，OpenAI LLC GoPay acquirer 改编版）
     qr_string = (
         "00020101021126570011ID.DANA.WWW011893600914000000000004215abcdef"
         "520440005303360540510.005802ID5910OpenAI LLC6011Jakarta ID6304ABCD"
@@ -792,7 +802,7 @@ def _run_mock_charge(charger: "QrisCharger") -> dict:
 
 
 def _render_qr_png(qr_string: str, save_path: Path) -> None:
-    """Generate PNG from EMVCo QR payload using qrcode library."""
+    """用 qrcode 库根据 EMVCo QR payload 生成 PNG。"""
     if not _QRCODE_AVAILABLE or not _PIL_AVAILABLE:
         raise QrisError("qrcode/Pillow 未安装，无法本地生成 PNG。pip install 'qrcode[pil]'")
     qr = qrcode.QRCode(
@@ -840,7 +850,7 @@ def main():
 
     auth_cfg = (cfg.get("fresh_checkout") or {}).get("auth") or {}
     if args.mock_charge:
-        # mock mode doesn't send any real requests, just provide an empty session as a placeholder (GoPayCharger.__init__ needs an object)
+        # mock 模式不发任何真请求，给一个空 session 占位即可（GoPayCharger.__init__ 要个对象）
         cs_session = requests.Session()
     else:
         try:
@@ -878,8 +888,8 @@ def main():
         elif args.legacy_direct:
             result = charger.run(stripe_pk=stripe_pk, billing=billing)
         else:
-            # Default flow through card.py (fresh_checkout + manual_approval beta + check_coupon)
-            # Then hook takes over untokenized charge to output QR + deeplink
+            # 默认走 card.py 完整流程（fresh_checkout + manual_approval beta + check_coupon）
+            # 然后 hook 接管 untokenized charge 出 QR + deeplink
             result = _run_via_card(charger, args.config, cs_id_hint=args.cs_id)
     except QrisError as e:
         print(f"[qris] FAILED: {e}", file=sys.stderr)
@@ -894,7 +904,7 @@ def main():
 
     print(f"[qris] result: {result.get('state')} via {result.get('settled_via')}")
     if args.json_result:
-        # Remove the raw field to avoid JSON being too large
+        # 把 raw 字段砍掉避免 json 太大
         compact = {k: v for k, v in result.items() if k != "raw"}
         if isinstance(compact.get("midtrans_status"), dict):
             compact["midtrans_status"] = {

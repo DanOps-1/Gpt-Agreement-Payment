@@ -14,9 +14,9 @@ def test_proxy_ok_country_match(client, monkeypatch):
     respx.get("http://ip-api.com/json/1.2.3.4").mock(
         return_value=Response(200, json={"status": "success", "countryCode": "US", "country": "United States"})
     )
-    # The image has a real gost binary installed: the socks5+auth branch will spawn a real process to forward to 127.0.0.1:1080, but the target doesn't exist, causing gost forward to fail and making the entire test fail. The test only cares about IP/country detection, so we stub out the gost part.
-    # Forward, the target doesn't exist, gost forward failure causes the overall test to fail. What the test cares about is
-    # IP/country detection, stub out the gost part.
+    # 镜像里装了真 gost binary：socks5+auth 分支会 spawn 真进程往 127.0.0.1:1080
+    # 转发，目标根本不存在，gost forward 失败让整体被拉成 fail。test 关心的是
+    # IP/country 检测，把 gost 那段 stub 掉。
     from webui.backend.preflight import proxy as proxy_mod
     monkeypatch.setattr(proxy_mod, "_port_listening", lambda port: True)
     monkeypatch.setattr(proxy_mod, "_spawn_gost_relay", lambda *a, **k: (True, "test-stub"))

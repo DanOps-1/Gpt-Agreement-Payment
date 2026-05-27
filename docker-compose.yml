@@ -1,13 +1,13 @@
-# Gpt-Agreement-Payment / Single-container webui
+# Gpt-Agreement-Payment / 单容器 webui
 #
-# Usage:
+# 用法：
 #   git clone <repo> && cd Gpt-Agreement-Payment
 #   docker compose up -d --build
-#   Open browser to http://127.0.0.1:8765/  (First time go to /setup to create admin)
+#   浏览器开 http://127.0.0.1:8765/  （首次去 /setup 创建管理员）
 #
-# Config files are automatically bootstrapped by entrypoint from *.example.json, edit on host
-# CTF-pay/config.paypal.json + CTF-reg/config.paypal-proxy.json, then
-# Container reads in real-time via bind mount, restart docker compose after changes to take effect.
+# 配置文件由 entrypoint 自动从 *.example.json bootstrap，编辑 host 上的
+# CTF-pay/config.paypal.json + CTF-reg/config.paypal-proxy.json 即可，
+# 容器透过 bind mount 实时读取，改完 docker compose restart 生效。
 
 services:
   webui:
@@ -17,31 +17,31 @@ services:
     image: gpt-agreement-payment:local
     container_name: gap-webui
     ports:
-      # By default only exposes 127.0.0.1, use nginx reverse proxy or explicitly change to "0.0.0.0:8765:8765" for public network
+      # 默认只暴露 127.0.0.1，公网请用 nginx 反代或显式改成 "0.0.0.0:8765:8765"
       - "127.0.0.1:8765:8765"
     volumes:
-      # Entire repository bind mount —— host git working tree is SOURCE OF TRUTH,
-      # Code changes take effect immediately with docker exec / restart; no need to rebuild.
-      # Do not use single-file mount (inode stale: after atomic-rename by editor, container holds stale inode).
+      # 整个仓库 bind mount —— host git working tree 是 SOURCE OF TRUTH，
+      # 改完代码 docker exec / restart 即时生效；不需要重 build。
+      # 不用 single-file mount（inode stale：Edit 工具 atomic-rename 后容器挂旧 inode）。
       - .:/app
-      # Mask host frontend node_modules / dist, let baked version in image take effect
-      # (anonymous volume syncs from image on startup, not overwritten by empty host directory)
+      # 屏蔽 host 上的 frontend node_modules / dist，让镜像里 baked 版本生效
+      # （anonymous volume 启动时从 image 同步，不被 host 空目录覆盖）
       - /app/webui/frontend/node_modules
       - /app/webui/frontend/dist
-      # webui SQLite + registration results + domain pool state all stored here (host can see and backup)
+      # webui SQLite + 注册结果 + 域池状态都落这（host 可见可备份）
       - ./output:/app/output
     environment:
-      # webui SQLite + wizard state storage location (settings.py defaults to /app/output)
+      # webui SQLite + wizard state 存放位置（settings.py 默认就是 /app/output）
       WEBUI_DATA_DIR: /app/output
-      # OTP timeout: 60s is better than original 180s for hitting OpenAI honeypot (existing accounts fake branch doesn't actually send email)
-      # Fast failure allows outer layer to retry with new persona/IP. CF Email→Worker→KV path tested end-to-end ~0.3s,
-      # 60s provides 200x margin. For longer timeout, override in user .env.
+      # OTP 等待超时：60s 比原 180s 更利于命中 OpenAI honeypot（已有账号假分支不真发邮件）
+      # 时快速失败让外层换新 persona/IP 重试。CF Email→Worker→KV 链路实测端到端 ~0.3s，
+      # 60s 是 200x 余量。需要更长可在用户 .env 里覆盖。
       OTP_TIMEOUT: "60"
-      # Registration agreement path forces use of Node/QuickJS Sentinel; runtime image will
-      # validate /usr/local/bin/node exists at entrypoint, otherwise fail-fast.
+      # 注册协议路径强制使用 Node/QuickJS Sentinel；runtime 镜像会在
+      # entrypoint 校验 /usr/local/bin/node 存在，否则 fail-fast。
       OPENAI_SENTINEL_REQUIRE_QUICKJS: "1"
       OPENAI_SENTINEL_NODE_PATH: /usr/local/bin/node
-      # WEBUI_QRIS_FORCE_MOCK: "1"  # Demo mode (bypass OpenAI risk control); turn off for real payment
+      # WEBUI_QRIS_FORCE_MOCK: "1"  # 演示模式（绕过 OpenAI 风控）；真支付时关掉
     restart: unless-stopped
-    # Browser automation processes are numerous, default shm 64MB is insufficient (firefox crashes)
+    # 浏览器自动化进程数量多，shm 默认 64MB 不够（firefox 会闪退）
     shm_size: "1gb"

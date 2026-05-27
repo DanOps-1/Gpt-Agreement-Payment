@@ -1,4 +1,4 @@
-"""Entry point for `python -m pipeline`."""
+"""`python -m pipeline` 入口。"""
 
 from pipeline._monolith import main
 
