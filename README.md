@@ -20,7 +20,15 @@ ChatGPT Plus / Team 订阅协议的端到端重放工具：从抓包逆出 `Stri
 
 | Logo | 名称 | 介绍 | 官网 |
 | --- | --- | --- | --- |
-| <a href="https://api.lukyface.com/" target="_blank"><img src="docs/images/sponsors/lukyface.png" alt="lukyface API" width="140" /></a> | lukyface API（作者自营中转站） | 统一的 AI 模型聚合 / 分发网关（基于 new-api），OpenAI / Claude / Gemini 三协议互转，自用余量分享。**作者自营、长期稳定**。<br><br>**对所有人开放** · 作者自营中转站交流群：**`1104565621`** | [https://api.lukyface.com/](https://api.lukyface.com/) |
+| <a href="https://api.lukyface.com/register?aff=9ipF" target="_blank"><img src="docs/images/sponsors/lukyface.png" alt="lukyface API" width="140" /></a> | lukyface API（作者自营中转站） | 统一的 AI 模型聚合 / 分发网关（基于 new-api），OpenAI / Claude / Gemini 三协议互转，自用余量分享。**作者自营、长期稳定**。<br><br>**对所有人开放** · 作者自营中转站交流群：**`1104565621`** | [https://api.lukyface.com/register?aff=9ipF](https://api.lukyface.com/register?aff=9ipF) |
+
+<p align="center">
+  <a href="https://api.lukyface.com/register?aff=9ipF" target="_blank">
+    <img src="docs/images/sponsors/lukyface-screenshot.png" width="600" alt="lukyface API 主界面" />
+  </a>
+  <br>
+  <sub>👆 点击图片访问 lukyface · 邀请码 <code>9ipF</code> · 交流群 <code>1104565621</code></sub>
+</p>
 
 ---
 
